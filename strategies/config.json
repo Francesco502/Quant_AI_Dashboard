@@ -1,0 +1,39 @@
+{
+  "strategies": [
+    {
+      "strategy_id": "ma_cross_v1",
+      "type": "technical",
+      "version": "v1.0",
+      "params": {
+        "fast_window": 20,
+        "slow_window": 50,
+        "rsi_oversold": 30,
+        "rsi_overbought": 70,
+        "buy_threshold": 0.3,
+        "sell_threshold": -0.3
+      }
+    },
+    {
+      "strategy_id": "ai_xgb_v1",
+      "type": "ai",
+      "version": "v1.0",
+      "params": {
+        "model_type": "xgboost",
+        "buy_threshold": 0.02,
+        "sell_threshold": -0.01,
+        "horizon": 1,
+        "use_production_model": true
+      }
+    },
+    {
+      "strategy_id": "hybrid_v1",
+      "type": "ensemble",
+      "version": "v1.0",
+      "params": {
+        "sub_strategies": ["ma_cross_v1", "ai_xgb_v1"],
+        "weights": [0.4, 0.6]
+      }
+    }
+  ]
+}
+

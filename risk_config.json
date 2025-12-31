@@ -1,0 +1,41 @@
+{
+  "risk_limits": {
+    "max_position_size": 0.1,
+    "max_total_exposure": 0.95,
+    "max_sector_exposure": 0.3,
+    "max_single_stock": 0.05,
+    "max_daily_loss": 0.05,
+    "max_total_loss": 0.2,
+    "stop_loss_threshold": 0.08,
+    "max_correlation": 0.8,
+    "min_liquidity_ratio": 0.1
+  },
+  "position_limits": {},
+  "sector_limits": {},
+  "market_limits": {},
+  "total_position_limit": 0.95,
+  "sector_info": {},
+  "alert_config": {
+    "email": {
+      "enabled": false,
+      "smtp_server": "",
+      "smtp_port": 587,
+      "username": "",
+      "password": ""
+    },
+    "sms": {
+      "enabled": false,
+      "api_key": "",
+      "api_secret": ""
+    },
+    "webhook": {
+      "enabled": false,
+      "url": ""
+    },
+    "log_file": "logs/risk_alerts.log"
+  },
+  "stop_loss_defaults": {
+    "stop_percentage": 0.05,
+    "take_profit_percentage": 0.1
+  }
+}

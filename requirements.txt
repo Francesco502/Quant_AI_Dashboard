@@ -1,0 +1,60 @@
+streamlit>=1.40.0
+yfinance>=0.2.44
+pandas>=2.2.0
+numpy>=1.26.0
+plotly>=5.24.0
+scipy>=1.13.0
+akshare>=1.12.0
+schedule>=1.2.0
+
+# ========== API 服务（FastAPI） ==========
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+websockets>=12.0
+
+# ========== 机器学习模型（高级 AI 预测） ==========
+scikit-learn>=1.4.0       # 特征预处理、模型评估
+xgboost>=2.0.0            # XGBoost 预测模型
+lightgbm>=4.3.0           # LightGBM 预测模型（可选）
+
+# ========== 时序预测专用 ==========
+prophet>=1.1.5            # Facebook Prophet（推荐：快速、稳定）
+statsmodels>=0.14.0       # ARIMA/SARIMA 时序模型
+
+# ========== 深度学习 ==========
+torch>=2.1.0              # PyTorch LSTM/Transformer
+# torchvision>=0.16.0     # 可选：图像相关
+
+# ========== 可选：高级深度学习（按需解除注释） ==========
+# tensorflow>=2.15.0      # TensorFlow 版本
+# keras>=3.0.0            # Keras 高级 API
+# pytorch-forecasting>=1.0.0  # PyTorch Forecasting (TFT等)
+# darts>=0.27.0           # 时序预测库（包含多种模型）
+
+# ========== 可选：其他数据源（按需解除注释） ==========
+# tushare>=1.2.0          # A股数据（需要token）
+# ccxt>=4.0.0             # 加密货币交易所数据
+
+# ========== 安全认证 ==========
+bcrypt>=4.0.0             # 密码哈希加密
+python-dotenv>=1.0.0      # .env 文件支持（可选，但推荐）
+
+# ========== 系统监控 ==========
+psutil>=5.9.0             # 系统资源监控（CPU、内存、磁盘等）
+requests>=2.31.0          # HTTP请求（用于Webhook、Telegram等告警）
+
+# ========== 性能优化 ==========
+aiohttp>=3.9.0            # 异步HTTP请求（可选，用于异步数据服务）
+
+# ========== 安全性 ==========
+python-jose[cryptography]>=3.3.0  # JWT认证
+passlib[bcrypt]>=1.7.4            # 密码加密
+
+# ========== 测试框架 ==========
+pytest>=7.4.0                    # 测试框架
+pytest-cov>=4.1.0                # 测试覆盖率
+pytest-mock>=3.12.0              # Mock支持
+pytest-asyncio>=0.21.0           # 异步测试支持
+

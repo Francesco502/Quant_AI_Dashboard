@@ -1,0 +1,56 @@
+/* ============================================
+   按钮样式 - 统一管理
+   包括登录页、设置页等特殊按钮
+   ============================================ */
+
+/* 主按钮样式 */
+.stButton > button[kind="primary"],
+button[kind="primary"],
+[data-testid="stButton"] > button[kind="primary"] {
+    background: linear-gradient(135deg, var(--apple-blue) 0%, var(--apple-blue-dark) 100%) !important;
+    color: var(--apple-white) !important;
+    font-weight: 600 !important;
+    border: none !important;
+    border-radius: var(--radius-md) !important;
+    padding: 0.75rem 2rem !important;
+    transition: all 0.3s var(--ease-out-expo) !important;
+}
+
+.stButton > button[kind="primary"]:hover,
+button[kind="primary"]:hover {
+    background: linear-gradient(135deg, var(--apple-blue-dark) 0%, #003D99 100%) !important;
+    color: var(--apple-white) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: var(--shadow-md) !important;
+}
+
+.stButton > button[kind="primary"] *,
+button[kind="primary"] * {
+    color: var(--apple-white) !important;
+}
+
+/* 通用按钮样式 */
+.stButton > button {
+    background: linear-gradient(135deg, var(--apple-blue) 0%, var(--apple-blue-dark) 100%) !important;
+    color: var(--apple-white) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 0.75rem 2rem !important;
+    font-weight: 500 !important;
+    transition: all 0.3s var(--ease-out-expo) !important;
+}
+
+/* 确保按钮内所有文字元素都是白色 */
+.stButton > button * {
+    color: var(--apple-white) !important;
+}
+
+.stButton > button:hover {
+    color: var(--apple-white) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 16px rgba(0, 122, 255, 0.3) !important;
+}
+
+.stButton > button:hover * {
+    color: var(--apple-white) !important;
+}
+

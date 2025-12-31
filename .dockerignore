@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 日志和数据（运行时生成，通过 volume 挂载）
+logs/*.log
+data/**/*.parquet
+*.parquet
+
+# 配置文件（通过 volume 挂载，避免覆盖）
+daemon_config.json
+daemon_status.json
+.streamlit/user_state.json
+.streamlit/paper_account.json
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# 文档和脚本（可选，如果不需要在容器内）
+*.md
+*.txt
+!requirements.txt
+!requirements_advanced.txt
+*.bat
+*.ps1
+*.sh
+
+# 测试
+tests/
+test_*.py
+*_test.py
+
+# 其他
+.DS_Store
+*.bak
+*.tmp
+

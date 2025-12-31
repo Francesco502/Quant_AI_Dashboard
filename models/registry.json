@@ -1,0 +1,96 @@
+{
+  "models": [
+    {
+      "model_id": "xgb_159755.SZ_20251230_153542",
+      "ticker": "159755.SZ",
+      "model_type": "xgboost",
+      "train_date": "2025-12-30",
+      "train_data_range": [
+        "2009-04-03",
+        "2025-12-29"
+      ],
+      "features_version": "v1.0",
+      "metrics": {
+        "model_type": "xgboost",
+        "lookback": 60
+      },
+      "status": "staging",
+      "model_path": "models/159755.SZ_xgboost.pkl",
+      "created_at": "2025-12-30 15:35:42"
+    },
+    {
+      "model_id": "xgb_002611_20251230_153542",
+      "ticker": "002611",
+      "model_type": "xgboost",
+      "train_date": "2025-12-30",
+      "train_data_range": [
+        "2009-04-03",
+        "2025-12-29"
+      ],
+      "features_version": "v1.0",
+      "metrics": {
+        "model_type": "xgboost",
+        "lookback": 60
+      },
+      "status": "staging",
+      "model_path": "models/002611_xgboost.pkl",
+      "created_at": "2025-12-30 15:35:42"
+    },
+    {
+      "model_id": "xgb_006810_20251230_153542",
+      "ticker": "006810",
+      "model_type": "xgboost",
+      "train_date": "2025-12-30",
+      "train_data_range": [
+        "2009-04-03",
+        "2025-12-29"
+      ],
+      "features_version": "v1.0",
+      "metrics": {
+        "model_type": "xgboost",
+        "lookback": 60
+      },
+      "status": "staging",
+      "model_path": "models/006810_xgboost.pkl",
+      "created_at": "2025-12-30 15:35:42"
+    },
+    {
+      "model_id": "xgb_160615_20251230_153542",
+      "ticker": "160615",
+      "model_type": "xgboost",
+      "train_date": "2025-12-30",
+      "train_data_range": [
+        "2009-04-03",
+        "2025-12-29"
+      ],
+      "features_version": "v1.0",
+      "metrics": {
+        "model_type": "xgboost",
+        "lookback": 60
+      },
+      "status": "staging",
+      "model_path": "models/160615_xgboost.pkl",
+      "created_at": "2025-12-30 15:35:42"
+    },
+    {
+      "model_id": "xgb_013281_20251230_153542",
+      "ticker": "013281",
+      "model_type": "xgboost",
+      "train_date": "2025-12-30",
+      "train_data_range": [
+        "2009-04-03",
+        "2025-12-29"
+      ],
+      "features_version": "v1.0",
+      "metrics": {
+        "model_type": "xgboost",
+        "lookback": 60
+      },
+      "status": "staging",
+      "model_path": "models/013281_xgboost.pkl",
+      "created_at": "2025-12-30 15:35:42"
+    }
+  ],
+  "production_models": {},
+  "updated_at": "2025-12-30 15:35:42"
+}

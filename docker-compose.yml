@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # Dashboard 服务（Streamlit Web 界面）
   dashboard:
-    image: francescoli/quant_ai_dashboard:v0.1.4
+    image: francescoli/quant_ai_dashboard:v0.2.0
     container_name: quant-dashboard
     command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0
     ports:
@@ -44,7 +44,7 @@ services:
 
   # 后台守护进程服务（数据更新 + 模拟交易）
   daemon:
-    image: francescoli/quant_ai_dashboard:v0.1.4
+    image: francescoli/quant_ai_dashboard:v0.2.0
     container_name: quant-daemon
     command: python -m core.daemon
     volumes:

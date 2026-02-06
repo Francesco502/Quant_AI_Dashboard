@@ -2,6 +2,7 @@
 
 > 生产级量化交易系统 - 集成数据管理、AI预测、风险管理、交易执行等功能的一体化平台
 
+[![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/Francesco502/Quant_AI_Dashboard/releases)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)](https://streamlit.io/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
@@ -313,6 +314,6 @@ pytest tests/performance/ -v   # 性能测试
 
 ---
 
-**最后更新**: 2025-01-XX  
-**版本**: v1.0.0
+**当前版本**: v0.2.0（由 Initial commit: Dashboard v0.1.4 更新）  
+**最后更新**: 2026-02-06
 

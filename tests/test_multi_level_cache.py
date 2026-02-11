@@ -78,7 +78,7 @@ class TestMultiLevelCache:
     def cache(self):
         """创建多级缓存实例"""
         with tempfile.TemporaryDirectory() as tmpdir:
-            cache = MultiLevelCache(cache_dir=tmpdir, use_streamlit_cache=False)
+            cache = MultiLevelCache(cache_dir=tmpdir)
             yield cache
     
     def test_l1_cache(self, cache):

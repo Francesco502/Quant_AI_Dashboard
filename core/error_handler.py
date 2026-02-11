@@ -2,7 +2,6 @@
 统一错误处理模块
 提供友好的错误提示和异常处理装饰器
 """
-import streamlit as st
 import traceback
 import logging
 from functools import wraps
@@ -40,30 +39,19 @@ class DashboardError(Exception):
 
 
 def handle_error(func: Callable) -> Callable:
-    """错误处理装饰器，自动捕获异常并显示友好提示"""
+    """错误处理装饰器，自动捕获异常并记录日志"""
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except DashboardError as e:
-            # 自定义异常，显示用户友好的消息
-            st.error(f"❌ {e.error_type.value}: {e.user_message}")
-            if e.details and st.session_state.get("debug_mode", False):
-                with st.expander("详细信息"):
-                    st.code(e.details)
             logger.error(f"{e.error_type.value}: {e.message}", exc_info=True)
+            if e.details:
+                logger.debug(f"详细信息: {e.details}")
             return None
         except Exception as e:
-            # 未预期的异常
             error_msg = f"发生未预期的错误: {str(e)}"
-            st.error(f"❌ {error_msg}")
-            
-            # 调试模式下显示详细堆栈
-            if st.session_state.get("debug_mode", False):
-                with st.expander("错误详情"):
-                    st.code(traceback.format_exc())
-            
-            logger.error(f"未预期的错误: {error_msg}", exc_info=True)
+            logger.error(error_msg, exc_info=True)
             return None
     return wrapper
 
@@ -75,23 +63,10 @@ def safe_execute(func: Callable, default_return: Any = None,
         return func()
     except Exception as e:
         if error_message:
-            st.warning(f"⚠️ {error_message}: {str(e)}")
-        logger.warning(f"安全执行失败: {error_message or str(e)}", exc_info=True)
+            logger.warning(f"{error_message}: {str(e)}")
+        else:
+            logger.warning(f"安全执行失败: {str(e)}", exc_info=True)
         return default_return
-
-
-def display_error_summary(errors: list[dict]) -> None:
-    """显示错误摘要"""
-    if not errors:
-        return
-    
-    st.error("### 错误摘要")
-    for i, error in enumerate(errors, 1):
-        st.markdown(f"**{i}. {error.get('title', '错误')}**")
-        st.caption(error.get('message', ''))
-        if error.get('details'):
-            with st.expander("详细信息"):
-                st.code(error.get('details'))
 
 
 def create_data_error(ticker: str, reason: str) -> DashboardError:
@@ -122,4 +97,3 @@ def create_network_error(data_source: str, reason: str) -> DashboardError:
         user_message=f"无法连接到数据源 {data_source}，请检查网络连接或稍后重试。",
         details=reason
     )
-

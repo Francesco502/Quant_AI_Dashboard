@@ -11,18 +11,16 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 import hashlib
+import json
+import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-try:
-    import streamlit as st
-    STREAMLIT_AVAILABLE = True
-except ImportError:
-    STREAMLIT_AVAILABLE = False
-    st = None
+
 
 try:
     import akshare as ak
@@ -45,6 +43,74 @@ import yfinance as yf
 from . import data_store
 from .error_handler import handle_error, create_data_error, create_network_error
 from .data_quality import DataQualityChecker, validate_data_before_analysis
+
+
+DATA_DIR = Path("data")
+USER_STATE_FILE = DATA_DIR / "user_state.json"
+
+def identify_asset_type(ticker: str) -> str:
+    """
+    根据代码规则推断资产类型
+    Returns: 'stock', 'index', 'etf', 'fund', 'bond', 'gold', 'crypto', 'us_stock', 'unknown'
+    """
+    ticker = ticker.upper()
+    
+    if ticker.endswith(".OF"):
+        return "fund" # 场外基金
+    
+    if ticker in ["AU99.99", "AU99.95", "AG(T+D)", "AU(T+D)"]:
+        return "gold"
+        
+    # Crypto (Binance format usually handled separately, but just in case)
+    if ticker.endswith("USDT"):
+        return "crypto"
+        
+    # US Stock (simple heuristic)
+    if ticker.isalpha() and len(ticker) <= 5 and not ticker.startswith("SH") and not ticker.startswith("SZ"):
+        # Could be US stock
+        return "us_stock"
+        
+    # A-Share / ETF / Index
+    if ticker.isdigit() and len(ticker) == 6:
+        # 00, 30, 60, 68 -> Stock
+        if ticker.startswith(("00", "30", "60", "68")):
+            return "stock"
+        # 51, 15 -> ETF
+        if ticker.startswith(("51", "15")):
+            return "etf"
+        # 11, 12 -> Bond
+        if ticker.startswith(("11", "12")):
+            return "bond"
+        # 000xxx (Index usually?)
+        return "stock" # Default to stock/index mix
+        
+    return "stock"
+
+def get_active_data_sources() -> List[str]:
+    """获取当前激活的数据源列表（按优先级排序）"""
+    if not USER_STATE_FILE.exists():
+         return ["AkShare", "Binance", "Tushare", "AlphaVantage", "yfinance"]
+    try:
+        with open(USER_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            sources = data.get("data_sources", ["AkShare", "Binance"])
+            if not sources:
+                 return ["AkShare", "Binance"]
+            return sources
+    except Exception:
+        return ["AkShare", "Binance"]
+
+def get_api_keys() -> Dict[str, str]:
+    """获取数据源 API Keys"""
+    if not USER_STATE_FILE.exists():
+         return {}
+    try:
+        with open(USER_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("api_keys", {})
+    except Exception:
+        return {}
+
 
 
 # ================================================================
@@ -77,13 +143,114 @@ def load_price_data_akshare(tickers: List[str], days: int) -> pd.DataFrame:
     }
 
     for ticker in tickers:
-        clean_ticker = ticker.replace(".SZ", "").replace(".SS", "")
+        # 处理 .OF 后缀 (场外基金)
+        is_otc_fund = ticker.endswith(".OF")
+        clean_ticker = ticker.replace(".SZ", "").replace(".SS", "").replace(".OF", "")
+        
         df = pd.DataFrame()
-        is_fund = ticker.isdigit() and len(ticker) == 6
+        is_fund = (ticker.isdigit() and len(ticker) == 6) or is_otc_fund
         is_us_stock = ticker in us_stock_prefix or ticker.upper() in us_stock_prefix
+        
+        # 简单判断黄金/贵金属 (上海黄金交易所)
+        is_gold_spot = ticker.upper() in ["AU99.99", "AU99.95", "AG(T+D)", "AU(T+D)"]
 
         try:
-            if is_fund:
+            # -1) 黄金/贵金属现货 (上海黄金交易所)
+            if is_gold_spot:
+                try:
+                    # 尝试获取黄金现货数据
+                    # 注意：AkShare 接口可能变动，这里尝试 spot_hist_sge
+                    temp_df = ak.spot_hist_sge(symbol=ticker)
+                    if not temp_df.empty:
+                        # 转换列名
+                        if "date" in temp_df.columns:
+                            temp_df["date"] = pd.to_datetime(temp_df["date"])
+                            temp_df = temp_df.set_index("date")
+                        elif "日期" in temp_df.columns:
+                            temp_df["日期"] = pd.to_datetime(temp_df["日期"])
+                            temp_df = temp_df.set_index("日期")
+                        
+                        # 找收盘价
+                        for col in ["close", "收盘", "收盘价"]:
+                            if col in temp_df.columns:
+                                df = temp_df[[col]].rename(columns={col: "close"})
+                                break
+                except Exception:
+                    pass
+
+            # 0) 显式指定为场外基金 (.OF) -> 优先最高
+            if df.empty and is_otc_fund:
+                try:
+                    temp_df = ak.fund_open_fund_info_em(
+                        symbol=clean_ticker, indicator="单位净值走势"
+                    )
+                    if not temp_df.empty:
+                        date_col = None
+                        value_col = None
+                        for col in ["净值日期", "日期", "date"]:
+                            if col in temp_df.columns:
+                                date_col = col
+                                break
+                        for col in ["单位净值", "净值", "value"]:
+                            if col in temp_df.columns:
+                                value_col = col
+                                break
+                        if date_col and value_col:
+                            temp_df[date_col] = pd.to_datetime(temp_df[date_col])
+                            temp_df = temp_df.set_index(date_col)
+                            df = temp_df[[value_col]].rename(columns={value_col: "净值"})
+                except Exception:
+                    pass
+
+            # 1) 美股处理
+            if df.empty and is_us_stock:
+                try:
+                    us_symbol = us_stock_prefix.get(
+                        ticker.upper(), f"105.{ticker.upper()}"
+                    )
+                    temp_df = ak.stock_us_hist(
+                        symbol=us_symbol,
+                        period="daily",
+                        start_date=start_date_str,
+                        end_date=end_date_str,
+                    )
+                    if not temp_df.empty:
+                        df = temp_df
+                except Exception:
+                    pass
+
+            # 2) 优先尝试作为 ETF 获取行情 (场内交易价格优先于净值)
+            # 159755 等 ETF 应优先走此逻辑
+            if df.empty:
+                try:
+                    temp_df = ak.fund_etf_hist_em(
+                        symbol=clean_ticker,
+                        start_date=start_date_str,
+                        end_date=end_date_str,
+                    )
+                    if not temp_df.empty:
+                        df = temp_df
+                except Exception:
+                    pass
+
+            # 3) 尝试作为 A股 获取行情
+            if df.empty:
+                try:
+                    temp_df = ak.stock_zh_a_hist(
+                        symbol=clean_ticker,
+                        period="daily",
+                        start_date=start_date_str,
+                        end_date=end_date_str,
+                        adjust="qfq",
+                    )
+                    if not temp_df.empty:
+                        df = temp_df
+                except Exception:
+                    pass
+
+            # 4) 最后尝试作为 开放式基金 获取净值 (兜底)
+            # 仅当上述行情接口都无数据，且看起来像基金代码时尝试
+            if df.empty and is_fund:
                 try:
                     temp_df = ak.fund_open_fund_info_em(
                         symbol=clean_ticker, indicator="单位净值走势"
@@ -108,48 +275,6 @@ def load_price_data_akshare(tickers: List[str], days: int) -> pd.DataFrame:
                             temp_df = temp_df.set_index(temp_df.columns[0])
                             df = temp_df.iloc[:, [0]].copy()
                             df.columns = ["净值"]
-                except Exception:
-                    pass
-
-            if df.empty and is_us_stock:
-                try:
-                    us_symbol = us_stock_prefix.get(
-                        ticker.upper(), f"105.{ticker.upper()}"
-                    )
-                    temp_df = ak.stock_us_hist(
-                        symbol=us_symbol,
-                        period="daily",
-                        start_date=start_date_str,
-                        end_date=end_date_str,
-                    )
-                    if not temp_df.empty:
-                        df = temp_df
-                except Exception:
-                    pass
-
-            if df.empty:
-                try:
-                    temp_df = ak.fund_etf_hist_em(
-                        symbol=clean_ticker,
-                        start_date=start_date_str,
-                        end_date=end_date_str,
-                    )
-                    if not temp_df.empty:
-                        df = temp_df
-                except Exception:
-                    pass
-
-            if df.empty:
-                try:
-                    temp_df = ak.stock_zh_a_hist(
-                        symbol=clean_ticker,
-                        period="daily",
-                        start_date=start_date_str,
-                        end_date=end_date_str,
-                        adjust="qfq",
-                    )
-                    if not temp_df.empty:
-                        df = temp_df
                 except Exception:
                     pass
 
@@ -1026,7 +1151,7 @@ def _load_ohlcv_data_remote(
         return {}
 
     if data_sources is None:
-        data_sources = ["AkShare", "Tushare", "Binance", "AlphaVantage", "yfinance"]
+        data_sources = get_active_data_sources()
 
     use_akshare = "AkShare" in data_sources and AKSHARE_AVAILABLE
     use_tushare = "Tushare" in data_sources and TUSHARE_AVAILABLE and bool(
@@ -1115,7 +1240,7 @@ def _load_price_data_remote(
 ) -> pd.DataFrame:
     """仅从远程数据源加载数据，不访问本地缓存"""
     if data_sources is None:
-        data_sources = ["AkShare", "yfinance", "Binance", "AlphaVantage"]
+        data_sources = get_active_data_sources()
 
     use_akshare = "AkShare" in data_sources and AKSHARE_AVAILABLE
     use_tushare = "Tushare" in data_sources and TUSHARE_AVAILABLE and bool(
@@ -1267,7 +1392,7 @@ def _load_price_data_remote(
     return pd.concat(data_frames, axis=1).ffill().bfill()
 
 
-def _load_price_data_impl(
+def load_price_data(
     tickers: List[str],
     days: int,
     data_sources: List[str] | None = None,
@@ -1278,8 +1403,15 @@ def _load_price_data_impl(
     if not tickers:
         return pd.DataFrame()
 
+    if alpha_vantage_key is None or tushare_token is None:
+        keys = get_api_keys()
+        if alpha_vantage_key is None:
+            alpha_vantage_key = keys.get("AlphaVantage")
+        if tushare_token is None:
+            tushare_token = keys.get("Tushare")
+
     if data_sources is None:
-        data_sources = ["AkShare", "yfinance", "Binance", "AlphaVantage"]
+        data_sources = get_active_data_sources()
 
     local_series_map: Dict[str, pd.Series] = {}
     missing_tickers: List[str] = []
@@ -1353,36 +1485,7 @@ def _load_price_data_impl(
     return result_df
 
 
-# 带缓存的公共接口 - load_price_data
-if STREAMLIT_AVAILABLE:
-    @st.cache_data(ttl=300, show_spinner="加载价格数据...")  # 缓存5分钟
-    def load_price_data(
-        tickers: List[str],
-        days: int,
-        data_sources: List[str] | None = None,
-        alpha_vantage_key: str | None = None,
-        tushare_token: str | None = None,
-    ) -> pd.DataFrame:
-        """统一入口：优先使用本地仓库，不足时再回退远程并写回本地（带缓存）
 
-        - 对外仍然是日线收盘价矩阵（index=日期, columns=ticker）
-        - 缓存时间：5分钟
-        """
-        return _load_price_data_impl(tickers, days, data_sources, alpha_vantage_key, tushare_token)
-else:
-    # 非Streamlit环境，直接调用实现
-    def load_price_data(
-        tickers: List[str],
-        days: int,
-        data_sources: List[str] | None = None,
-        alpha_vantage_key: str | None = None,
-        tushare_token: str | None = None,
-    ) -> pd.DataFrame:
-        """统一入口：优先使用本地仓库，不足时再回退远程并写回本地
-
-        - 对外仍然是日线收盘价矩阵（index=日期, columns=ticker）
-        """
-        return _load_price_data_impl(tickers, days, data_sources, alpha_vantage_key, tushare_token)
 
 
 # ================================================================
@@ -1390,7 +1493,7 @@ else:
 # ================================================================
 
 
-def _load_ohlcv_data_impl(
+def load_ohlcv_data(
     tickers: List[str],
     days: int,
     data_sources: List[str] | None = None,
@@ -1401,8 +1504,15 @@ def _load_ohlcv_data_impl(
     if not tickers:
         return {}
 
+    if alpha_vantage_key is None or tushare_token is None:
+        keys = get_api_keys()
+        if alpha_vantage_key is None:
+            alpha_vantage_key = keys.get("AlphaVantage")
+        if tushare_token is None:
+            tushare_token = keys.get("Tushare")
+
     if data_sources is None:
-        data_sources = ["AkShare", "Tushare", "Binance", "AlphaVantage", "yfinance"]
+        data_sources = get_active_data_sources()
 
     local_ohlcv_map: Dict[str, pd.DataFrame] = {}
     missing_tickers: List[str] = []
@@ -1445,33 +1555,6 @@ def _load_ohlcv_data_impl(
     return out
 
 
-# 带缓存的公共接口
-if STREAMLIT_AVAILABLE:
-    @st.cache_data(ttl=300, show_spinner="加载OHLCV数据...")  # 缓存5分钟
-    def load_ohlcv_data(
-        tickers: List[str],
-        days: int,
-        data_sources: List[str] | None = None,
-        alpha_vantage_key: str | None = None,
-        tushare_token: str | None = None,
-    ) -> Dict[str, pd.DataFrame]:
-        """统一入口：优先使用本地 OHLCV 仓库，不足时再回退远程并写回本地（带缓存）
 
-        - 返回字典 {ticker: OHLCV DataFrame}；
-        - 远程数据源优先级默认：AkShare -> Tushare -> Binance -> AlphaVantage -> yfinance；
-        - 缓存时间：5分钟
-        """
-        return _load_ohlcv_data_impl(tickers, days, data_sources, alpha_vantage_key, tushare_token)
-else:
-    # 非Streamlit环境，直接调用实现
-    def load_ohlcv_data(
-        tickers: List[str],
-        days: int,
-        data_sources: List[str] | None = None,
-        alpha_vantage_key: str | None = None,
-        tushare_token: str | None = None,
-    ) -> Dict[str, pd.DataFrame]:
-        """统一入口：优先使用本地 OHLCV 仓库，不足时再回退远程并写回本地"""
-        return _load_ohlcv_data_impl(tickers, days, data_sources, alpha_vantage_key, tushare_token)
 
 

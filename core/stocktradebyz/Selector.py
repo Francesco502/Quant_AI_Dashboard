@@ -3,106 +3,15 @@ from typing import Dict, List, Optional, Any
 from scipy.signal import find_peaks
 import numpy as np
 import pandas as pd
+from core.technical_indicators import (
+    calculate_kdj as compute_kdj, 
+    calculate_bbi as compute_bbi,
+    calculate_rsv as compute_rsv,
+    calculate_macd_dif as compute_dif,
+    analyze_bbi_trend as bbi_deriv_uptrend
+)
 
 # --------------------------- 通用指标 --------------------------- #
-
-def compute_kdj(df: pd.DataFrame, n: int = 9) -> pd.DataFrame:
-    if df.empty:
-        return df.assign(K=np.nan, D=np.nan, J=np.nan)
-
-    low_n = df["low"].rolling(window=n, min_periods=1).min()
-    high_n = df["high"].rolling(window=n, min_periods=1).max()
-    rsv = (df["close"] - low_n) / (high_n - low_n + 1e-9) * 100
-
-    K = np.zeros_like(rsv, dtype=float)
-    D = np.zeros_like(rsv, dtype=float)
-    for i in range(len(df)):
-        if i == 0:
-            K[i] = D[i] = 50.0
-        else:
-            K[i] = 2 / 3 * K[i - 1] + 1 / 3 * rsv.iloc[i]
-            D[i] = 2 / 3 * D[i - 1] + 1 / 3 * K[i]
-    J = 3 * K - 2 * D
-    return df.assign(K=K, D=D, J=J)
-
-
-def compute_bbi(df: pd.DataFrame) -> pd.Series:
-    ma3 = df["close"].rolling(3).mean()
-    ma6 = df["close"].rolling(6).mean()
-    ma12 = df["close"].rolling(12).mean()
-    ma24 = df["close"].rolling(24).mean()
-    return (ma3 + ma6 + ma12 + ma24) / 4
-
-
-def compute_rsv(
-    df: pd.DataFrame,
-    n: int,
-) -> pd.Series:
-    """
-    按公式：RSV(N) = 100 × (C - LLV(L,N)) ÷ (HHV(C,N) - LLV(L,N))
-    - C 用收盘价最高值 (HHV of close)
-    - L 用最低价最低值 (LLV of low)
-    """
-    low_n = df["low"].rolling(window=n, min_periods=1).min()
-    high_close_n = df["close"].rolling(window=n, min_periods=1).max()
-    rsv = (df["close"] - low_n) / (high_close_n - low_n + 1e-9) * 100.0
-    return rsv
-
-
-def compute_dif(df: pd.DataFrame, fast: int = 12, slow: int = 26) -> pd.Series:
-    """计算 MACD 指标中的 DIF (EMA fast - EMA slow)。"""
-    ema_fast = df["close"].ewm(span=fast, adjust=False).mean()
-    ema_slow = df["close"].ewm(span=slow, adjust=False).mean()
-    return ema_fast - ema_slow
-
-
-def bbi_deriv_uptrend(
-    bbi: pd.Series,
-    *,
-    min_window: int,
-    max_window: int | None = None,
-    q_threshold: float = 0.0,
-) -> bool:
-    """
-    判断 BBI 是否“整体上升”。
-
-    令最新交易日为 T，在区间 [T-w+1, T]（w 自适应，w ≥ min_window 且 ≤ max_window）
-    内，先将 BBI 归一化：BBI_norm(t) = BBI(t) / BBI(T-w+1)。
-
-    再计算一阶差分 Δ(t) = BBI_norm(t) - BBI_norm(t-1)。  
-    若 Δ(t) 的前 q_threshold 分位数 ≥ 0，则认为该窗口通过；只要存在
-    **最长** 满足条件的窗口即可返回 True。q_threshold=0 时退化为
-    “全程单调不降”（旧版行为）。
-
-    Parameters
-    ----------
-    bbi : pd.Series
-        BBI 序列（最新值在最后一位）。
-    min_window : int
-        检测窗口的最小长度。
-    max_window : int | None
-        检测窗口的最大长度；None 表示不设上限。
-    q_threshold : float, default 0.0
-        允许一阶差分为负的比例（0 ≤ q_threshold ≤ 1）。
-    """
-    if not 0.0 <= q_threshold <= 1.0:
-        raise ValueError("q_threshold 必须位于 [0, 1] 区间内")
-
-    bbi = bbi.dropna()
-    if len(bbi) < min_window:
-        return False
-
-    longest = min(len(bbi), max_window or len(bbi))
-
-    # 自最长窗口向下搜索，找到任一满足条件的区间即通过
-    for w in range(longest, min_window - 1, -1):
-        seg = bbi.iloc[-w:]                # 区间 [T-w+1, T]
-        norm = seg / seg.iloc[0]           # 归一化
-        diffs = np.diff(norm.values)       # 一阶差分
-        if np.quantile(diffs, q_threshold) >= 0:
-            return True
-    return False
-
 
 def _find_peaks(
     df: pd.DataFrame,

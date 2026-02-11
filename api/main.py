@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import asyncio
+import os
 from typing import List, Dict, Optional
 import logging
 
@@ -20,6 +21,8 @@ from .routers import (
     trading,
     models,
     accounts,
+    stocktradebyz,
+    backtest,
 )
 from .websocket_manager import WebSocketManager
 from .auth import router as auth_router
@@ -49,10 +52,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS 配置（允许前端跨域访问）
+# CORS 配置（从环境变量读取允许的前端域名）
+_cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:8686,http://localhost:8685")
+_cors_origins = [o.strip() for o in _cors_origins_str.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应限制具体域名
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -67,6 +73,8 @@ app.include_router(forecasting.router, prefix="/api/forecasting", tags=["AI预�
 app.include_router(trading.router, prefix="/api/trading", tags=["交易执行"])
 app.include_router(models.router, prefix="/api/models", tags=["模型管理"])
 app.include_router(accounts.router, prefix="/api/accounts", tags=["账户管理"])
+app.include_router(stocktradebyz.router, prefix="/api/stz", tags=["Z哥战法"])
+app.include_router(backtest.router, prefix="/api/backtest", tags=["策略回测"])
 
 
 @app.get("/")

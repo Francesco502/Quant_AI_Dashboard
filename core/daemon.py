@@ -50,7 +50,7 @@ def load_config() -> Dict[str, Any]:
     """加载守护进程配置，不存在时创建一个默认示例"""
     if not os.path.exists(CONFIG_PATH):
         default = {
-            "universe": ["159755.SZ", "002611", "006810", "160615", "013281"],
+            "universe": ["013281", "002611", "160615", "016858", "159755", "006810"],
             "days": 365,
             "data_sources": ["AkShare", "Tushare"],
             "alpha_vantage_key": "",
@@ -379,6 +379,33 @@ def main() -> None:
     setup_data_update_job(cfg.get("data_update", {}), lambda: data_update_job(cfg))
     setup_trading_job(cfg.get("trading", {}), lambda: trading_job(cfg))
     setup_training_job(cfg.get("training", {}), lambda: training_job(cfg))
+
+    # 注册日终结算任务（每日 15:30 执行，A股收盘后）
+    try:
+        import schedule
+        def _daily_settlement_job():
+            """执行所有账户的日终结算"""
+            try:
+                from .paper_account import PaperAccount
+                from .database import Database
+                db = Database()
+                cursor = db.conn.cursor()
+                cursor.execute("SELECT id, user_id FROM accounts")
+                accounts = cursor.fetchall()
+                for acc in accounts:
+                    try:
+                        pa = PaperAccount(user_id=acc["user_id"], account_id=acc["id"], db=db)
+                        result = pa.daily_settlement()
+                        logging.info(f"daemon: 账户 {acc['id']} 日终结算完成: equity={result['equity']:.2f}")
+                    except Exception as e:
+                        logging.error(f"daemon: 账户 {acc['id']} 日终结算失败: {e}")
+            except Exception as e:
+                logging.error(f"daemon: 日终结算任务异常: {e}")
+
+        schedule.every().day.at("15:30").do(_daily_settlement_job)
+        logging.info("daemon: 已注册日终结算任务 (每日 15:30)")
+    except Exception as e:
+        logging.warning(f"daemon: 注册日终结算任务失败: {e}")
 
     logging.info("daemon: 开始进入调度循环 ...")
     

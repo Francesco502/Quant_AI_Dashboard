@@ -2,16 +2,18 @@
 交易执行 API 路由
 """
 
-from fastapi import APIRouter, HTTPException
-from typing import List, Dict
+from fastapi import APIRouter, HTTPException, Query, Body
+from typing import List, Dict, Optional, Any
 from pydantic import BaseModel
+import pandas as pd
 
 from core.signal_executor import get_signal_executor
 from core.data_service import load_price_data
-from typing import Optional
+from core.paper_account import PaperAccount, InsufficientFundsError, InsufficientSharesError
 
 router = APIRouter()
 
+# --- Request Models ---
 
 class ExecuteSignalsRequest(BaseModel):
     """执行信号请求模型"""
@@ -24,6 +26,132 @@ class ExecuteSignalsRequest(BaseModel):
     alpha_vantage_key: Optional[str] = None
     tushare_token: Optional[str] = None
 
+class TradeOrderRequest(BaseModel):
+    account_id: Optional[int] = None
+    ticker: str
+    action: str  # BUY / SELL
+    shares: int
+    price: Optional[float] = None # Limit price, or None for Market price
+
+class CreateAccountRequest(BaseModel):
+    name: str
+    initial_balance: float = 100000.0
+
+# --- Paper Trading API ---
+
+@router.post("/paper/account")
+async def create_paper_account(request: CreateAccountRequest):
+    """创建新的模拟账户"""
+    try:
+        # TODO: Get real user_id from auth context
+        user_id = 1 
+        account = PaperAccount(user_id=user_id)
+        account_id = account.create_account(request.name, request.initial_balance)
+        return {"status": "success", "account_id": account_id, "message": "账户创建成功"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/paper/account")
+async def get_paper_account_info(account_id: Optional[int] = None):
+    """获取模拟账户详情（资金、持仓、市值）"""
+    try:
+        user_id = 1
+        account = PaperAccount(user_id=user_id, account_id=account_id)
+        if not account_id:
+            if not account.load_default_account():
+                return {"status": "empty", "message": "未找到默认账户"}
+        else:
+            account._load_account()
+            
+        portfolio = account.get_portfolio_value()
+        return {
+            "status": "success",
+            "account_id": account.account_id,
+            "account_name": account.account_name,
+            "currency": account.currency,
+            "portfolio": portfolio
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/paper/order")
+async def place_paper_order(request: TradeOrderRequest):
+    """模拟交易下单"""
+    try:
+        user_id = 1
+        account = PaperAccount(user_id=user_id, account_id=request.account_id)
+        
+        # If account_id not provided, try default
+        if not request.account_id:
+            if not account.load_default_account():
+                 raise HTTPException(status_code=400, detail="未指定账户且无默认账户")
+        else:
+            account._load_account()
+            
+        if request.action.upper() == "BUY":
+            result = account.buy(request.ticker, request.shares, request.price)
+        elif request.action.upper() == "SELL":
+            result = account.sell(request.ticker, request.shares, request.price)
+        else:
+            raise HTTPException(status_code=400, detail="不支持的交易动作")
+            
+        return result
+    except InsufficientFundsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except InsufficientSharesError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/paper/history")
+async def get_trade_history(account_id: Optional[int] = None, limit: int = 50):
+    """获取交易历史"""
+    try:
+        user_id = 1
+        account = PaperAccount(user_id=user_id, account_id=account_id)
+        if not account_id:
+            if not account.load_default_account():
+                return []
+        
+        return account.get_trade_history(limit)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/paper/settlement")
+async def run_daily_settlement(account_id: Optional[int] = None):
+    """执行日终结算（记录权益快照）"""
+    try:
+        user_id = 1
+        account = PaperAccount(user_id=user_id, account_id=account_id)
+        if not account_id:
+            if not account.load_default_account():
+                return {"status": "empty", "message": "未找到默认账户"}
+        else:
+            account._load_account()
+
+        result = account.daily_settlement()
+        return {"status": "success", **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/paper/equity")
+async def get_equity_history(account_id: Optional[int] = None, days: int = 90):
+    """获取权益曲线历史"""
+    try:
+        user_id = 1
+        account = PaperAccount(user_id=user_id, account_id=account_id)
+        if not account_id:
+            if not account.load_default_account():
+                return {"equity_history": []}
+        
+        history = account.get_equity_history(days)
+        return {"equity_history": history}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Original Execution API (Legacy/Stateless) ---
 
 @router.post("/execute")
 async def execute_signals(request: ExecuteSignalsRequest):

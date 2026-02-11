@@ -1,79 +1,72 @@
 @echo off
-chcp 65001 >nul 2>&1
-echo ========================================
-echo Quant-AI-Dashboard 启动脚本
-echo ========================================
-echo.
 cd /d "%~dp0"
-echo 当前目录: %CD%
+title Quant-AI-Dashboard Launcher
+
+echo ==================================================
+echo       Quant-AI-Dashboard Startup Script
+echo ==================================================
 echo.
 
-REM 激活虚拟环境
-set VENV_PATH=%~dp0..\.venv\Scripts\activate.bat
-if exist "%VENV_PATH%" (
-    echo 正在激活虚拟环境...
-    call "%VENV_PATH%"
+REM --- 1. Virtual Environment Check ---
+if exist ".venv\Scripts\activate.bat" (
+    echo [INFO] Found local .venv, activating...
+    call ".venv\Scripts\activate.bat"
 ) else (
-    echo 警告: 未找到虚拟环境，将使用系统 Python
+    if exist "..\.venv\Scripts\activate.bat" (
+        echo [INFO] Found parent .venv, activating...
+        call "..\.venv\Scripts\activate.bat"
+    ) else (
+        echo [WARN] No virtual environment found. Using system Python.
+    )
 )
 echo.
 
-REM 设置环境变量
-set STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-set STREAMLIT_SERVER_HEADLESS=true
+REM --- 2. Password Check ---
+if not "%APP_LOGIN_PASSWORD%"=="" goto LAUNCH
+if not "%APP_LOGIN_PASSWORD_HASH%"=="" goto LAUNCH
 
-REM 检查是否已设置密码
-if not "%APP_LOGIN_PASSWORD%"=="" goto :HAS_PASSWORD
-if not "%APP_LOGIN_PASSWORD_HASH%"=="" goto :HAS_HASH
+echo [CONFIG] Login Protection
+echo 1. Set Temporary Password
+echo 2. Start Without Password (Dev Mode)
+echo.
+set /p choice=Enter choice [1/2] (Default 2): 
 
-REM 未设置密码，显示配置菜单
-echo.
-echo ========================================
-echo 登录配置
-echo ========================================
-echo.
-echo 当前未设置登录保护，系统将以开发模式运行
-echo.
-echo 请选择：
-echo.
-echo     [1] 配置登录保护
-echo.
-echo     [2] 跳过，直接启动
-echo.
-set /p PASSWORD_CHOICE="请输入选项 1 或 2: "
+if "%choice%"=="1" goto SET_PASS
+goto LAUNCH
 
-if "%PASSWORD_CHOICE%"=="1" goto :SET_PASSWORD
-goto :DEV_MODE
+:SET_PASS
+set /p APP_LOGIN_PASSWORD=Enter Password: 
+if "%APP_LOGIN_PASSWORD%"=="" echo [WARN] Password empty, using Dev Mode.
+goto LAUNCH
 
-:SET_PASSWORD
-set /p APP_LOGIN_PASSWORD="请输入访问口令: "
-if "%APP_LOGIN_PASSWORD%"=="" goto :DEV_MODE
+:LAUNCH
 echo.
-echo 口令已配置，系统将启用登录保护
+echo --------------------------------------------------
+echo Starting Services...
+echo --------------------------------------------------
 echo.
-goto :START_APP
 
-:DEV_MODE
-echo.
-echo 使用开发模式启动
-echo.
-goto :START_APP
+REM Start API Server in a new window, keep open if error (cmd /k)
+echo [1/2] Launching API Server (Port 8685)...
+start "Quant API Server" cmd /k "python -m uvicorn api.main:app --host 0.0.0.0 --port 8685 --reload"
 
-:HAS_PASSWORD
-echo [提示] 登录保护已启用
-echo.
-goto :START_APP
+REM Start Frontend in a new window, keep open if error
+echo [2/2] Launching Next.js Frontend (Port 8686)...
+if exist "web" (
+    start "Quant Frontend" cmd /k "cd web && npm start"
+) else (
+    echo [ERROR] 'web' directory not found!
+    pause
+    exit /b
+)
 
-:HAS_HASH
-echo [提示] 登录保护已启用
 echo.
-goto :START_APP
-
-:START_APP
-echo 正在启动 Streamlit 应用...
-echo 启动后请在浏览器中访问: http://localhost:8501
+echo ==================================================
+echo Services are starting in background windows.
+echo Please wait a moment, then visit:
 echo.
-echo 按 Ctrl+C 停止服务
+echo     http://localhost:8686
 echo.
-python -m streamlit run app.py --server.port=8501
+echo ==================================================
+echo.
 pause

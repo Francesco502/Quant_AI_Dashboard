@@ -1,0 +1,309 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  /* Skeuominimalism shadow tokens */
+  --shadow-glass: 0 1px 2px rgba(0,0,0,0.03), 0 4px 16px rgba(0,0,0,0.04);
+  --shadow-glass-hover: 0 2px 4px rgba(0,0,0,0.05), 0 8px 24px rgba(0,0,0,0.06);
+  --shadow-glass-elevated: 0 4px 8px rgba(0,0,0,0.06), 0 16px 40px rgba(0,0,0,0.08);
+  --shadow-glass-inset: inset 0 1px 0 rgba(255,255,255,0.6);
+}
+
+/* ========================================================================
+   Frosted Paper — Skeuominimalism Design System
+   
+   Light-dominant, monochrome grays, frosted glass depth, 
+   minimal accent color. Inspired by physical paper + architectural glass.
+   ======================================================================== */
+
+:root {
+  /* Background — warm off-white, like high-quality paper */
+  --background: 40 8% 97%;
+  /* Foreground — rich charcoal, like letterpress ink */
+  --foreground: 0 0% 11%;
+  
+  /* Cards — pure white base, glass effect via utilities */
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 11%;
+  
+  /* Popover — slightly more opaque for readability */
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 11%;
+  
+  /* Primary — refined slate blue, used sparingly */
+  --primary: 215 25% 32%;
+  --primary-foreground: 0 0% 100%;
+  
+  /* Secondary — cool light gray */
+  --secondary: 220 8% 95%;
+  --secondary-foreground: 0 0% 20%;
+  
+  /* Muted — soft gray for backgrounds */
+  --muted: 220 8% 95%;
+  --muted-foreground: 0 0% 42%;
+  
+  /* Accent — subtle hover/active state */
+  --accent: 220 8% 93%;
+  --accent-foreground: 0 0% 11%;
+  
+  /* Destructive — muted warm red */
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  
+  /* Borders — barely visible dividers */
+  --border: 0 0% 90%;
+  --input: 0 0% 88%;
+  --ring: 215 25% 32%;
+  
+  --radius: 0.875rem;
+}
+
+.dark {
+  --background: 0 0% 7%;
+  --foreground: 0 0% 92%;
+  
+  --card: 0 0% 10%;
+  --card-foreground: 0 0% 92%;
+  
+  --popover: 0 0% 10%;
+  --popover-foreground: 0 0% 92%;
+  
+  --primary: 215 30% 60%;
+  --primary-foreground: 0 0% 100%;
+  
+  --secondary: 0 0% 14%;
+  --secondary-foreground: 0 0% 88%;
+  
+  --muted: 0 0% 14%;
+  --muted-foreground: 0 0% 55%;
+  
+  --accent: 0 0% 16%;
+  --accent-foreground: 0 0% 92%;
+  
+  --destructive: 0 62% 45%;
+  --destructive-foreground: 0 0% 100%;
+  
+  --border: 0 0% 16%;
+  --input: 0 0% 16%;
+  --ring: 215 30% 60%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scrollbar styling — minimal, integrated */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.2);
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
+
+@layer utilities {
+  /* ----------------------------------------------------------------
+     Glass Utilities — Frosted surface effects
+     ---------------------------------------------------------------- */
+  
+  /* Standard glass — for headers, toolbars */
+  .glass {
+    background: rgba(255, 255, 255, 0.82);
+    -webkit-backdrop-filter: blur(40px) saturate(1.6);
+    backdrop-filter: blur(40px) saturate(1.6);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow:
+      var(--shadow-glass),
+      inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  }
+  .dark .glass {
+    background: rgba(20, 20, 20, 0.82);
+    border-color: rgba(255, 255, 255, 0.06);
+    box-shadow:
+      var(--shadow-glass),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+  
+  /* Glass card — for content cards with hover state */
+  .glass-card {
+    background: rgba(255, 255, 255, 0.68);
+    -webkit-backdrop-filter: blur(40px) saturate(1.5);
+    backdrop-filter: blur(40px) saturate(1.5);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    box-shadow:
+      var(--shadow-glass),
+      inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .glass-card:hover {
+    background: rgba(255, 255, 255, 0.78);
+    box-shadow:
+      var(--shadow-glass-hover),
+      inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    transform: translateY(-1px);
+  }
+  .dark .glass-card {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.06);
+    box-shadow:
+      var(--shadow-glass),
+      inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+  .dark .glass-card:hover {
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow:
+      var(--shadow-glass-hover),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  /* Glass dropdown — higher opacity for readability over content */
+  .glass-dropdown {
+    background: rgba(255, 255, 255, 0.94);
+    -webkit-backdrop-filter: blur(48px) saturate(1.8);
+    backdrop-filter: blur(48px) saturate(1.8);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    box-shadow:
+      var(--shadow-glass-elevated),
+      inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+  .dark .glass-dropdown {
+    background: rgba(30, 30, 30, 0.96);
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow:
+      var(--shadow-glass-elevated),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  /* Glass input — for form fields */
+  .glass-input {
+    background: rgba(255, 255, 255, 0.55);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(0, 0, 0, 0.07);
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.04);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .glass-input:focus,
+  .glass-input:focus-within {
+    background: rgba(255, 255, 255, 0.75);
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow:
+      inset 0 1px 3px rgba(0, 0, 0, 0.04),
+      0 0 0 3px rgba(59, 130, 246, 0.08);
+  }
+  .dark .glass-input {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+  .dark .glass-input:focus,
+  .dark .glass-input:focus-within {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.15);
+    box-shadow:
+      inset 0 1px 3px rgba(0, 0, 0, 0.2),
+      0 0 0 3px rgba(59, 130, 246, 0.15);
+  }
+
+  /* ----------------------------------------------------------------
+     Utility classes
+     ---------------------------------------------------------------- */
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Subtle noise texture overlay for background depth */
+  .noise-bg::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    pointer-events: none;
+  }
+
+  /* Skeleton loading animation */
+  .skeleton {
+    @apply animate-pulse rounded-lg;
+    background: linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.04) 25%,
+      rgba(0, 0, 0, 0.08) 50%,
+      rgba(0, 0, 0, 0.04) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  }
+
+  @keyframes skeleton-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+}
+
+/* ----------------------------------------------------------------
+   Reduced Motion — respect user preferences
+   ---------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

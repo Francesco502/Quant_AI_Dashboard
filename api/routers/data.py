@@ -35,7 +35,7 @@ async def get_prices(
         price_data = load_price_data(
             tickers=request.tickers,
             days=request.days,
-            data_sources=request.data_sources or ["AkShare"],
+            data_sources=request.data_sources,
             alpha_vantage_key=request.alpha_vantage_key,
             tushare_token=request.tushare_token,
         )
@@ -113,7 +113,7 @@ async def get_ohlcv(request: DataRequest):
         ohlcv_data = load_ohlcv_data(
             tickers=request.tickers,
             days=request.days,
-            data_sources=request.data_sources or ["AkShare"],
+            data_sources=request.data_sources,
             alpha_vantage_key=request.alpha_vantage_key,
             tushare_token=request.tushare_token,
         )

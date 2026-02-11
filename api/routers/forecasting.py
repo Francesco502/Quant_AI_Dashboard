@@ -5,49 +5,40 @@ AI预测 API 路由
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 from pydantic import BaseModel
-
-from core.advanced_forecasting import quick_predict, advanced_price_forecast
+from core.advanced_forecasting import run_forecast, quick_predict, advanced_price_forecast
 
 router = APIRouter()
-
 
 class ForecastRequest(BaseModel):
     """预测请求模型"""
     tickers: List[str]
-    horizon: int = 5
-    model_type: str = "xgboost"
-    use_production_model: bool = True
-    use_enhanced_features: bool = True
-
+    horizon: int = 30
+    model_type: str = "prophet"
+    use_enhanced_features: bool = False
 
 @router.post("/predict")
 async def predict(request: ForecastRequest):
-    """快速预测（使用生产模型）"""
+    """
+    高级预测接口 (Prophet)
+    """
     try:
         results = {}
         for ticker in request.tickers:
-            pred = quick_predict(
-                ticker=ticker,
-                horizon=request.horizon,
-                model_type=request.model_type,
-                use_production_model=request.use_production_model,
-                save_signal=False,
-            )
+            try:
+                # 调用核心预测函数
+                pred_result = run_forecast(
+                    ticker=ticker,
+                    horizon=request.horizon,
+                    model_type=request.model_type
+                )
+                results[ticker] = pred_result
+            except Exception as e:
+                results[ticker] = {"error": str(e)}
 
-            if pred is not None and not pred.empty:
-                results[ticker] = {
-                    "predictions": [
-                        {"date": str(date), "price": float(price)}
-                        for date, price in pred["prediction"].items()
-                    ],
-                    "horizon": request.horizon,
-                }
-            else:
-                results[ticker] = {"error": "预测失败"}
-
-        return {"results": results}
+        return {"status": "success", "results": results}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"预测失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"预测服务异常: {str(e)}")
+
 
 
 @router.get("/predict/{ticker}")
@@ -56,6 +47,7 @@ async def predict_get(
     horizon: int = Query(5, description="预测天数"),
     model_type: str = Query("xgboost", description="模型类型"),
     use_production_model: bool = Query(True, description="是否使用生产模型"),
+    lookback_days: Optional[int] = Query(None, description="训练数据回看天数"),
 ):
     """快速预测（GET方式）"""
     try:
@@ -65,6 +57,7 @@ async def predict_get(
             model_type=model_type,
             use_production_model=use_production_model,
             save_signal=False,
+            lookback_days=lookback_days,
         )
 
         if pred is None or pred.empty:

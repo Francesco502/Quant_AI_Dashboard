@@ -53,6 +53,95 @@ def calculate_bollinger_bands(data: pd.Series, window: int = 20, num_std: float 
     }
 
 
+def calculate_rsv(df: pd.DataFrame, n: int = 9) -> pd.Series:
+    """
+    计算 RSV (Raw Stochastic Value)
+    RSV(N) = 100 * (C - LLV(L,N)) / (HHV(C,N) - LLV(L,N))
+    """
+    if df.empty:
+        return pd.Series(dtype=float)
+        
+    low_n = df["low"].rolling(window=n, min_periods=1).min()
+    high_n = df["high"].rolling(window=n, min_periods=1).max()
+    rsv = (df["close"] - low_n) / (high_n - low_n + 1e-9) * 100.0
+    return rsv
+
+
+def calculate_kdj(df: pd.DataFrame, n: int = 9) -> pd.DataFrame:
+    """计算KDJ指标"""
+    if df.empty:
+        return df.assign(K=np.nan, D=np.nan, J=np.nan)
+
+    rsv = calculate_rsv(df, n)
+
+    K = np.zeros_like(rsv, dtype=float)
+    D = np.zeros_like(rsv, dtype=float)
+    for i in range(len(df)):
+        if i == 0:
+            K[i] = D[i] = 50.0
+        else:
+            K[i] = 2 / 3 * K[i - 1] + 1 / 3 * rsv.iloc[i]
+            D[i] = 2 / 3 * D[i - 1] + 1 / 3 * K[i]
+    J = 3 * K - 2 * D
+    return df.assign(K=K, D=D, J=J)
+
+
+def calculate_bbi(df: pd.DataFrame) -> pd.Series:
+    """计算BBI指标"""
+    ma3 = df["close"].rolling(3).mean()
+    ma6 = df["close"].rolling(6).mean()
+    ma12 = df["close"].rolling(12).mean()
+    ma24 = df["close"].rolling(24).mean()
+    return (ma3 + ma6 + ma12 + ma24) / 4
+
+
+def calculate_macd_dif(df: pd.DataFrame, fast: int = 12, slow: int = 26) -> pd.Series:
+    """
+    计算 MACD 指标中的 DIF (EMA fast - EMA slow)
+    """
+    ema_fast = df["close"].ewm(span=fast, adjust=False).mean()
+    ema_slow = df["close"].ewm(span=slow, adjust=False).mean()
+    return ema_fast - ema_slow
+
+
+def analyze_bbi_trend(
+    bbi: pd.Series,
+    *,
+    min_window: int,
+    max_window: int | None = None,
+    q_threshold: float = 0.0,
+) -> bool:
+    """
+    判断 BBI 是否“整体上升”。
+    
+    令最新交易日为 T，在区间 [T-w+1, T]（w 自适应，w ≥ min_window 且 ≤ max_window）
+    内，先将 BBI 归一化：BBI_norm(t) = BBI(t) / BBI(T-w+1)。
+
+    再计算一阶差分 Δ(t) = BBI_norm(t) - BBI_norm(t-1)。  
+    若 Δ(t) 的前 q_threshold 分位数 ≥ 0，则认为该窗口通过；只要存在
+    **最长** 满足条件的窗口即可返回 True。q_threshold=0 时退化为
+    “全程单调不降”。
+    """
+    if not 0.0 <= q_threshold <= 1.0:
+        raise ValueError("q_threshold 必须位于 [0, 1] 区间内")
+
+    bbi = bbi.dropna()
+    if len(bbi) < min_window:
+        return False
+
+    longest = min(len(bbi), max_window or len(bbi))
+
+    # 自最长窗口向下搜索，找到任一满足条件的区间即通过
+    for w in range(longest, min_window - 1, -1):
+        seg = bbi.iloc[-w:]                # 区间 [T-w+1, T]
+        norm = seg / seg.iloc[0]           # 归一化
+        diffs = np.diff(norm.values)       # 一阶差分
+        if np.quantile(diffs, q_threshold) >= 0:
+            return True
+    return False
+
+
+
 def calculate_all_indicators(price_data: pd.Series) -> pd.DataFrame:
     """计算所有技术指标"""
     indicators = pd.DataFrame(index=price_data.index)

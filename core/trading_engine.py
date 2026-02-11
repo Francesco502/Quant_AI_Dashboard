@@ -1,4 +1,4 @@
-"""简单模拟交易引擎（阶段 3 + 风险管理集成）
+"""模拟交易引擎（阶段 3 + 风险管理集成）
 
 职责：
 - 将策略信号（如多资产交易信号表）转换为调仓目标；
@@ -10,24 +10,117 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
+import logging
 
 import pandas as pd
 
-from .paper_trading import generate_equal_weight_plan
-from .broker_simulator import (
+from core.paper_trading import generate_equal_weight_plan
+from core.broker_simulator import (
     Trade,
     generate_rebalance_trades,
     apply_trades_to_account,
 )
-from .account import append_equity_history, compute_equity
-from .risk_monitor import RiskMonitor
-from .risk_types import RiskAction, RiskCheckResult
-from .stop_loss_manager import StopLossManager
-from .order_manager import OrderManager
-from .order_types import Order, OrderType, OrderSide, Fill
-from .slippage_model import SlippageModel, SlippageConfig
-from .execution_algorithms import ExecutionAlgorithm, get_execution_algorithm
+from core.account import append_equity_history, compute_equity
+from core.risk_monitor import RiskMonitor
+from core.risk_types import RiskAction, RiskCheckResult
+from core.stop_loss_manager import StopLossManager
+from core.order_manager import OrderManager
+from core.order_types import Order, OrderType, OrderSide, Fill, OrderStatus
+from core.slippage_model import SlippageModel, SlippageConfig
+from core.execution_algorithms import ExecutionAlgorithm, get_execution_algorithm
+from core.interfaces.broker_adapter import BrokerAdapter
+
+logger = logging.getLogger(__name__)
+
+class TradingEngine:
+    """
+    Phase 4 Trading Engine
+    Orchestrates trading operations using Broker Adapters (Real/Paper).
+    """
+    def __init__(self, broker: BrokerAdapter, risk_monitor: Optional[RiskMonitor] = None):
+        self.broker = broker
+        self.risk_monitor = risk_monitor
+
+    def execute_rebalance(self, target_positions: Dict[str, int], prices: Dict[str, float]) -> Tuple[List[Order], List[str]]:
+        """
+        Execute rebalance logic:
+        1. Compare current positions with target.
+        2. Generate Orders.
+        3. Check Risk.
+        4. Place Orders via Broker.
+        """
+        current_positions_objs = self.broker.get_positions()
+        current_positions = {p.ticker: int(p.shares) for p in current_positions_objs}
+        orders = []
+        messages = []
+        
+        # 1. Generate Orders (Diff)
+        # Handle existing positions (sell or hold)
+        for ticker, shares in current_positions.items():
+            target = target_positions.get(ticker, 0)
+            diff = target - shares
+            if diff == 0: continue
+            
+            side = OrderSide.BUY if diff > 0 else OrderSide.SELL
+            orders.append(Order(
+                order_id=f"ORD_{datetime.now().timestamp()}_{ticker}",
+                symbol=ticker,
+                side=side,
+                order_type=OrderType.MARKET,
+                quantity=abs(diff),
+                price=prices.get(ticker, 0)
+            ))
+            
+        # Handle new positions
+        for ticker, target in target_positions.items():
+            if ticker not in current_positions and target > 0:
+                orders.append(Order(
+                    order_id=f"ORD_{datetime.now().timestamp()}_{ticker}",
+                    symbol=ticker,
+                    side=OrderSide.BUY,
+                    order_type=OrderType.MARKET,
+                    quantity=target,
+                    price=prices.get(ticker, 0)
+                ))
+        
+        # 2. Risk Check & Execute
+        executed_orders = []
+        account_info = self.broker.get_account_info()
+        
+        # Simplified Account Dict for RiskMonitor compatibility
+        account_dict = {
+            "positions": current_positions,
+            "cash": account_info["cash"],
+            "total_assets": account_info["total_assets"]
+        }
+
+        for order in orders:
+            if self.risk_monitor:
+                risk_order = {
+                    "symbol": order.symbol,
+                    "side": order.side.value,
+                    "quantity": order.quantity if order.side == OrderSide.BUY else -order.quantity,
+                    "price": order.price or 0
+                }
+                res = self.risk_monitor.check_order_risk(risk_order, account_dict, prices)
+                if res.action in [RiskAction.REJECT, RiskAction.EMERGENCY_STOP]:
+                    messages.append(f"Risk Rejected {order.symbol}: {res.message}")
+                    continue
+            
+            # Place Order
+            try:
+                filled_order = self.broker.place_order(order)
+                if filled_order.status in [OrderStatus.FILLED, OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED]:
+                    executed_orders.append(filled_order)
+                    messages.append(f"Order Placed {order.symbol}: {filled_order.status.value}")
+                else:
+                    messages.append(f"Order Failed {order.symbol}: {filled_order.status.value}")
+            except Exception as e:
+                logger.error(f"Order Execution Exception: {e}")
+                messages.append(f"Order Exception {order.symbol}: {str(e)}")
+                
+        return executed_orders, messages
 
 
 def apply_equal_weight_rebalance(
@@ -255,5 +348,3 @@ def apply_equal_weight_rebalance(
         risk_info = f"（{len(rejected_trades)} 笔交易因风险检查被拒绝）"
 
     return account, f"本次调仓共执行 {len(trades)} 笔交易。{risk_info}"
-
-

@@ -13,10 +13,12 @@ build/
 venv/
 env/
 ENV/
+.venv/
 
 # IDE
 .vscode/
 .idea/
+.trae/
 *.swp
 *.swo
 *~
@@ -29,35 +31,33 @@ data/**/*.parquet
 # 配置文件（通过 volume 挂载，避免覆盖）
 daemon_config.json
 daemon_status.json
-.streamlit/user_state.json
-.streamlit/paper_account.json
 
 # Git
 .git/
 .gitignore
 .gitattributes
 
-# Docker
-Dockerfile
+# Docker（不需要嵌套复制）
 docker-compose.yml
 .dockerignore
 
-# 文档和脚本（可选，如果不需要在容器内）
+# 前端代码（后端镜像不需要）
+web/
+nginx/
+
+# 文档和脚本
+docs/
 *.md
-*.txt
 !requirements.txt
-!requirements_advanced.txt
 *.bat
 *.ps1
-*.sh
 
 # 测试
 tests/
-test_*.py
-*_test.py
 
 # 其他
 .DS_Store
 *.bak
 *.tmp
-
+.env
+.env.*

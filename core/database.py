@@ -40,7 +40,9 @@ class Database:
         self.conn: Optional[sqlite3.Connection] = None
         
         # 确保目录存在
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        dir_name = os.path.dirname(db_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         
         # 初始化数据库
         self._init_database()
@@ -85,6 +87,120 @@ class Database:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_date 
             ON price_data(date)
+        """)
+
+        # --------------------
+        # 用户系统表
+        # --------------------
+
+        # 1. Users 表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 2. User Assets 表 (替代 user_state.json 中的 assets)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                ticker TEXT NOT NULL,
+                asset_type TEXT DEFAULT 'stock', -- stock, fund, gold
+                alias TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                UNIQUE(user_id, ticker)
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_assets_user_id 
+            ON user_assets(user_id)
+        """)
+
+        # 3. User Strategies 表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_strategies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                strategy_name TEXT NOT NULL,
+                config TEXT, -- JSON format
+                is_active BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+
+        # --------------------
+        # 模拟交易系统表
+        # --------------------
+
+        # 4. Accounts 表 (模拟账户资金)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                account_name TEXT NOT NULL,
+                balance REAL DEFAULT 100000.0,
+                frozen REAL DEFAULT 0.0,
+                currency TEXT DEFAULT 'CNY',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+
+        # 5. Positions 表 (持仓)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL,
+                ticker TEXT NOT NULL,
+                shares INTEGER DEFAULT 0,
+                avg_cost REAL DEFAULT 0.0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(account_id) REFERENCES accounts(id),
+                UNIQUE(account_id, ticker)
+            )
+        """)
+
+        # 6. Trade History 表 (交易记录)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trade_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL,
+                ticker TEXT NOT NULL,
+                action TEXT NOT NULL, -- BUY, SELL
+                price REAL NOT NULL,
+                shares INTEGER NOT NULL,
+                fee REAL DEFAULT 0.0,
+                trade_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(account_id) REFERENCES accounts(id)
+            )
+        """)
+
+        # 7. Equity History 表 (每日权益快照，用于绘制权益曲线)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS equity_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL,
+                date DATE NOT NULL,
+                equity REAL NOT NULL,
+                cash REAL NOT NULL,
+                position_value REAL NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(account_id) REFERENCES accounts(id),
+                UNIQUE(account_id, date)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_equity_history_account_date
+            ON equity_history(account_id, date)
         """)
         
         self.conn.commit()
@@ -175,7 +291,13 @@ class Database:
             if self.conn:
                 self.conn.rollback()
             return False
-    
+            
+    def close(self):
+        """关闭数据库连接"""
+        if self.conn:
+            self.conn.close()
+            self.conn = None
+
     def query_price_data(
         self,
         ticker: str,

@@ -202,11 +202,12 @@ ws.onmessage = (event) => {
 3. **数据格式**: 日期时间使用ISO格式字符串
 4. **异步处理**: 所有路由都是异步的，支持高并发
 
-## 与 Streamlit 共存
+## 服务架构
 
-API 服务可以与 Streamlit Dashboard 同时运行：
-- Streamlit: http://localhost:8501 (Dashboard)
-- FastAPI: http://localhost:8000 (API)
+系统采用前后端分离架构：
+- Next.js 前端: http://localhost:8686 (Dashboard)
+- FastAPI 后端: http://localhost:8685 (API)
+- Nginx 反向代理: http://localhost:80 (统一入口)
 
-两者共享相同的业务逻辑层（`core/` 模块），互不干扰。
+前后端通过 RESTful API 通信，共享 `core/` 业务逻辑层。
 

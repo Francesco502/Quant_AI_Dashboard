@@ -18,12 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import logging
 
-try:
-    import streamlit as st
-    STREAMLIT_AVAILABLE = True
-except ImportError:
-    STREAMLIT_AVAILABLE = False
-    st = None
+
 
 
 logger = logging.getLogger(__name__)
@@ -180,8 +175,7 @@ class MultiLevelCache:
     def __init__(
         self,
         l1_max_size: int = 1000,
-        cache_dir: Optional[str] = None,
-        use_streamlit_cache: bool = True
+        cache_dir: Optional[str] = None
     ):
         """
         初始化多级缓存
@@ -189,11 +183,9 @@ class MultiLevelCache:
         Args:
             l1_max_size: L1缓存最大项数
             cache_dir: L2缓存目录
-            use_streamlit_cache: 是否使用Streamlit缓存（如果可用）
         """
         self.l1_cache = MemoryCache(max_size=l1_max_size)
         self.l2_cache = DiskCache(cache_dir=cache_dir)
-        self.use_streamlit_cache = use_streamlit_cache and STREAMLIT_AVAILABLE
     
     def get(
         self,
@@ -201,7 +193,7 @@ class MultiLevelCache:
         default: Any = None
     ) -> Any:
         """
-        获取缓存值（按L1 -> L2 -> Streamlit的顺序）
+        获取缓存值（按L1 -> L2 的顺序）
 
         Args:
             key: 缓存键
@@ -221,11 +213,6 @@ class MultiLevelCache:
             # 提升到L1
             self.l1_cache.set(key, value)
             return value
-        
-        # Streamlit缓存（如果可用）
-        if self.use_streamlit_cache:
-            # Streamlit缓存需要函数调用，这里只做标记
-            pass
         
         return default
     

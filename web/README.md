@@ -1,39 +1,42 @@
-# Quant AI Dashboard - Frontend
+# Quant-AI Dashboard Frontend (v1.0.0)
 
-This is the new Next.js frontend for the Quant AI Dashboard, designed with the Apple Human Interface Guidelines.
+Frontend application for Quant-AI Dashboard, built with Next.js App Router.
 
-## Getting Started
+## Runtime Baseline
+- Framework: Next.js 16
+- React: 19
+- Default dev/start port: `8686`
 
-1.  **Install Dependencies**
-    ```bash
-    cd web
-    npm install
-    ```
+## Local Development
+```bash
+cd web
+npm install
+npm run dev
+```
 
-2.  **Run Development Server**
-    ```bash
-    npm run dev
-    ```
+Open: [http://localhost:8686](http://localhost:8686)
 
-3.  **Open in Browser**
-    Visit [http://localhost:8686](http://localhost:8686)
+## Backend API Connection
+- Default API base in code: `http://127.0.0.1:8685/api`
+- Local development:
 
-## Architecture
+```bash
+# web/.env.local
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8685/api
+```
 
-*   **Framework**: Next.js 14 (App Router)
-*   **Styling**: Tailwind CSS v4 + Shadcn UI
-*   **State Management**: React Hooks + API Client
-*   **Backend Connection**: Connects to FastAPI at `http://localhost:8000`
+## Quality Commands
+```bash
+npm run lint
+npm run build
+npm run start
+```
 
-## Project Structure
+## Structure
+- `src/app/`: route pages
+- `src/components/`: reusable UI components
+- `src/lib/api.ts`: typed API client and request contracts
 
-*   `src/app`: Pages and Layouts
-*   `src/components/ui`: Reusable UI components (Buttons, Cards, etc.)
-*   `src/components/layout`: Global layout components (Sidebar, Header)
-*   `src/lib/api.ts`: API Client for backend integration
-
-## Features
-
-*   **Apple Design System**: Glassmorphism, San Francisco-style typography, smooth animations.
-*   **Real-time Data**: Fetches market data from the existing Python backend.
-*   **Interactive Charts**: High-performance charts using Recharts.
+## Versioned Release Docs
+- `../docs/RELEASE_NOTES_v1.0.0.md`
+- `../docs/CODE_CHANGES_v1.0.0.md`

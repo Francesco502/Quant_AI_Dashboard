@@ -19,11 +19,12 @@ ENV/
 .vscode/
 .idea/
 .trae/
+.cursor/
 *.swp
 *.swo
 *~
 
-# 日志和数据（运行时生成，通过 volume 挂载）
+# 日志和数据（运行时通过 volume 挂载）
 logs/*.log
 data/**/*.parquet
 *.parquet
@@ -37,23 +38,21 @@ daemon_status.json
 .gitignore
 .gitattributes
 
-# Docker（不需要嵌套复制）
+# Docker（不嵌套复制）
 docker-compose.yml
+docker-compose.optimized.yml
 .dockerignore
 
-# 前端代码（后端镜像不需要）
-web/
-nginx/
-
-# 文档和脚本
+# 文档（镜像不需要）
 docs/
 *.md
 !requirements.txt
 *.bat
 *.ps1
 
-# 测试
+# 测试（镜像不需要）
 tests/
+examples/
 
 # 其他
 .DS_Store
@@ -61,3 +60,8 @@ tests/
 *.tmp
 .env
 .env.*
+
+# 前端构建产物（由多阶段构建处理，不从宿主机复制）
+web/node_modules/
+web/.next/
+web/out/

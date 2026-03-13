@@ -154,6 +154,16 @@ class Database:
             )
         """)
 
+        # 添加初始资本和状态字段（用于兼容老数据）
+        try:
+            cursor.execute("ALTER TABLE accounts ADD COLUMN initial_capital REAL")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute("ALTER TABLE accounts ADD COLUMN status TEXT DEFAULT 'active'")
+        except sqlite3.OperationalError:
+            pass
+
         # 5. Positions 表 (持仓)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS positions (
@@ -167,6 +177,12 @@ class Database:
                 UNIQUE(account_id, ticker)
             )
         """)
+
+        # 添加 available_shares 字段（用于T+1考虑）
+        try:
+            cursor.execute("ALTER TABLE positions ADD COLUMN available_shares INTEGER")
+        except sqlite3.OperationalError:
+            pass
 
         # 6. Trade History 表 (交易记录)
         cursor.execute("""
@@ -202,9 +218,200 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_equity_history_account_date
             ON equity_history(account_id, date)
         """)
-        
+
+        # --------------------
+        # 订单与交易系统表 (新增)
+        # --------------------
+
+        # 8. Orders 表 (订单持久化)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id TEXT UNIQUE NOT NULL,
+                account_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                order_type TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                price REAL,
+                stop_price REAL,
+                status TEXT DEFAULT 'PENDING',
+                filled_quantity INTEGER DEFAULT 0,
+                avg_fill_price REAL DEFAULT 0.0,
+                time_in_force TEXT DEFAULT 'DAY',
+                strategy_id TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                FOREIGN KEY(account_id) REFERENCES accounts(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_orders_account ON orders(account_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_orders_symbol ON orders(symbol)
+        """)
+
+        # 9. Fills 表 (成交记录)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS fills (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fill_id TEXT UNIQUE NOT NULL,
+                order_id TEXT NOT NULL,
+                account_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                price REAL NOT NULL,
+                commission REAL DEFAULT 0.0,
+                slippage REAL DEFAULT 0.0,
+                executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(order_id) REFERENCES orders(order_id),
+                FOREIGN KEY(account_id) REFERENCES accounts(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_fills_order ON fills(order_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_fills_account ON fills(account_id)
+        """)
+
+        # 10. Stop Loss Rules 表 (止损止盈规则)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stop_loss_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                rule_type TEXT NOT NULL,
+                stop_type TEXT NOT NULL,
+                trigger_price REAL NOT NULL,
+                quantity INTEGER,
+                enabled BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(account_id) REFERENCES accounts(id),
+                UNIQUE(account_id, symbol, rule_type)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_stop_loss_rules_account ON stop_loss_rules(account_id)
+        """)
+
+        # 11. Stop Loss Rules 表添加 last_triggered_at 字段（用于防止重复触发）
+        try:
+            cursor.execute("""
+                ALTER TABLE stop_loss_rules ADD COLUMN last_triggered_at TIMESTAMP
+            """)
+        except sqlite3.OperationalError:
+            pass  # 字段已存在
+
+        # 12. Risk Events 表 (风险事件记录)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS risk_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER,
+                event_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                message TEXT NOT NULL,
+                symbol TEXT,
+                order_id TEXT,
+                details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_risk_events_account ON risk_events(account_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_risk_events_severity ON risk_events(severity)
+        """)
+
+        # 更新 stop_loss_rules 表，添加最小触发时间间隔字段（默认60秒）
+        try:
+            cursor.execute("""
+                ALTER TABLE stop_loss_rules ADD COLUMN cooldown_seconds INTEGER DEFAULT 60
+            """)
+        except sqlite3.OperationalError:
+            pass  # 字段已存在
+
+        # 更新 trade_history 表，添加 order_id 和 pnl 字段
+        try:
+            cursor.execute("""
+                ALTER TABLE trade_history ADD COLUMN order_id TEXT
+            """)
+        except sqlite3.OperationalError:
+            pass  # 字段已存在
+
+        try:
+            cursor.execute("""
+                ALTER TABLE trade_history ADD COLUMN pnl REAL
+            """)
+        except sqlite3.OperationalError:
+            pass  # 字段已存在
+
+        # 13. Strategy Templates 表 (策略模板库)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS strategy_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                template_name TEXT NOT NULL,
+                strategy_id TEXT NOT NULL,
+                strategy_type TEXT NOT NULL,
+                description TEXT,
+                params TEXT NOT NULL,
+                is_public BOOLEAN DEFAULT 0,
+                is_favorite BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_strategy_templates_user
+            ON strategy_templates(user_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_strategy_templates_strategy
+            ON strategy_templates(strategy_id)
+        """)
+
+        # 14. Backtest History 表 (回测历史记录)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS backtest_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                template_id INTEGER,
+                strategy_id TEXT NOT NULL,
+                strategy_params TEXT,
+                tickers TEXT NOT NULL,
+                start_date DATE NOT NULL,
+                end_date DATE,
+                initial_capital REAL NOT NULL,
+                metrics TEXT,
+                equity_curve TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(template_id) REFERENCES strategy_templates(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_backtest_history_user
+            ON backtest_history(user_id)
+        """)
+
         self.conn.commit()
-    
+
     def save_price_data(
         self,
         ticker: str,
@@ -224,18 +431,18 @@ class Database:
         """
         if data is None or data.empty:
             return False
-        
+
         try:
             # 转换为DataFrame
             if isinstance(data, pd.Series):
                 df = pd.DataFrame({"close": data})
             else:
                 df = data.copy()
-            
+
             # 确保有日期索引
             if not isinstance(df.index, pd.DatetimeIndex):
                 df.index = pd.to_datetime(df.index)
-            
+
             # 准备数据
             records = []
             for date, row in df.iterrows():
@@ -244,7 +451,7 @@ class Database:
                     "date": date.strftime("%Y-%m-%d"),
                     "close": float(row.get("close", 0)),
                 }
-                
+
                 # 添加OHLCV列（如果存在）
                 for col in ["open", "high", "low", "volume"]:
                     if col in row:
@@ -255,41 +462,57 @@ class Database:
                             record[col] = None
                     else:
                         record[col] = None
-                
+
                 records.append(record)
-            
+
             if not records:
                 return False
-            
-            # 批量插入
+
+            # 批量插入，使用事务和分批提交
             cursor = self.conn.cursor()
-            
-            if replace:
-                # 先删除该标的的所有旧数据
-                cursor.execute("DELETE FROM price_data WHERE ticker = ?", (ticker,))
-                # 然后插入新数据
-                cursor.executemany("""
-                    INSERT INTO price_data 
-                    (ticker, date, open, high, low, close, volume, updated_at)
-                    VALUES (:ticker, :date, :open, :high, :low, :close, :volume, CURRENT_TIMESTAMP)
-                """, records)
-            else:
-                # 使用INSERT OR IGNORE（跳过已存在的数据）
-                cursor.executemany("""
-                    INSERT OR IGNORE INTO price_data 
-                    (ticker, date, open, high, low, close, volume)
-                    VALUES (:ticker, :date, :open, :high, :low, :close, :volume)
-                """, records)
-            
-            self.conn.commit()
-            
+
+            # 使用事务包裹整个操作
+            cursor.execute("BEGIN TRANSACTION")
+
+            try:
+                if replace:
+                    # 先删除该标的的所有旧数据
+                    cursor.execute("DELETE FROM price_data WHERE ticker = ?", (ticker,))
+
+                    # 分批插入新数据（每1000条一批）
+                    batch_size = 1000
+                    for i in range(0, len(records), batch_size):
+                        batch = records[i:i + batch_size]
+                        cursor.executemany("""
+                            INSERT INTO price_data
+                            (ticker, date, open, high, low, close, volume, updated_at)
+                            VALUES (:ticker, :date, :open, :high, :low, :close, :volume, CURRENT_TIMESTAMP)
+                        """, batch)
+                else:
+                    # 使用INSERT OR IGNORE（跳过已存在的数据，分批）
+                    batch_size = 1000
+                    for i in range(0, len(records), batch_size):
+                        batch = records[i:i + batch_size]
+                        cursor.executemany("""
+                            INSERT OR IGNORE INTO price_data
+                            (ticker, date, open, high, low, close, volume)
+                            VALUES (:ticker, :date, :open, :high, :low, :close, :volume)
+                        """, batch)
+
+                cursor.execute("COMMIT")
+            except Exception as e:
+                cursor.execute("ROLLBACK")
+                raise
+
             logger.debug(f"保存价格数据: {ticker} - {len(records)} 条记录")
             return True
-            
+
         except Exception as e:
             logger.error(f"保存价格数据失败: {ticker} - {e}")
-            if self.conn:
+            try:
                 self.conn.rollback()
+            except Exception:
+                pass
             return False
             
     def close(self):

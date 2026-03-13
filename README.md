@@ -1,6 +1,6 @@
 # Quant-AI Dashboard
 
-Personal quantitative analysis and learning system (**v1.0.0**).
+Personal quantitative analysis and learning system (**v2.0.0-alpha.1**).
 
 ## Positioning
 - Personal research and decision support.
@@ -43,9 +43,9 @@ cd web
 npm run lint
 ```
 
-## Release Documents (v1.0.0)
-- Release notes: [`docs/RELEASE_NOTES_v1.0.0.md`](docs/RELEASE_NOTES_v1.0.0.md)
-- Code change log: [`docs/CODE_CHANGES_v1.0.0.md`](docs/CODE_CHANGES_v1.0.0.md)
+## Release Documents (v2.0.0-alpha.1)
+- Release notes: [`docs/RELEASE_NOTES_v2.0.0-alpha.1.md`](docs/RELEASE_NOTES_v2.0.0-alpha.1.md)
+- Code change log: [`docs/CODE_CHANGES_v2.0.0-alpha.1.md`](docs/CODE_CHANGES_v2.0.0-alpha.1.md)
 
 ## Deployment Notes (2C/2G)
 - Runtime image uses `requirements.runtime.txt` (lean baseline).

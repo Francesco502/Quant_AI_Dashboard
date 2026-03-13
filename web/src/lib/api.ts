@@ -1,4 +1,4 @@
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8685/api";
+﻿export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8685/api";
 
 export interface ApiResponse<T> {
   status?: string;
@@ -6,6 +6,9 @@ export interface ApiResponse<T> {
   data?: T;
   [key: string]: unknown;
 }
+
+export type UnknownRecord = Record<string, unknown>;
+export type UnknownArray = unknown[];
 
 export interface PricePoint {
   date: string;
@@ -42,6 +45,9 @@ export interface RunStrategyParams {
   selector_names?: string[];
   selector_params?: Record<string, Record<string, unknown>>;
   tickers?: string[];
+  market?: "CN" | "HK";
+  min_score?: number;
+  top_n?: number;
 }
 
 export interface RunStrategyResult {
@@ -69,6 +75,47 @@ export interface ForecastResult {
   ticker: string;
   predictions: PricePoint[];
   horizon: number;
+  metrics?: {
+    MAE?: number;
+    RMSE?: number;
+    MAPE?: number;
+    mae?: number;
+    rmse?: number;
+    mape?: number;
+    [key: string]: number | undefined;
+  };
+}
+
+// --- Strategy Template Interfaces ---
+
+export interface StrategyTemplate {
+  id: number;
+  template_name: string;
+  strategy_id: string;
+  strategy_type: string;
+  description?: string;
+  params: Record<string, unknown>;
+  is_public: boolean;
+  is_favorite: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateTemplateRequest {
+  template_name: string;
+  strategy_id: string;
+  strategy_type: string;
+  description?: string;
+  params: Record<string, unknown>;
+  is_public?: boolean;
+}
+
+export interface UpdateTemplateRequest {
+  template_name?: string;
+  description?: string;
+  params?: Record<string, unknown>;
+  is_public?: boolean;
+  is_favorite?: boolean;
 }
 
 export interface Signal {
@@ -109,6 +156,28 @@ export interface PaperAccountInfo {
     }
 }
 
+interface PaperPositionBackend {
+    shares?: number;
+    avg_cost?: number;
+    market_value?: number;
+    unrealized_pnl?: number;
+}
+
+interface PaperAccountBackendResponse {
+    account_id?: number | null;
+    account_name?: string | null;
+    balance?: number;
+    frozen?: number;
+    total_assets?: number;
+    positions?: Record<string, PaperPositionBackend>;
+    portfolio?: {
+        total_assets?: number;
+        cash?: number;
+        market_value?: number;
+        position_value?: number;
+    };
+}
+
 export interface Position {
     ticker: string;
     shares: number;
@@ -142,6 +211,90 @@ export interface CreateAccountRequest {
     initial_balance?: number;
 }
 
+export interface PerformanceMetrics {
+    account_id: number;
+    initial_capital: number;
+    total_assets: number;
+    cash: number;
+    market_value: number;
+    total_return_pct: number;
+    annual_return_pct: number;
+    sharpe_ratio: number;
+    max_drawdown_pct: number;
+    win_rate_pct: number;
+    total_trades: number;
+    profitable_trades: number;
+    days_active: number;
+    timestamp: string;
+}
+
+export interface EquityPoint {
+    date: string;
+    equity: number;
+    cash: number;
+    market_value: number;
+}
+
+export interface EquityCurve {
+    account_id: number;
+    days: number;
+    data: EquityPoint[];
+    count: number;
+}
+
+export interface DecisionDashboardResult {
+    ticker: string;
+    conclusion: string;
+    action: string;
+    score: number;
+    buy_price: number | null;
+    stop_loss: number | null;
+    target_price: number | null;
+    checklist: {
+        condition: string;
+        status: string;
+        value: string;
+    }[];
+    highlights: string[];
+    risks: string[];
+    latest_price?: number;
+    latest_rsi?: number;
+    timestamp: string;
+}
+
+export interface ReturnContributionItem {
+    ticker: string;
+    return_pct: number;
+    contribution_pct: number;
+    weight: number;
+}
+
+export interface PortfolioAnalyzeResponse {
+    summary: Record<string, unknown>;
+    asset_metrics: Array<Record<string, unknown>>;
+    risk_metrics: {
+        max_drawdown: number;
+        var_95: number;
+        cvar_95?: number;
+    };
+    recommendations: Array<Record<string, unknown>>;
+    correlations: number[][];
+    contributions: ReturnContributionItem[];
+    return_attribution?: Record<string, unknown>;
+    risk_contributions?: Array<Record<string, unknown>>;
+    factor_exposures?: Array<Record<string, unknown>>;
+    benchmark_attribution?: Record<string, unknown>;
+    highly_correlated_pairs: Array<Record<string, unknown>>;
+    technical_signals: Array<Record<string, unknown>>;
+  timestamp: string;
+}
+
+export interface AssetTypeResponse extends UnknownRecord {
+  ticker: string;
+  asset_type?: string;
+  market?: string;
+}
+
 // --- Market Scanner Interfaces ---
 
 export interface ScanMarketRequest {
@@ -160,13 +313,40 @@ export interface ScanResultItem {
 }
 
 export interface ScanResult {
-    status: string;
-    count: number;
-    results: ScanResultItem[];
+  status: string;
+  count: number;
+  results: ScanResultItem[];
+}
+
+export interface BacktestStrategyResult extends UnknownRecord {
+  metrics?: Record<string, number>;
+  equity_curve?: UnknownArray;
+  trades?: UnknownArray;
+}
+
+export interface BacktestPortfolioResult extends UnknownRecord {
+  metrics?: Record<string, number>;
+  equity_curve?: UnknownArray;
+  trades?: UnknownArray;
+  weights?: Record<string, number>;
+}
+
+export interface BacktestRunResponse extends UnknownRecord {
+  portfolio?: BacktestPortfolioResult;
+  individual?: Record<string, BacktestStrategyResult>;
+  metrics?: Record<string, number>;
+  equity_curve?: UnknownArray;
+  trades?: UnknownArray;
+  stz_result?: UnknownRecord;
+}
+
+export interface BacktestExportResponse extends UnknownRecord {
+  download_url?: string;
+  format?: string;
 }
 
 /**
- * 获取认证 Headers（自动注入 Token）
+ * Build auth headers and auto-attach bearer token from localStorage.
  */
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -189,27 +369,85 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
     ...options.headers,
   };
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Unknown network error";
+    throw new Error(`Cannot reach API service (${url}). ${message}`);
+  }
 
-  // Token 过期或无效 → 自动跳转登录页
+  // Redirect to login when token is missing/expired.
   if (response.status === 401) {
     if (typeof window !== "undefined") {
       localStorage.removeItem("token");
       localStorage.removeItem("user");
       window.location.href = "/login";
     }
-    throw new Error("认证已过期，请重新登录");
+    throw new Error("Authentication expired. Please sign in again.");
   }
-
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || `API Request failed: ${response.statusText}`);
   }
 
   return response.json();
+}
+
+function toNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  return fallback;
+}
+
+function normalizePaperAccount(payload: PaperAccountBackendResponse): PaperAccountInfo | null {
+  const accountId = payload?.account_id;
+  if (accountId === null || accountId === undefined) {
+    return null;
+  }
+
+  const accountPortfolio = payload?.portfolio;
+  const cash = toNumber(payload?.balance ?? accountPortfolio?.cash, 0);
+  const totalAssets = toNumber(payload?.total_assets ?? accountPortfolio?.total_assets, 0);
+
+  const positionsObj = payload?.positions ?? {};
+  const positions = Object.entries(positionsObj).map(([ticker, pos]) => ({
+    ticker,
+    shares: toNumber(pos?.shares, 0),
+    avg_cost: toNumber(pos?.avg_cost, 0),
+    updated_at: "",
+    market_value: toNumber(pos?.market_value, 0),
+    unrealized_pnl: toNumber(pos?.unrealized_pnl, 0),
+  }));
+
+  const summedMarketValue = positions.reduce((sum, p) => sum + toNumber(p.market_value, 0), 0);
+  const fallbackMarketValue = Math.max(totalAssets - cash, 0);
+  const marketValue = toNumber(
+    accountPortfolio?.market_value ?? accountPortfolio?.position_value,
+    summedMarketValue > 0 ? summedMarketValue : fallbackMarketValue
+  );
+
+  return {
+    status: "success",
+    account_id: toNumber(accountId, 0),
+    account_name: payload?.account_name || "Paper Account",
+    currency: "CNY",
+    portfolio: {
+      total_assets: totalAssets,
+      cash,
+      market_value: marketValue,
+      positions,
+    },
+  };
 }
 
 export interface DataSourceResponse {
@@ -271,13 +509,14 @@ export const api = {
     getHistoryDetail: (date: string) => fetchApi<unknown[]>("/stz/history/" + date),
   },
   forecasting: {
-    predict: (data: { tickers: string[], horizon: number, model_type: string }) =>
-      fetchApi<any>("/forecasting/predict", {
+    predict: (data: { tickers: string[], horizon: number, model_type?: string }) =>
+      fetchApi<UnknownRecord>("/forecasting/predict", {
         method: "POST",
         body: JSON.stringify(data),
       }),
     getPrediction: (ticker: string, horizon: number, model_type: string, lookback_days: number) =>
       fetchApi<ForecastResult>(`/forecasting/predict/${ticker}?horizon=${horizon}&model_type=${model_type}&lookback_days=${lookback_days}`),
+    getModelList: () => fetchApi<{ models: string[] }>("/forecasting/models"),
   },
   signals: {
     list: (params: { ticker?: string; days?: number; status?: string } = {}) => {
@@ -299,32 +538,107 @@ export const api = {
     // Paper Trading Endpoints
     paper: {
         createAccount: (data: CreateAccountRequest) =>
-            fetchApi("/trading/paper/account", {
+            fetchApi("/trading/accounts", {
                 method: "POST",
-                body: JSON.stringify(data),
+                body: JSON.stringify({
+                    name: data.name,
+                    initial_balance: data.initial_balance ?? 100000,
+                }),
             }),
-        getAccount: (accountId?: number) =>
-            fetchApi<PaperAccountInfo>(`/trading/paper/account${accountId ? `?account_id=${accountId}` : ''}`, {
-                method: "GET",
-            }),
-        placeOrder: (data: TradeOrderRequest) =>
-            fetchApi("/trading/paper/order", {
+        getAccount: async (accountId?: number): Promise<PaperAccountInfo | null> => {
+            if (accountId) {
+                const detail = await fetchApi<{
+                    account_id?: number;
+                    account_name?: string;
+                    portfolio?: {
+                        total_assets?: number;
+                        cash?: number;
+                        market_value?: number;
+                        position_value?: number;
+                    };
+                    positions?: Array<{
+                        ticker?: string;
+                        shares?: number;
+                        avg_cost?: number;
+                        market_value?: number;
+                        unrealized_pnl?: number;
+                    }>;
+                }>(`/trading/accounts/${accountId}`);
+
+                const positions = Array.isArray(detail.positions)
+                    ? detail.positions
+                          .filter((item): item is NonNullable<typeof item> => !!item)
+                          .map((item) => ({
+                              ticker: item.ticker || "",
+                              shares: toNumber(item.shares, 0),
+                              avg_cost: toNumber(item.avg_cost, 0),
+                              updated_at: "",
+                              market_value: toNumber(item.market_value, 0),
+                              unrealized_pnl: toNumber(item.unrealized_pnl, 0),
+                          }))
+                    : [];
+
+                return {
+                    status: "success",
+                    account_id: toNumber(detail.account_id, accountId),
+                    account_name: detail.account_name || "Paper Account",
+                    currency: "CNY",
+                    portfolio: {
+                        total_assets: toNumber(detail.portfolio?.total_assets, 0),
+                        cash: toNumber(detail.portfolio?.cash, 0),
+                        market_value: toNumber(
+                            detail.portfolio?.market_value ?? detail.portfolio?.position_value,
+                            0
+                        ),
+                        positions,
+                    },
+                };
+            }
+
+            const payload = await fetchApi<PaperAccountBackendResponse>("/accounts/paper");
+            return normalizePaperAccount(payload);
+        },
+        placeOrder: async (data: TradeOrderRequest) => {
+            let accountId = data.account_id;
+            if (!accountId) {
+                const account = await fetchApi<PaperAccountBackendResponse>("/accounts/paper");
+                const normalized = normalizePaperAccount(account);
+                if (!normalized?.account_id) {
+                    throw new Error("No active paper account found.");
+                }
+                accountId = normalized.account_id;
+            }
+
+            return fetchApi("/trading/orders", {
                 method: "POST",
-                body: JSON.stringify(data),
-            }),
-        getHistory: (accountId?: number, limit: number = 50) =>
-            fetchApi<TradeHistoryRecord[]>(`/trading/paper/history?limit=${limit}${accountId ? `&account_id=${accountId}` : ''}`, {
-                method: "GET",
-            }),
-        runSettlement: (accountId?: number) =>
-            fetchApi<{ status: string; date: string; equity: number; cash: number; position_value: number }>(
-                `/trading/paper/settlement${accountId ? `?account_id=${accountId}` : ''}`,
-                { method: "POST" }
-            ),
-        getEquityHistory: (accountId?: number, days: number = 90) =>
+                body: JSON.stringify({
+                    account_id: accountId,
+                    symbol: data.ticker,
+                    side: data.action,
+                    order_type: "MARKET",
+                    quantity: data.shares,
+                    price: data.price,
+                }),
+            });
+        },
+        getHistory: async (_accountId?: number, limit: number = 50) => {
+            const result = await fetchApi<{ trades: TradeHistoryRecord[]; count: number }>(
+                `/accounts/paper/trades?limit=${limit}`
+            );
+            return result.trades ?? [];
+        },
+        runSettlement: async () => {
+            throw new Error("Paper settlement endpoint is not available in current backend.");
+        },
+        getEquityHistory: (_accountId?: number, days: number = 90) =>
             fetchApi<{ equity_history: { date: string; equity: number; cash: number; position_value: number }[] }>(
-                `/trading/paper/equity?days=${days}${accountId ? `&account_id=${accountId}` : ''}`
+                `/accounts/paper/equity?days=${days}`
             ),
+        // New endpoints for performance metrics and equity curve
+        getPerformance: (accountId: number) =>
+            fetchApi<PerformanceMetrics>(`/trading/accounts/${accountId}/performance`),
+        getEquityCurve: (accountId: number, days: number = 30) =>
+            fetchApi<EquityCurve>(`/trading/accounts/${accountId}/equity-curve?days=${days}`),
     }
   },
   scanner: {
@@ -335,16 +649,454 @@ export const api = {
         })
   },
   accounts: {
-    getPaperAccount: () => fetchApi<any>("/accounts/paper"),
+    getPaperAccount: () => fetchApi<UnknownRecord>("/accounts/paper"),
     getEquityHistory: () => fetchApi<{ equity_history: { date: string; equity: number }[] }>("/accounts/paper/equity"),
     getPositions: () => fetchApi<{ positions: Record<string, number> }>("/accounts/paper/positions"),
-    getTrades: (limit?: number) => fetchApi<{ trades: any[]; count: number }>(`/accounts/paper/trades${limit ? `?limit=${limit}` : ""}`),
+    getTrades: (limit?: number) => fetchApi<{ trades: TradeHistoryRecord[]; count: number }>(`/accounts/paper/trades${limit ? `?limit=${limit}` : ""}`),
   },
   backtest: {
-    listStrategies: () => fetchApi<any[]>("/backtest/strategies"),
-    run: (data: any) => fetchApi<any>("/backtest/run", {
+    listStrategies: () => fetchApi<UnknownRecord[]>("/backtest/strategies"),
+    run: (data: UnknownRecord) => fetchApi<BacktestRunResponse>("/backtest/run", {
         method: "POST",
         body: JSON.stringify(data),
     }),
-  }
+    runMulti: (data: UnknownRecord) => fetchApi<BacktestRunResponse>("/backtest/run-multi", {
+        method: "POST",
+        body: JSON.stringify(data),
+    }),
+    optimize: (data: UnknownRecord) => fetchApi<OptimizationResult>("/backtest/optimize", {
+        method: "POST",
+        body: JSON.stringify(data),
+    }),
+    extendedAnalysis: (data: UnknownRecord) => fetchApi<BacktestExtendedAnalysis>("/backtest/extended-analysis", {
+        method: "POST",
+        body: JSON.stringify(data),
+    }),
+    export: (data: UnknownRecord) => fetchApi<BacktestExportResponse>("/backtest/export", {
+        method: "POST",
+        body: JSON.stringify(data),
+    }),
+    listBenchmarks: () => fetchApi<{ benchmarks: UnknownRecord[] }>("/backtest/benchmarks"),
+    compareStrategies: (data: UnknownRecord) => fetchApi<ComparativeAnalysis>("/backtest/compare-strategies", {
+        method: "POST",
+        body: JSON.stringify(data),
+    }),
+    // Strategy Templates
+    templates: {
+      list: (params?: { strategy_type?: string; is_favorite?: boolean }) => {
+        const query = new URLSearchParams()
+        if (params?.strategy_type) query.append("strategy_type", params.strategy_type)
+        if (params?.is_favorite !== undefined) query.append("is_favorite", String(params.is_favorite))
+        return fetchApi<StrategyTemplate[]>(`/strategy-templates?${query.toString()}`)
+      },
+      get: (id: number) => fetchApi<StrategyTemplate>(`/strategy-templates/${id}`),
+      create: (data: CreateTemplateRequest) => fetchApi<StrategyTemplate>("/strategy-templates", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+      update: (id: number, data: UpdateTemplateRequest) => fetchApi<StrategyTemplate>(`/strategy-templates/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+      delete: (id: number) => fetchApi<UnknownRecord>(`/strategy-templates/${id}`, {
+        method: "DELETE",
+      }),
+      getBacktestHistory: (id: number, limit: number = 10) =>
+        fetchApi<UnknownRecord[]>(`/strategy-templates/${id}/backtest-history?limit=${limit}`),
+      saveBacktestHistory: (id: number, data: UnknownRecord) => fetchApi<UnknownRecord>(`/strategy-templates/${id}/backtest-history`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    },
+  },
+  llmAnalysis: {
+    getConfig: () =>
+      fetchApi<{ provider: string | null; model: string | null; message?: string }>("/llm-analysis/config"),
+    dashboard: (data: { tickers: string[]; market?: string; include_market_review?: boolean; model?: string }) =>
+      fetchApi<{ results: LlmDecisionResult[]; summary?: LlmDashboardSummary; market_review?: MarketReviewResponse; market_review_error?: string }>("/llm-analysis/dashboard", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    runDaily: (tickers?: string[]) =>
+      fetchApi<UnknownRecord>("/llm-analysis/run-daily", {
+        method: "POST",
+        body: JSON.stringify(tickers ? { tickers } : {}),
+      }),
+    backtest: (ticker: string, horizon_days: number = 5) =>
+      fetchApi<LlmBacktestResponse>(`/llm-analysis/backtest?ticker=${encodeURIComponent(ticker)}&horizon_days=${horizon_days}`),
+  },
+  agent: {
+    research: (data: { query: string; model?: string | null }) =>
+      fetchApi<AgentResearchResponse>("/agent/research", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+  },
+  market: {
+    dailyReview: (market: string = "cn") =>
+      fetchApi<MarketReviewResponse>(`/market/daily-review?market=${market}`),
+  },
+  // --- Portfolio Analysis ---
+  portfolio: {
+    analyze: (data: { holdings: { ticker: string; shares: number; cost_price?: number }[] }) =>
+      fetchApi<PortfolioAnalyzeResponse>("/portfolio/analyze", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    getDecision: (ticker: string) =>
+      fetchApi<DecisionDashboardResult>(`/portfolio/decision/${ticker}`),
+    getAssetType: (ticker: string) =>
+      fetchApi<AssetTypeResponse>(`/portfolio/asset-type/${ticker}`),
+  },
+  // --- User Configuration ---
+  user: {
+    getWatchlist: () =>
+      fetchApi<{ watchlist: string[]; count: number }>("/user/watchlist"),
+    addWatchlist: (ticker: string, note?: string) =>
+      fetchApi<{ success: boolean; ticker: string }>("/user/watchlist", {
+        method: "POST",
+        body: JSON.stringify({ ticker, note }),
+      }),
+    removeWatchlist: (ticker: string) =>
+      fetchApi<{ success: boolean; ticker: string }>(`/user/watchlist/${ticker}`, {
+        method: "DELETE",
+      }),
+    getPreferences: () =>
+      fetchApi<UnknownRecord>("/user/preferences"),
+    savePreferences: (data: { default_strategy?: string; risk_tolerance?: string; notification_enabled?: boolean }) =>
+      fetchApi<{ success: boolean; preferences: UnknownRecord }>("/user/preferences", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    getStrategies: () =>
+      fetchApi<{ strategies: { strategy_name: string; config: UnknownRecord }[] }>("/user/strategies"),
+    saveStrategy: (strategyName: string, config: UnknownRecord) =>
+      fetchApi<{ success: boolean; strategy_name: string }>(`/user/strategies/${strategyName}`, {
+        method: "POST",
+        body: JSON.stringify({ config }),
+      }),
+  },
+  // --- System Monitoring ---
+  monitoring: {
+    getHealth: () => fetchApi<{ status: string; data: HealthCheckResult }>("/monitoring/health"),
+    getMetrics: () => fetchApi<{ status: string; data: SystemMetrics }>("/monitoring/metrics"),
+    getDetailedMetrics: () => fetchApi<{ status: string; data: DetailedSystemMetrics }>("/monitoring/metrics/detailed"),
+    getMetricsHistory: (metricName: string, minutes: number = 60) =>
+      fetchApi<{ status: string; data: { metric_name: string; minutes: number; history: UnknownArray } }>(
+        `/monitoring/metrics/history?metric_name=${metricName}&minutes=${minutes}`
+      ),
+    getMetricStatistics: (windowMinutes: number = 60) =>
+      fetchApi<{ status: string; data: UnknownRecord }>(`/monitoring/metrics/statistics?window_minutes=${windowMinutes}`),
+    getSystemSummary: () => fetchApi<{ status: string; data: UnknownRecord }>("/monitoring/summary"),
+    getMonitoringStatus: () => fetchApi<{ status: string; data: { metrics_collected?: number; health_checks?: number } & UnknownRecord }>("/monitoring/status"),
+    getAlertRules: () => fetchApi<{ status: string; data: UnknownRecord[] }>("/monitoring/alert/rules"),
+    getAlertChannels: () => fetchApi<{ status: string; data: UnknownRecord[] }>("/monitoring/alert/channels"),
+    testAlertChannel: (channelType: string, config: UnknownRecord) =>
+      fetchApi<{ status: string; message: string; data: UnknownRecord }>("/monitoring/alert/test", {
+        method: "POST",
+        body: JSON.stringify({ channel_type: channelType, config }),
+      }),
+    getAlertHistory: (limit: number = 100, severity?: string) =>
+      fetchApi<{ status: string; data: AlertHistoryItem[] }>(
+        `/monitoring/alert/history?limit=${limit}${severity ? `&severity=${severity}` : ""}`
+      ),
+    getAlertStatistics: () => fetchApi<{ status: string; data: AlertStatistics }>("/monitoring/alert/statistics"),
+    restartMonitoring: () => fetchApi<{ status: string; message: string; data: UnknownRecord }>("/monitoring/restart"),
+    getConfig: () => fetchApi<{ status: string; data: UnknownRecord }>("/monitoring/config"),
+  },
 };
+
+// --- LLM Decision / Market Review Types ---
+export interface LlmDashboardSummary {
+  total: number;
+  buy: number;
+  watch: number;
+  sell: number;
+  avg_score?: number | null;
+}
+export interface LlmDecisionItem {
+  ticker: string;
+  name?: string;
+  decision: {
+    conclusion?: string;
+    action?: string;
+    score?: number;
+    buy_price?: number | null;
+    stop_loss?: number | null;
+    target_price?: number | null;
+    checklist?: { item: string; status: string }[];
+    highlights?: string[];
+    risks?: string[];
+  };
+  meta?: Record<string, unknown>;
+}
+export type LlmDecisionResult = LlmDecisionItem;
+
+export interface LlmBacktestMetrics {
+  sample_count: number;
+  direction_win_rate?: number | null;
+  take_profit_hit_rate?: number | null;
+  stop_loss_hit_rate?: number | null;
+}
+
+export interface LlmBacktestDecisionRow {
+  date: string;
+  action?: string | null;
+  buy_price?: number | null;
+  stop_loss?: number | null;
+  target_price?: number | null;
+  score?: number | null;
+  direction_correct?: boolean | null;
+  take_profit_hit?: boolean | null;
+  stop_loss_hit?: boolean | null;
+  start_price: number;
+  end_price: number;
+  horizon_days: number;
+}
+
+export interface LlmBacktestResponse {
+  ticker: string;
+  metrics: LlmBacktestMetrics;
+  decisions: LlmBacktestDecisionRow[];
+}
+
+// --- Agent Research ---
+export interface AgentResearchResult {
+  answer: string;
+  iterations: number;
+  tools_used: string[];
+  tool_results: { name: string; args: Record<string, unknown>; data: Record<string, unknown> }[];
+  scratchpad_path?: string | null;
+}
+
+export type AgentResearchResponse = AgentResearchResult;
+
+// --- Market Review Interfaces ---
+
+export interface MarketIndex {
+  name: string;
+  value: number;
+  pct_change: number;
+  volume?: number | null;
+  amount?: number | null;
+  amplitude?: number | null;
+  turn_rate?: number | null;
+}
+
+export interface MarketOverview {
+  up?: number | null;
+  down?: number | null;
+  limit_up?: number | null;
+  limit_down?: number | null;
+  amplitude?: number | null;
+  turn_rate?: number | null;
+}
+
+export interface SectorInfo {
+  name: string;
+  pct_change: number;
+}
+
+export interface NorthBoundInfo {
+  net_inflow?: number | null;
+  unit?: string;
+  description?: string;
+}
+
+export interface MarketReviewResponse {
+  date: string;
+  market: string;
+  indices?: MarketIndex[];
+  overview?: MarketOverview;
+  sectors?: { gain?: SectorInfo[]; loss?: SectorInfo[] };
+  northbound?: NorthBoundInfo;
+}
+
+// --- Backtest v1.2.0 Interfaces ---
+
+export interface MultiStrategyRequest {
+  strategies: Record<string, { weight: number; params: UnknownRecord }>;
+  tickers: string[];
+  start_date: string;
+  end_date?: string;
+  initial_capital?: number;
+  benchmark_ticker?: string;
+}
+
+export interface ParameterOptimizationRequest {
+  strategy_id: string;
+  tickers: string[];
+  param_grid: Record<string, unknown[]>;
+  start_date: string;
+  end_date?: string;
+  initial_capital?: number;
+  objective?: string;
+  cv_days?: number;
+}
+
+export interface OptimizationResult {
+  best_params: UnknownRecord;
+  best_score: number;
+  objective: string;
+  all_results: Array<{ params: string; params_dict: UnknownRecord; score: number }>;
+  best_result?: {
+    metrics: Record<string, number>;
+    equity_curve: unknown[];
+  };
+}
+
+export interface BacktestExtendedMetrics {
+  total_return: number;
+  annual_return: number;
+  annual_volatility: number;
+  sharpe_ratio: number;
+  information_ratio: number;
+  max_drawdown: number;
+  sortino_ratio: number;
+  calmar_ratio: number;
+  beta: number;
+  alpha: number;
+  r_squared: number;
+  tracking_error: number;
+}
+
+export interface BacktestExtendedAnalysis {
+  metrics: BacktestExtendedMetrics;
+  drawdown_analysis: {
+    details: Array<{ start_date: string; end_date: string; duration: number; depth: number }>;
+    summary: Record<string, string>;
+  };
+  trade_analysis: UnknownRecord;
+  monthly_returns: Array<{ year: number; month: number; return_rate: number; is_positive: boolean }>;
+  best_month?: { year: number; month: number; return_rate: number };
+  worst_month?: { year: number; month: number; return_rate: number };
+  position_concentration: UnknownRecord;
+}
+
+export interface ComparativeAnalysis {
+  comparison_table: Array<UnknownRecord>;
+  summary: {
+    best_sharpe: number;
+    best_return: number;
+    lowest_drawdown: number;
+  };
+}
+
+// --- System Monitoring Interfaces ---
+
+export interface SystemMetrics {
+  timestamp?: string;
+  cpu_usage: number;
+  memory_usage: number;
+  memory_used_mb: number;
+  memory_available_mb: number;
+  disk_usage: number;
+  disk_free_gb: number;
+  network_bytes_sent: number;
+  network_bytes_recv: number;
+  process_cpu_usage: number;
+  process_memory_mb: number;
+  data_update_latency: number;
+  order_execution_latency: number;
+  api_response_time: number;
+}
+
+export interface DetailedSystemMetrics {
+  timestamp: string;
+  system: {
+    cpu_times?: {
+      user: number;
+      system: number;
+      idle: number;
+      iowait?: number | null;
+    };
+    memory: {
+      total_mb: number;
+      available_mb: number;
+      used_mb: number;
+      percent: number;
+      active_mb?: number | null;
+      inactive_mb?: number | null;
+    };
+  };
+  process: {
+    memory: {
+      rss_mb: number;
+      vms_mb: number;
+    };
+    cpu: {
+      percent: number;
+      num_threads: number;
+    };
+    open_files: number;
+    connections: number;
+  };
+  storage: {
+    disk: {
+      total_gb: number;
+      used_gb: number;
+      free_gb: number;
+      percent: number;
+    };
+    partitions?: Array<{
+      device: string;
+      mountpoint: string;
+      fstype: string;
+    }>;
+  };
+  network: {
+    io: {
+      bytes_sent: number;
+      bytes_recv: number;
+      packets_sent: number;
+      packets_recv: number;
+    };
+    interfaces?: string[];
+  };
+  business: {
+    data_update_latency: number;
+    data_update_latency_minutes: number;
+    order_execution_latency: number;
+    api_response_time: number;
+  };
+}
+
+export interface HealthCheckResult {
+  status: "healthy" | "degraded" | "unhealthy" | "unknown";
+  timestamp: string;
+  checks: {
+    [key: string]: {
+      status: string;
+      message: string;
+      details: UnknownRecord;
+    };
+  };
+}
+
+export interface AlertHistoryItem {
+  alert_id: string;
+  rule_name: string;
+  severity: string;
+  message: string;
+  metric_name: string;
+  metric_value: number;
+  threshold: number;
+  timestamp: string;
+  aggregate_count: number;
+  channels: string[];
+}
+
+export interface AlertStatistics {
+  total_alerts: number;
+  by_severity: {
+    info: number;
+    warning: number;
+    error: number;
+    critical: number;
+  };
+  by_rule: Record<string, number>;
+  active_rules: number;
+  recent_alerts_24h: number;
+  recent_alerts_1h: number;
+  alerts_today: number;
+}

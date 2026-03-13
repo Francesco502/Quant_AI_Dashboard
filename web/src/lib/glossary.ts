@@ -21,7 +21,7 @@ export const GLOSSARY = {
   },
   Model: {
     term: "模型 (Model)",
-    definition: "用于生成价格预测的机器学习模型。不同模型适用于不同的市场环境（如 Prophet 擅长捕捉周期性，LSTM 擅长处理长期依赖）。"
+    definition: "用于生成价格预测的机器学习模型。XGBoost（推荐）训练快、精度高；Prophet 擅长捕捉周期性和趋势；LightGBM 内存占用低且速度快；ARIMA 适合平稳序列；集成模型综合多个模型结果以提高稳定性。"
   },
   LookbackDays: {
     term: "训练天数 (Lookback)",

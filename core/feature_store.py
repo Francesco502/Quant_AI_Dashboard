@@ -18,6 +18,12 @@ import pandas as pd
 
 from .advanced_forecasting import FeatureEngineer
 from .data_store import BASE_DIR, classify_market
+from .features.basic import VolatilityFeatures, TrendFeatures
+from .features.advanced import (
+    MomentumFeatures,
+    EfficiencyFeatures,
+    MeanReversionFeatures,
+)
 
 FEATURES_DIR = os.path.join(BASE_DIR, "features")
 FEATURES_DAILY_DIR = os.path.join(FEATURES_DIR, "daily")
@@ -110,6 +116,9 @@ class FeatureStore:
         # 增强特征（可选）
         if use_enhanced_features:
             df = self.feature_engineer.add_enhanced_features(df, price_series)
+
+        # 新增特征工程（阶段二）
+        df = self._add_comprehensive_features(df, price_series)
 
         return df
 
@@ -241,6 +250,50 @@ class FeatureStore:
     def get_feature_version(self) -> str:
         """获取当前特征版本"""
         return self.meta.get("version", CURRENT_FEATURE_VERSION)
+
+    def _add_comprehensive_features(
+        self, df: pd.DataFrame, price_series: pd.Series
+    ) -> pd.DataFrame:
+        """
+        添加完整的特征工程模块
+
+        包含：
+        - 波动率特征（4项）
+        - 趋势特征（3项）
+        - 动量特征（4项，包含streak）
+        - 均值回归特征（3项，包含bb_position）
+        - 价格效率特征（2项）
+
+        总计：16项新特征
+
+        参数:
+            df: 现有特征DataFrame
+            price_series: 价格序列
+
+        返回:
+            添加新特征后的DataFrame
+        """
+        # 波动率特征
+        volatility_df = VolatilityFeatures.compute_all(price_series)
+        df = pd.concat([df, volatility_df], axis=1)
+
+        # 趋势特征
+        trend_df = TrendFeatures.compute_all(price_series)
+        df = pd.concat([df, trend_df], axis=1)
+
+        # 动量特征
+        momentum_df = MomentumFeatures.compute_all(price_series)
+        df = pd.concat([df, momentum_df], axis=1)
+
+        # 均值回归特征
+        mean_reversion_df = MeanReversionFeatures.compute_all(price_series)
+        df = pd.concat([df, mean_reversion_df], axis=1)
+
+        # 价格效率特征
+        efficiency_df = EfficiencyFeatures.compute_all(price_series)
+        df = pd.concat([df, efficiency_df], axis=1)
+
+        return df
 
 
 # 全局单例

@@ -20,27 +20,16 @@ const AuthContext = createContext<AuthContextType>({
 })
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<string | null>(null)
-  const [token, setToken] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : localStorage.getItem("user")
+  )
+  const [token, setToken] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : localStorage.getItem("token")
+  )
   const router = useRouter()
   const pathname = usePathname()
 
   useEffect(() => {
-    // Check localStorage on mount
-    const storedToken = localStorage.getItem("token")
-    const storedUser = localStorage.getItem("user")
-    
-    if (storedToken) {
-      setToken(storedToken)
-      setUser(storedUser || "User")
-    }
-    setLoading(false)
-  }, [])
-
-  useEffect(() => {
-    if (loading) return
-
     // Protect routes
     const publicRoutes = ["/login", "/register"]
     const isPublic = publicRoutes.includes(pathname)
@@ -48,7 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!token && !isPublic) {
       router.push("/login")
     }
-  }, [token, pathname, router, loading])
+  }, [token, pathname, router])
 
   const login = (newToken: string, newUser: string) => {
     localStorage.setItem("token", newToken)
@@ -64,10 +53,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null)
     setUser(null)
     router.push("/login")
-  }
-
-  if (loading) {
-    return null // or a loading spinner
   }
 
   return (

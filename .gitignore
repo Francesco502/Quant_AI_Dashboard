@@ -21,6 +21,9 @@ env/
 *.swp
 *.swo
 *~
+.geminiignore
+CLAUDE.md
+*prompt.txt
 
 # 数据文件
 data/
@@ -28,6 +31,13 @@ data/
 *.csv
 *.db
 *.sqlite
+
+# Scratchpad / API 缓存（Dexter 借鉴）
+data/scratchpad/
+data/api_cache/
+
+# Evals 报告
+evals/reports/
 
 # 日志
 logs/
@@ -53,4 +63,29 @@ models/*.pkl
 models/*.h5
 models/*.pt
 models/*.pth
+models/*.joblib
+
+# 运行与测试产物
+output/
+htmlcov/
+benchmarks/
+.pytest_cache/
+.coverage
+coverage.xml
+
+# 前端构建产物
+web/.next/
+web/out/
+
+# 外部参考仓库/迁移材料（不纳入正式发布包）
+daily_stock_analysis-main/
+dexter-main/
+
+# 规划与临时文档
+docs/plans/
+docs/superpowers/
+
+# 异常或临时文件
+nul
+web/nul
 

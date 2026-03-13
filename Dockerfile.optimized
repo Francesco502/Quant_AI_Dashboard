@@ -1,0 +1,84 @@
+# ============================================================
+# Quant-AI Dashboard v2.0.0-alpha.1 - Optimized single-container image
+# Target: 2-core / 2GB runtime environment
+#
+# Process model:
+# - Nginx: serves static frontend and proxies API/WS
+# - Uvicorn: FastAPI backend
+# - Daemon: optional scheduled jobs
+# - Supervisor: process manager (PID 1)
+# ============================================================
+
+# -------------------- Stage 1: Python dependencies --------------------
+FROM python:3.11-slim AS python-deps
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.runtime.txt ./
+RUN pip install --user --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    -r requirements.runtime.txt
+
+# -------------------- Stage 2: Frontend static build --------------------
+FROM node:20-alpine AS frontend-build
+
+WORKDIR /build
+
+COPY web/package.json web/package-lock.json* ./
+RUN npm ci
+
+COPY web/ ./
+
+ENV NEXT_PUBLIC_API_URL=/api
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+RUN npx next build
+# With output="export", static files are generated under /build/out.
+
+# -------------------- Stage 3: Runtime --------------------
+FROM python:3.11-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nginx \
+    supervisor \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Python runtime packages
+COPY --from=python-deps /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+# Backend code
+COPY api/ ./api/
+COPY core/ ./core/
+COPY run_daemon.py set_password.py ./
+
+# Frontend static files -> Nginx doc root
+COPY --from=frontend-build /build/out /var/www/html
+
+# Runtime configs
+COPY docker/nginx.conf /etc/nginx/nginx.conf
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Runtime directories
+RUN mkdir -p /app/data /app/logs /app/models /app/strategies \
+    /var/log/supervisor /var/log/nginx
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DISABLE_HEAVY_MODELS=true
+
+EXPOSE 80 8685
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost/api/health || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]

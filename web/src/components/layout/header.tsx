@@ -2,19 +2,35 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Bell, User, LayoutDashboard, LineChart, Activity, Settings, PieChart, Layers, Menu, X, History } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
-import { motion, AnimatePresence } from "framer-motion"
+import {
+  Activity,
+  BarChart3,
+  Bell,
+  History,
+  Layers,
+  LayoutDashboard,
+  LineChart,
+  Menu,
+  PieChart,
+  Settings,
+  Target,
+  User,
+  X,
+} from "lucide-react"
+import { AnimatePresence, motion } from "framer-motion"
 import { useState } from "react"
+
+import { cn } from "@/lib/utils"
 
 const navigation = [
   { name: "市场概览", href: "/", icon: LayoutDashboard },
   { name: "AI分析", href: "/market", icon: LineChart },
+  { name: "决策仪表盘", href: "/dashboard-llm", icon: Target },
+  { name: "大盘复盘", href: "/market-review", icon: BarChart3 },
   { name: "交易中心", href: "/trading", icon: Activity },
   { name: "资产池", href: "/portfolio", icon: PieChart },
-  { name: "历史回测", href: "/backtest", icon: History },
-  { name: "量化战法", href: "/strategies", icon: Layers },
+  { name: "策略回测", href: "/backtest", icon: History },
+  { name: "量化策略", href: "/strategies", icon: Layers },
   { name: "系统设置", href: "/settings", icon: Settings },
 ]
 
@@ -27,16 +43,14 @@ export function Header() {
       className={cn(
         "sticky top-0 z-50 w-full",
         "h-14 flex items-center px-5 md:px-6",
-        /* Frosted glass surface */
         "glass",
         "border-b border-black/[0.04] dark:border-white/[0.06]",
         "transition-all duration-300"
       )}
     >
-      {/* Mobile Menu Button */}
       <div className="lg:hidden mr-3">
         <button
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          onClick={() => setMobileMenuOpen((open) => !open)}
           className={cn(
             "flex items-center justify-center w-8 h-8 rounded-lg",
             "text-foreground/60 hover:text-foreground",
@@ -48,9 +62,7 @@ export function Header() {
         </button>
       </div>
 
-      {/* Left: Logo */}
       <Link href="/" className="flex items-center gap-1.5 min-w-[120px] md:min-w-[160px] group">
-        {/* Simple geometric logo mark */}
         <div className="w-6 h-6 rounded-md bg-foreground/90 dark:bg-foreground/80 flex items-center justify-center group-hover:bg-foreground transition-colors duration-200">
           <span className="text-background text-[10px] font-bold tracking-tighter">Q</span>
         </div>
@@ -59,10 +71,10 @@ export function Header() {
         </span>
       </Link>
 
-      {/* Center: Navigation (Desktop) */}
       <nav className="hidden lg:flex items-center gap-0.5 absolute left-1/2 -translate-x-1/2">
         {navigation.map((item) => {
           const isActive = pathname === item.href
+
           return (
             <Link
               key={item.name}
@@ -70,9 +82,7 @@ export function Header() {
               className={cn(
                 "relative flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium",
                 "transition-colors duration-200",
-                isActive
-                  ? "text-foreground"
-                  : "text-foreground/45 hover:text-foreground/70"
+                isActive ? "text-foreground" : "text-foreground/45 hover:text-foreground/70"
               )}
             >
               {isActive && (
@@ -87,13 +97,12 @@ export function Header() {
                 />
               )}
               <item.icon className="h-3.5 w-3.5 relative z-10" />
-              <span className="relative z-10">{item.name}</span>
+              <span className="relative z-10 text-[13px] font-medium tracking-tight">{item.name}</span>
             </Link>
           )
         })}
       </nav>
 
-      {/* Right: Actions */}
       <div className="flex-1 flex items-center justify-end gap-1">
         <button
           className={cn(
@@ -121,7 +130,6 @@ export function Header() {
         </Link>
       </div>
 
-      {/* Mobile Menu Dropdown — frosted glass overlay */}
       <AnimatePresence>
         {mobileMenuOpen && (
           <motion.div
@@ -129,16 +137,12 @@ export function Header() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className={cn(
-              "absolute top-14 left-0 right-0",
-              "glass-dropdown",
-              "border-t-0 rounded-b-2xl",
-              "p-3 lg:hidden"
-            )}
+            className={cn("absolute top-14 left-0 right-0", "glass-dropdown", "border-t-0 rounded-b-2xl", "p-3 lg:hidden")}
           >
             <nav className="flex flex-col gap-0.5">
               {navigation.map((item) => {
                 const isActive = pathname === item.href
+
                 return (
                   <Link
                     key={item.name}
@@ -153,7 +157,7 @@ export function Header() {
                     )}
                   >
                     <item.icon className="h-4 w-4" />
-                    <span>{item.name}</span>
+                    <span className="text-[15px] font-medium tracking-tight">{item.name}</span>
                   </Link>
                 )
               })}

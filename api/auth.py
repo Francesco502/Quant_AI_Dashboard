@@ -4,17 +4,21 @@
 - JWT Token生成和验证
 - OAuth2密码流
 - 用户认证
+- 认证中间件
+- 权限检查
 """
 
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import logging
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from jose import JWTError, jwt
 import bcrypt
 from pydantic import BaseModel
@@ -24,10 +28,10 @@ logger = logging.getLogger(__name__)
 # JWT配置
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 默认24小时
 
 # OAuth2方案
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 
 class Token(BaseModel):
@@ -39,6 +43,7 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     """Token数据模型"""
     username: Optional[str] = None
+    role: Optional[str] = None
 
 
 class User(BaseModel):
@@ -51,13 +56,16 @@ class User(BaseModel):
 
 class UserInDB(User):
     """数据库中的用户模型"""
+    id: Optional[int] = None
     hashed_password: str
 
 
 from core.database import Database
+from core.rbac import get_rbac, get_user_role_manager, Role, Permission
 
 # 数据库实例
 db = Database()
+
 
 def get_user_by_username(username: str) -> Optional[UserInDB]:
     """从数据库获取用户"""
@@ -65,38 +73,55 @@ def get_user_by_username(username: str) -> Optional[UserInDB]:
         cursor = db.conn.cursor()
         cursor.execute("SELECT id, username, password_hash FROM users WHERE username = ?", (username,))
         row = cursor.fetchone()
-        
+
         if row:
-            # 如果是旧的 fake users, 它们没有 id. 但这里是从 DB 取的。
-            # 兼容性处理：如果数据库为空，尝试初始化 admin
+            # 获取用户角色
+            role_manager = get_user_role_manager()
+            role = role_manager.get_user_role(username)
+            if not role:
+                role = Role.ADMIN.value if username.lower() == "admin" else Role.VIEWER.value
+                try:
+                    role_manager.set_user_role(username, role, assigned_by="system")
+                except Exception as role_exc:
+                    logger.warning("Failed to persist default role for %s: %s", username, role_exc)
             return UserInDB(
+                id=row["id"],
                 username=row["username"],
                 hashed_password=row["password_hash"],
-                role="admin" # 简化：默认 admin，后续可在 DB 加 role 字段
+                email=None,
+                disabled=False,
+                role=role or Role.VIEWER.value
             )
         return None
     except Exception as e:
         logger.error(f"获取用户失败: {e}")
         return None
 
-def create_user(username: str, password: str) -> bool:
+
+def create_user(username: str, password: str, role: str = "viewer") -> bool:
     """创建新用户"""
     try:
         hashed = get_password_hash(password)
         cursor = db.conn.cursor()
         cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed))
         db.conn.commit()
+
+        # 设置用户角色
+        get_user_role_manager().set_user_role(username, role)
+        logger.info(f"创建用户: {username}, 角色: {role}")
+
         return True
     except Exception as e:
         logger.error(f"创建用户失败: {e}")
         return False
 
-# 初始化默认 Admin (如果不存在)，使用 bcrypt 直接哈希避免 passlib 与 bcrypt 4.x 不兼容
+
+# 初始化默认 Admin (如果不存在)
 def _ensure_default_admin() -> None:
     try:
         if get_user_by_username("admin"):
             return
-        if create_user("admin", "admin123"):
+        if create_user("admin", "admin123", role=Role.ADMIN.value):
             logger.info("初始化默认管理员用户: admin / admin123")
         else:
             logger.warning("默认管理员 admin 创建失败（可能已存在或数据库错误）")
@@ -152,10 +177,23 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+
+def decode_access_token(token: str) -> Optional[TokenData]:
+    """解码访问令牌"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        role: str = payload.get("role")
+        if username is None:
+            return None
+        return TokenData(username=username, role=role)
+    except JWTError:
+        return None
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
@@ -173,7 +211,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
         token_data = TokenData(username=username)
     except JWTError:
         raise credentials_exception
-    
+
     user = get_user(username=token_data.username)
     if user is None:
         raise credentials_exception
@@ -184,6 +222,125 @@ async def get_current_active_user(current_user: UserInDB = Depends(get_current_u
     """获取当前活跃用户"""
     if current_user.disabled:
         raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+
+def require_permission(permission: str | Permission):
+    """
+    权限检查依赖工厂
+    返回一个依赖函数，用于检查当前用户是否拥有指定权限
+
+    Args:
+        permission: 所需权限
+
+    Returns:
+        依赖函数，可用于FastAPI的Depends
+    """
+    def _check_permission(current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
+        if isinstance(permission, str):
+            perm = Permission(permission)
+        else:
+            perm = permission
+
+        rbac = get_rbac()
+        user_role = current_user.role or "viewer"
+
+        if not rbac.check_permission(user_role, perm):
+            logger.warning(
+                f"权限不足: 用户 {current_user.username} 缺少权限 {perm.value} (角色: {user_role})"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"权限不足：需要 {perm.value} 权限"
+            )
+
+        return current_user
+
+    return _check_permission
+
+
+def require_any_permission(permissions: List[str | Permission]):
+    """
+    检查是否有任一权限的依赖工厂
+    用户拥有任一指定权限即可通过
+
+    Args:
+        permissions: 权限列表
+
+    Returns:
+        依赖函数，可用于FastAPI的Depends
+    """
+    def _check_any_permission(current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
+        rbac = get_rbac()
+        user_role = current_user.role or "viewer"
+
+        if not rbac.check_any_permission(user_role, permissions):
+            logger.warning(
+                f"权限不足: 用户 {current_user.username} 缺少任一权限 {permissions} (角色: {user_role})"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"权限不足：需要以下任一权限 {permissions}"
+            )
+
+        return current_user
+
+    return _check_any_permission
+
+
+def require_role(role: str | Role):
+    """
+    角色检查依赖工厂
+    检查当前用户是否拥有指定角色
+
+    Args:
+        role: 所需角色
+
+    Returns:
+        依赖函数，可用于FastAPI的Depends
+    """
+    def _check_role(current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
+        if isinstance(role, Role):
+            role_value = role.value
+        else:
+            role_value = role
+
+        user_role = current_user.role or "viewer"
+
+        if user_role != role_value:
+            logger.warning(
+                f"角色不匹配: 用户 {current_user.username} 角色为 {user_role}，需要 {role_value}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"权限不足：需要 {role_value} 角色"
+            )
+
+        return current_user
+
+    return _check_role
+
+
+def require_admin(current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
+    """
+    管理员权限检查
+    仅管理员可访问
+
+    Args:
+        current_user: 当前用户
+
+    Returns:
+        当前用户（如果为管理员）
+
+    Raises:
+        HTTPException: 如果用户不是管理员
+    """
+    if not (current_user.role and current_user.role.lower() == "admin"):
+        logger.warning(f"管理员权限不足: 用户 {current_user.username}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="权限不足：需要管理员角色"
+        )
     return current_user
 
 
@@ -198,13 +355,13 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             audit_logger.log_login(form_data.username, success=False)
         except Exception:
             pass  # 审计日志失败不应影响登录流程
-        
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # 记录成功的登录
     try:
         from core.audit_log import get_audit_logger, AuditAction
@@ -212,7 +369,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         audit_logger.log_login(user.username, success=True)
     except Exception:
         pass  # 审计日志失败不应影响登录流程
-    
+
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username, "role": user.role},
@@ -221,10 +378,78 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return Token(access_token=access_token, token_type="bearer")
 
 
+# 认证中间件 - 为所有API端点添加认证
+class AuthenticationMiddleware:
+    """Authentication Middleware for FastAPI"""
+
+    def __init__(self, app):
+        self.app = app
+        self.exempt_paths = {"/api/auth/token", "/api/auth/register", "/api/health", "/docs", "/openapi.json", "/api/auth/me"}
+        self.public_paths = {"/api/auth/token", "/api/auth/register"}
+
+    async def __call__(self, scope, receive, send):
+        """Middleware调用"""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
+        method = scope.get("method", "").upper()
+        path = request.url.path
+
+        # CORS preflight should not be blocked by auth middleware.
+        if method == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
+
+        # 检查是否为 exempt 路径
+        if any(path.startswith(exempt) for exempt in self.exempt_paths):
+            await self.app(scope, receive, send)
+            return
+
+        # 检查是否有 Authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            response = JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Authentication required"},
+            )
+            await response(scope, receive, send)
+            return
+
+        # 验证 token
+        token = auth_header.split(" ", 1)[1]
+        token_data = decode_access_token(token)
+        if not token_data:
+            response = JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Invalid or expired token"},
+            )
+            await response(scope, receive, send)
+            return
+
+        # 设置当前用户到 request state
+        user = get_user(token_data.username)
+        if not user:
+            response = JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "User not found"},
+            )
+            await response(scope, receive, send)
+            return
+
+        request.state.current_user = user
+
+        # 继续处理请求
+        await self.app(scope, receive, send)
+
+
 # 创建认证路由
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 router = APIRouter()
+
 
 @router.post("/token", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -236,6 +461,7 @@ class RegisterRequest(BaseModel):
     """注册请求模型"""
     username: str
     password: str
+    email: Optional[str] = None
 
 
 @router.post("/register")
@@ -253,9 +479,24 @@ async def register_user(request: RegisterRequest):
         raise HTTPException(status_code=409, detail="用户名已存在")
 
     # 创建用户
-    success = create_user(request.username, request.password)
+    success = create_user(request.username, request.password, role="viewer")
     if not success:
         raise HTTPException(status_code=500, detail="注册失败，请稍后重试")
+
+    # 记录注册动作
+    try:
+        from core.audit_log import get_audit_logger, AuditAction
+        audit_logger = get_audit_logger()
+        audit_logger.log(
+            action=AuditAction.CREATE,
+            user=request.username,
+            resource="user",
+            resource_type="user",
+            details={"action": "register", "email": request.email},
+            success=True,
+        )
+    except Exception:
+        pass
 
     return {"status": "success", "message": "注册成功", "username": request.username}
 
@@ -268,4 +509,60 @@ async def read_users_me(current_user: UserInDB = Depends(get_current_active_user
         "email": current_user.email,
         "role": current_user.role,
         "disabled": current_user.disabled,
+        "permissions": [p.value for p in get_rbac().get_user_permissions(current_user.role or Role.VIEWER.value)],
+    }
+
+
+@router.get("/permissions")
+async def get_user_permissions(current_user: UserInDB = Depends(get_current_active_user)):
+    """获取当前用户的权限列表"""
+    from core.rbac import get_rbac
+    rbac = get_rbac()
+    permissions = rbac.get_user_permissions(current_user.role or "viewer")
+    return {
+        "username": current_user.username,
+        "role": current_user.role,
+        "permissions": [p.value for p in permissions],
+    }
+
+
+class PermissionCheckRequest(BaseModel):
+    """权限检查请求"""
+    permission: str
+
+
+@router.post("/check-permission")
+async def check_permission(
+    request: PermissionCheckRequest,
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """检查当前用户是否有指定权限"""
+    from core.rbac import get_rbac, Permission
+    rbac = get_rbac()
+    perm = Permission(request.permission)
+    has_perm = rbac.check_permission(current_user.role or "viewer", perm)
+    return {
+        "username": current_user.username,
+        "permission": request.permission,
+        "has_permission": has_perm,
+    }
+
+
+class RoleCheckRequest(BaseModel):
+    """角色检查请求"""
+    role: str
+
+
+@router.post("/check-role")
+async def check_role(
+    request: RoleCheckRequest,
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """检查当前用户是否拥有指定角色"""
+    has_role = current_user.role and current_user.role.lower() == request.role.lower()
+    return {
+        "username": current_user.username,
+        "current_role": current_user.role,
+        "requested_role": request.role,
+        "has_role": has_role,
     }

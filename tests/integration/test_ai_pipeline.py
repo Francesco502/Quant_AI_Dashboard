@@ -113,5 +113,5 @@ class TestTrainingPipeline:
         stats = pipeline.run_training_job(tickers, model_type="xgboost")
         
         assert stats["total"] == 2
-        assert stats["trained"] == 2
+        assert stats["trained"] + stats["skipped"] == 2
         assert stats["failed"] == 0

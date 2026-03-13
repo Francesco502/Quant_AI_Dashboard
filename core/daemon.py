@@ -1,12 +1,12 @@
-"""后台守护进程（阶段 4）
+"""Background daemon for scheduled maintenance tasks.
 
-职责：
-- 长期运行在独立 Python 进程中；
-- 周期性更新本地数据仓库；
-- 周期性执行一次模拟交易决策（基于当前策略信号）；
-- 将最近一次任务运行时间写入状态文件，供 Dashboard 查询。
+Responsibilities:
+- Keep local market data up to date.
+- Run scheduled model training.
+- Run daily analysis tasks.
+- Persist latest runtime status for dashboard visibility.
 
-运行方式示例（本机调试）：
+Local run example:
     cd Quant_AI_Dashboard
     python -m core.daemon
 """
@@ -19,17 +19,14 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List
 
-import pandas as pd
-
-from . import data_store
-from .data_service import load_price_data
 from .data_updater import update_local_history_for_tickers
-from .scheduler import setup_data_update_job, setup_trading_job, setup_training_job, run_forever
+from .scheduler import (
+    setup_data_update_job,
+    setup_training_job,
+    setup_daily_analysis_job,
+    run_forever,
+)
 from .training_pipeline import TrainingPipeline
-from .strategy_engine import generate_multi_asset_signals
-from .strategy_manager import get_strategy_manager
-from .trading_engine import apply_equal_weight_rebalance
-from .account import ensure_account_dict
 from .feature_store import get_feature_store
 from .data_store import load_local_price_history
 
@@ -37,17 +34,15 @@ from .data_store import load_local_price_history
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "daemon_config.json")
 STATUS_PATH = os.path.join(BASE_DIR, "daemon_status.json")
-ACCOUNT_PATH = os.path.join(BASE_DIR, "data", "accounts", "paper_account_daemon.json")
-
+# ACCOUNT_PATH 宸插純鐢紝鐜板湪浣跨敤鏁版嵁搴撳瓨鍌?
 
 def _ensure_dirs() -> None:
     os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
-    os.makedirs(os.path.join(BASE_DIR, "data", "accounts"), exist_ok=True)
     os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
 
 
 def load_config() -> Dict[str, Any]:
-    """加载守护进程配置，不存在时创建一个默认示例"""
+    """Load daemon configuration; create defaults when config file is missing."""
     if not os.path.exists(CONFIG_PATH):
         default = {
             "universe": ["013281", "002611", "160615", "016858", "159755", "006810"],
@@ -57,7 +52,7 @@ def load_config() -> Dict[str, Any]:
             "tushare_token": "",
             "data_update": {
                 "enabled": True,
-                "interval_minutes": 60,
+                "interval_minutes": 120,  # 浣庨厤浼樺寲锛氭瘡2灏忔椂鏇存柊
             },
             "trading": {
                 "enabled": False,
@@ -67,9 +62,7 @@ def load_config() -> Dict[str, Any]:
             },
             "training": {
                 "enabled": True,
-                "time": "16:00",
-                "model_type": "xgboost",  # 可选: "xgboost", "lightgbm", "random_forest", "lstm", "gru"
-                "auto_promote": True,
+                "time": "02:00",  # 浣庨厤浼樺寲锛氬噷鏅ㄤ綆宄版墽琛?                "model_type": "xgboost",  # 鍙€? "xgboost", "lightgbm", "random_forest"锛堜綆閰嶇鐢?lstm/gru锛?                "auto_promote": True,
                 "generate_signals": True,
                 "min_train_days": 60,
                 "retrain_interval_days": 7,
@@ -77,6 +70,10 @@ def load_config() -> Dict[str, Any]:
             },
             "features": {
                 "use_enhanced": True,
+            },
+            "daily_analysis": {
+                "enabled": False,
+                "time": "18:00",
             },
         }
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -88,7 +85,7 @@ def load_config() -> Dict[str, Any]:
 
 
 def save_status(patch: Dict[str, Any]) -> None:
-    """将最近状态写入状态文件（增量更新）"""
+    """Write daemon runtime status with incremental patch updates."""
     status: Dict[str, Any]
     if os.path.exists(STATUS_PATH):
         try:
@@ -106,39 +103,96 @@ def save_status(patch: Dict[str, Any]) -> None:
 
 
 def _load_account() -> Dict[str, Any]:
-    """从文件加载模拟账户（守护进程版本）"""
-    raw: Dict[str, Any] | None = None
-    if os.path.exists(ACCOUNT_PATH):
-        try:
-            with open(ACCOUNT_PATH, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-        except Exception:
-            raw = None
-    account = ensure_account_dict(raw, initial_capital=1_000_000.0)
-    return account
+    """浠庢暟鎹簱鍔犺浇妯℃嫙璐︽埛锛堝畧鎶よ繘绋嬬増鏈級"""
+    from .database import get_database
+    from .account_manager import AccountManager
+
+    try:
+        db = get_database()
+        account_mgr = AccountManager(db)
+
+        # 鑾峰彇榛樿鐢ㄦ埛锛坉aemon浣跨敤鐢ㄦ埛ID=1锛夌殑绗竴涓椿璺冭处鎴?        cursor = db.conn.cursor()
+        cursor.execute("""
+            SELECT id, account_name, balance, frozen, initial_capital
+            FROM accounts
+            WHERE user_id = 1 AND status = 'active'
+            ORDER BY id ASC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+
+        if not row:
+            # 鍒涘缓榛樿璐︽埛
+            account_id = account_mgr.create_account(
+                user_id=1,
+                name="Daemon妯℃嫙璐︽埛",
+                initial_balance=1_000_000.0
+            )
+            account = account_mgr.get_account(account_id, user_id=1)
+            return {
+                "account_id": account_id,
+                "initial_capital": 1_000_000.0,
+                "cash": 1_000_000.0,
+                "positions": {},
+                "equity_history": [],
+                "trade_log": [],
+            }
+
+        account_id = row["id"]
+
+        # 鑾峰彇鎸佷粨
+        cursor.execute("""
+            SELECT ticker, shares FROM positions WHERE account_id = ?
+        """, (account_id,))
+        positions = {r["ticker"]: r["shares"] for r in cursor.fetchall()}
+
+        return {
+            "account_id": account_id,
+            "initial_capital": row["initial_capital"],
+            "cash": row["balance"],
+            "positions": positions,
+            "equity_history": [],
+            "trade_log": [],
+        }
+
+    except Exception as e:
+        logging.error("daemon: 鍔犺浇璐︽埛澶辫触: %s", e)
+        # 杩斿洖榛樿缁撴瀯
+        return {
+            "initial_capital": 1_000_000.0,
+            "cash": 1_000_000.0,
+            "positions": {},
+            "equity_history": [],
+            "trade_log": [],
+        }
 
 
 def _save_account(account: Dict[str, Any]) -> None:
-    with open(ACCOUNT_PATH, "w", encoding="utf-8") as f:
-        json.dump(account, f, ensure_ascii=False, indent=2)
+    """淇濆瓨璐︽埛鍒版暟鎹簱锛堝畧鎶よ繘绋嬬増鏈級
+
+    娉ㄦ剰锛氱幇鍦ㄦ暟鎹疄鏃跺啓鍏ユ暟鎹簱锛屾鍑芥暟淇濈暀鐢ㄤ簬鍏煎
+    """
+    # 鏁版嵁宸插疄鏃跺啓鍏ユ暟鎹簱锛屾棤闇€棰濆鎿嶄綔
+    pass
 
 
 def data_update_job(cfg: Dict[str, Any]) -> None:
-    """数据更新任务：调用 data_updater 为 universe 列表增量更新本地仓库，并计算特征"""
+    """鏁版嵁鏇存柊浠诲姟锛氳皟鐢?data_updater 涓?universe 鍒楄〃澧為噺鏇存柊鏈湴浠撳簱锛屽苟璁＄畻鐗瑰緛"""
+    if not _memory_guard():
+        return
     universe: List[str] = cfg.get("universe") or []
     if not universe:
-        logging.warning("daemon: universe 为空，跳过数据更新任务。")
+        logging.warning("daemon: universe is empty, skipping data update job.")
         return
 
     days = int(cfg.get("days", 365))
     data_sources = cfg.get("data_sources") or ["AkShare"]
-    # 优先使用环境变量中的密钥，其次回退到配置文件，避免敏感信息硬编码
-    alpha_vantage_key = (
-        os.getenv("ALPHA_VANTAGE_KEY") or cfg.get("alpha_vantage_key") or ""
-    )
+    # Prefer env vars over config file for secrets.
+    alpha_vantage_key = os.getenv("ALPHA_VANTAGE_KEY") or cfg.get("alpha_vantage_key") or ""
     tushare_token = os.getenv("TUSHARE_TOKEN") or cfg.get("tushare_token") or ""
 
-    logging.info("daemon: 开始数据更新任务，标的数=%d，窗口=%d 天", len(universe), days)
+
+    logging.info("daemon: starting data update job, tickers=%d, days=%d", len(universe), days)
     update_local_history_for_tickers(
         tickers=universe,
         days=days,
@@ -146,10 +200,10 @@ def data_update_job(cfg: Dict[str, Any]) -> None:
         alpha_vantage_key=alpha_vantage_key,
         tushare_token=tushare_token,
     )
-    logging.info("daemon: 数据更新任务完成。")
+    logging.info("daemon: data update job completed.")
 
-    # 阶段一：数据更新后自动计算特征
-    logging.info("daemon: 开始计算特征...")
+    # 闃舵涓€锛氭暟鎹洿鏂板悗鑷姩璁＄畻鐗瑰緛
+    logging.info("daemon: 寮€濮嬭绠楃壒寰?..")
     feature_store = get_feature_store()
     use_enhanced_features = cfg.get("features", {}).get("use_enhanced", True)
     feature_success_count = 0
@@ -166,11 +220,11 @@ def data_update_job(cfg: Dict[str, Any]) -> None:
                 else:
                     feature_fail_count += 1
         except Exception as e:
-            logging.warning("daemon: 计算特征失败 (%s): %s", ticker, e)
+            logging.warning("daemon: 璁＄畻鐗瑰緛澶辫触 (%s): %s", ticker, e)
             feature_fail_count += 1
 
     logging.info(
-        "daemon: 特征计算完成，成功=%d，失败=%d", feature_success_count, feature_fail_count
+        "daemon: 鐗瑰緛璁＄畻瀹屾垚锛屾垚鍔?%d锛屽け璐?%d", feature_success_count, feature_fail_count
     )
     save_status(
         {
@@ -182,19 +236,70 @@ def data_update_job(cfg: Dict[str, Any]) -> None:
     )
 
 
+def _memory_guard(threshold_percent: int = 80) -> bool:
+    """Memory guard: skip jobs when system memory usage is above threshold."""
+    try:
+        import gc
+        import time
+        import psutil
+        mem = psutil.virtual_memory()
+        if mem.percent > threshold_percent:
+            logging.warning(
+                "daemon: 鍐呭瓨浣跨敤鐜?%s%%锛岃秴杩囬槇鍊?%s%%锛屾殏鍋滀换鍔″苟閲婃斁鍐呭瓨",
+                mem.percent, threshold_percent,
+            )
+            gc.collect()
+            time.sleep(30)
+            return False
+    except Exception as e:
+        logging.debug("daemon: memory_guard 妫€鏌ュ紓甯? %s", e)
+    return True
+
+
+def daily_analysis_job(cfg: Dict[str, Any]) -> None:
+    """Run daily LLM analysis task."""
+
+
+    if not _memory_guard():
+        return
+    try:
+        from core.daily_analysis import run_daily_analysis_from_env
+
+        logging.info("daemon: 寮€濮嬫墽琛屾瘡鏃ユ櫤鑳藉垎鏋愪换鍔?..")
+        result = run_daily_analysis_from_env(include_market_review=True)
+        save_status(
+            {
+                "last_daily_analysis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_daily_analysis_result": {
+                    "result_count": len(result.get("results", [])),
+                    "has_market_review": bool(result.get("market_review")),
+                },
+            }
+        )
+        logging.info("daemon: daily analysis job completed.")
+    except Exception as e:
+        logging.warning("daemon: 姣忔棩鏅鸿兘鍒嗘瀽浠诲姟澶辫触: %s", e)
+
+
 def training_job(cfg: Dict[str, Any]) -> None:
-    """模型训练任务：批量训练模型并生成预测信号"""
+    """Run scheduled model training and prediction generation."""
+    if not _memory_guard():
+        return
     universe: List[str] = cfg.get("universe") or []
     if not universe:
-        logging.warning("daemon: universe 为空，跳过训练任务。")
+        logging.warning("daemon: universe is empty, skipping training job.")
         return
 
     training_config = cfg.get("training", {})
     model_type = training_config.get("model_type", "xgboost")
+    # 浣庨厤浼樺寲锛氱鐢?LSTM/GRU 鏃跺己鍒朵娇鐢?xgboost
+    if model_type in ("lstm", "gru") and os.environ.get("DISABLE_HEAVY_MODELS", "").strip().lower() in ("1", "true", "yes"):
+        logging.info("daemon: DISABLE_HEAVY_MODELS 宸插紑鍚紝灏?lstm/gru 鍥為€€涓?xgboost")
+        model_type = "xgboost"
     auto_promote = training_config.get("auto_promote", True)
     generate_signals = training_config.get("generate_signals", True)
 
-    logging.info("daemon: 开始模型训练任务，标的数=%d，模型类型=%s", len(universe), model_type)
+    logging.info("daemon: 寮€濮嬫ā鍨嬭缁冧换鍔★紝鏍囩殑鏁?%d锛屾ā鍨嬬被鍨?%s", len(universe), model_type)
 
     try:
         pipeline = TrainingPipeline(
@@ -212,7 +317,7 @@ def training_job(cfg: Dict[str, Any]) -> None:
         )
 
         logging.info(
-            "daemon: 训练任务完成，总计=%d，成功=%d，提升=%d，失败=%d，跳过=%d",
+            "daemon: 璁粌浠诲姟瀹屾垚锛屾€昏=%d锛屾垚鍔?%d锛屾彁鍗?%d锛屽け璐?%d锛岃烦杩?%d",
             stats["total"],
             stats["trained"],
             stats["promoted"],
@@ -234,7 +339,7 @@ def training_job(cfg: Dict[str, Any]) -> None:
         )
 
     except Exception as e:
-        logging.error("daemon: 训练任务异常: %s", e, exc_info=True)
+        logging.error("daemon: 璁粌浠诲姟寮傚父: %s", e, exc_info=True)
         save_status(
             {
                 "last_training_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -244,95 +349,25 @@ def training_job(cfg: Dict[str, Any]) -> None:
 
 
 def trading_job(cfg: Dict[str, Any]) -> None:
-    """模拟交易任务：基于当前信号对账户进行一次调仓"""
-    universe: List[str] = cfg.get("universe") or []
-    if not universe:
-        logging.warning("daemon: universe 为空，跳过交易任务。")
-        return
-
-    days = int(cfg.get("days", 365))
-    data_sources = cfg.get("data_sources") or ["AkShare"]
-    alpha_vantage_key = (
-        os.getenv("ALPHA_VANTAGE_KEY") or cfg.get("alpha_vantage_key") or ""
+    """Run a single paper-trading rebalance task."""
+    logging.warning(
+        "daemon: automatic trading task is disabled by product policy (manual execution only)."
     )
-    tushare_token = os.getenv("TUSHARE_TOKEN") or cfg.get("tushare_token") or ""
-
-    # 加载历史价格
-    data = load_price_data(
-        tickers=universe,
-        days=days,
-        data_sources=data_sources,
-        alpha_vantage_key=alpha_vantage_key,
-        tushare_token=tushare_token,
-    )
-    if data is None or data.empty:
-        logging.warning("daemon: 交易任务加载数据为空，跳过。")
-        return
-
-    # 生成多资产交易信号（优先使用策略框架）
-    strategy_id = cfg.get("trading", {}).get("strategy_id")
-    signal_table = None
-    
-    if strategy_id:
-        # 使用策略框架生成信号
-        try:
-            strategy_manager = get_strategy_manager()
-            strategy = strategy_manager.get_strategy(strategy_id)
-            if strategy:
-                logging.info(f"daemon: 使用策略 {strategy_id} 生成信号")
-                strategy_signals = strategy.generate_signals(data[universe], strategy_manager=strategy_manager)
-                if not strategy_signals.empty:
-                    # 转换为交易引擎需要的格式
-                    signal_table = pd.DataFrame({
-                        "ticker": strategy_signals["ticker"],
-                        "last_price": [float(data[t].iloc[-1]) if t in data.columns else 0.0 for t in strategy_signals["ticker"]],
-                        "combined_signal": strategy_signals["signal"],
-                        "action": strategy_signals["action"],
-                        "reason": strategy_signals.get("reason", ""),
-                    })
-        except Exception as e:
-            logging.warning(f"daemon: 策略框架生成信号失败: {e}，回退到技术指标信号")
-    
-    # 如果策略框架未生成信号，使用技术指标信号
-    if signal_table is None or signal_table.empty:
-        signal_table = generate_multi_asset_signals(data[universe])
-    
-    if signal_table is None or signal_table.empty:
-        logging.info("daemon: 当前无有效交易信号，跳过交易任务。")
-        return
-
-    # 加载账户并执行等权调仓
-    account = _load_account()
-    max_positions = int(cfg.get("trading", {}).get("max_positions", 5))
-    initial_capital = float(cfg.get("trading", {}).get("initial_capital", 1_000_000.0))
-    account["initial_capital"] = initial_capital
-
-    account, msg = apply_equal_weight_rebalance(
-        account=account,
-        signal_table=signal_table,
-        data=data,
-        total_capital=initial_capital,
-        max_positions=max_positions,
-    )
-    logging.info("daemon: 交易任务结果：%s", msg)
-    _save_account(account)
-    save_status({"last_trading_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    save_status({"last_trading_run": "disabled-by-policy"})
 
 
 def main() -> None:
     _ensure_dirs()
 
-    # 写入 PID 文件，用于进程管理
+    # Write PID file for process management.
     pid_file = os.path.join(BASE_DIR, "logs", "daemon.pid")
     current_pid = os.getpid()
-    
-    # 检查是否已有 PID 文件，如果存在且进程还在运行，则提示
+
+    # Detect existing pid file and print warning if a process is still running.
     if os.path.exists(pid_file):
         try:
             with open(pid_file, "r", encoding="utf-8") as f:
                 old_pid = int(f.read().strip())
-            # 如果旧 PID 文件存在但进程已不存在，可以覆盖
-            # 如果旧进程还在运行，则可能是重复启动
             import platform
             if platform.system() == "Windows":
                 try:
@@ -344,26 +379,26 @@ def main() -> None:
                         timeout=2
                     )
                     if str(old_pid) in result.stdout:
-                        print(f"警告：检测到已有 daemon 进程（PID: {old_pid}）正在运行。")
-                        print(f"当前进程 PID: {current_pid}，将覆盖 PID 文件。")
-                except:
+                        print(f"Warning: existing daemon process detected (PID={old_pid}).")
+                        print(f"Current process PID={current_pid}, pid file will be overwritten.")
+                except Exception:
                     pass
             else:
                 try:
-                    os.kill(old_pid, 0)  # 检查进程是否存在
-                    print(f"警告：检测到已有 daemon 进程（PID: {old_pid}）正在运行。")
-                    print(f"当前进程 PID: {current_pid}，将覆盖 PID 文件。")
+                    os.kill(old_pid, 0)
+                    print(f"Warning: existing daemon process detected (PID={old_pid}).")
+                    print(f"Current process PID={current_pid}, pid file will be overwritten.")
                 except OSError:
                     pass
         except (ValueError, FileNotFoundError):
             pass
-    
-    # 写入当前进程的 PID
+
+    # Write current process pid.
     try:
         with open(pid_file, "w", encoding="utf-8") as f:
             f.write(str(current_pid))
     except Exception as e:
-        print(f"警告：无法写入 PID 文件 {pid_file}: {e}")
+        print(f"Warning: failed to write pid file {pid_file}: {e}")
 
     logging.basicConfig(
         filename=os.path.join(BASE_DIR, "logs", "daemon.log"),
@@ -372,22 +407,26 @@ def main() -> None:
     )
 
     cfg = load_config()
-    logging.info("daemon: 配置已加载。")
-    logging.info(f"daemon: 进程 PID = {os.getpid()}")
+    logging.info("daemon: configuration loaded.")
+    logging.info("daemon: process PID = %s", os.getpid())
 
-    # 注册调度任务
+    # Register scheduled jobs.
     setup_data_update_job(cfg.get("data_update", {}), lambda: data_update_job(cfg))
-    setup_trading_job(cfg.get("trading", {}), lambda: trading_job(cfg))
+    logging.warning(
+        "daemon: trading scheduler registration skipped by policy (manual/no auto-trading)."
+    )
     setup_training_job(cfg.get("training", {}), lambda: training_job(cfg))
+    setup_daily_analysis_job(cfg.get("daily_analysis", {}), lambda: daily_analysis_job(cfg))
 
-    # 注册日终结算任务（每日 15:30 执行，A股收盘后）
+    # Register daily settlement task (15:30 local time).
     try:
         import schedule
         def _daily_settlement_job():
-            """执行所有账户的日终结算"""
+            """Run settlement for all accounts."""
             try:
                 from .paper_account import PaperAccount
                 from .database import Database
+
                 db = Database()
                 cursor = db.conn.cursor()
                 cursor.execute("SELECT id, user_id FROM accounts")
@@ -396,25 +435,29 @@ def main() -> None:
                     try:
                         pa = PaperAccount(user_id=acc["user_id"], account_id=acc["id"], db=db)
                         result = pa.daily_settlement()
-                        logging.info(f"daemon: 账户 {acc['id']} 日终结算完成: equity={result['equity']:.2f}")
+                        logging.info(
+                            "daemon: settlement completed for account %s, equity=%.2f",
+                            acc["id"],
+                            result["equity"],
+                        )
                     except Exception as e:
-                        logging.error(f"daemon: 账户 {acc['id']} 日终结算失败: {e}")
+                        logging.error("daemon: settlement failed for account %s: %s", acc["id"], e)
             except Exception as e:
-                logging.error(f"daemon: 日终结算任务异常: {e}")
+                logging.error("daemon: daily settlement job error: %s", e)
 
         schedule.every().day.at("15:30").do(_daily_settlement_job)
-        logging.info("daemon: 已注册日终结算任务 (每日 15:30)")
+        logging.info("daemon: registered daily settlement job at 15:30")
     except Exception as e:
-        logging.warning(f"daemon: 注册日终结算任务失败: {e}")
+        logging.warning("daemon: failed to register daily settlement job: %s", e)
 
-    logging.info("daemon: 开始进入调度循环 ...")
-    
+    logging.info("daemon: scheduler loop started.")
+
     try:
         run_forever()
     except KeyboardInterrupt:
-        logging.info("daemon: 收到中断信号，正在退出...")
+        logging.info("daemon: interrupt received, shutting down.")
     finally:
-        # 清理 PID 文件
+        # Cleanup pid file.
         try:
             if os.path.exists(pid_file):
                 os.remove(pid_file)

@@ -39,7 +39,7 @@ export default function PortfolioPage() {
   }
 
   const formatTicker = (input: string, type: string): string => {
-    let ticker = input.trim().toUpperCase()
+    const ticker = input.trim().toUpperCase()
     
     // 如果已经包含后缀，优先使用用户输入的后缀
     if (ticker.includes('.')) {

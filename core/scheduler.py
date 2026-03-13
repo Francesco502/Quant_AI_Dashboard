@@ -79,6 +79,27 @@ def setup_training_job(config: Dict[str, Any], job: Callable[[], None]) -> None:
         schedule.every(int(interval_hours)).hours.do(job)
 
 
+def setup_daily_analysis_job(config: Dict[str, Any], job: Callable[[], None]) -> None:
+    """根据配置注册每日智能分析任务
+
+    支持两种形式：
+    - 每日固定时间：{\"enabled\": true, \"time\": \"18:00\"}
+    - 固定间隔小时：{\"enabled\": true, \"interval_hours\": 24}
+    """
+    if not SCHEDULE_AVAILABLE:
+        return
+    if not config.get("enabled", False):
+        return
+
+    time_str = config.get("time")
+    interval_hours = config.get("interval_hours")
+
+    if time_str:
+        schedule.every().day.at(time_str).do(job)
+    elif interval_hours:
+        schedule.every(int(interval_hours)).hours.do(job)
+
+
 def run_forever() -> None:
     """在 daemon 中调用：进入阻塞循环，按计划执行任务"""
     if not SCHEDULE_AVAILABLE:

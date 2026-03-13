@@ -53,7 +53,7 @@ start "Quant API Server" cmd /k "python -m uvicorn api.main:app --host 0.0.0.0 -
 REM Start Frontend in a new window, keep open if error
 echo [2/2] Launching Next.js Frontend (Port 8686)...
 if exist "web" (
-    start "Quant Frontend" cmd /k "cd web && npm start"
+    start "Quant Frontend" cmd /k "cd web && npm run dev"
 ) else (
     echo [ERROR] 'web' directory not found!
     pause

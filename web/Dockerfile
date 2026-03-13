@@ -28,30 +28,22 @@ COPY . .
 ENV NEXT_PUBLIC_API_URL=/api
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# 构建（standalone 模式已在 next.config.ts 中配置）
+# 构建（v3 低配优化：output=export 静态导出，无需 Node 运行时）
 RUN npx next build
 
-# ---------- Stage 2: 生产运行（精简镜像） ----------
+# ---------- Stage 2: 生产运行（静态文件，使用 serve 轻量托管） ----------
 FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# 创建非 root 用户
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+# 从 builder 拷贝静态导出目录（output: export 生成 out/）
+COPY --from=builder /app/out ./out
 
-# 从 builder 拷贝 standalone 输出
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
+# 使用 serve 轻量托管静态文件（比完整 Next 进程省内存）
+RUN corepack enable && npm install -g serve
 
 EXPOSE 8686
 
-ENV PORT=8686
-ENV HOSTNAME="0.0.0.0"
-
-CMD ["node", "server.js"]
+CMD ["serve", "-s", "out", "-l", "8686"]

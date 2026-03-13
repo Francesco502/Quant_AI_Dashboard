@@ -51,9 +51,12 @@ class SelectorConfigModel(BaseModel):
 class RunStrategyRequest(BaseModel):
     trade_date: str
     mode: str = "universe"  # universe (资产池) 或 market (全市场)
+    market: str = "CN"  # CN / HK
     selector_names: Optional[List[str]] = None
     selector_params: Optional[Dict[str, Dict[str, Any]]] = None
     tickers: Optional[List[str]] = None # 仅当 mode=universe 时使用
+    min_score: float = 60.0
+    top_n: int = 20
 
 try:
     import akshare as ak
@@ -82,6 +85,70 @@ class AliasUpdateRequest(BaseModel):
 class DataSourceRequest(BaseModel):
     sources: List[str]
     api_keys: Optional[Dict[str, str]] = None
+
+
+def _post_process_selector_results(
+    result_df: pd.DataFrame,
+    *,
+    min_score: float,
+    top_n: int,
+) -> pd.DataFrame:
+    """Normalize selector output to ticker-level rows with score/action/topN filtering."""
+    if result_df is None or result_df.empty:
+        return pd.DataFrame()
+
+    df = result_df.copy()
+    if "ticker" not in df.columns:
+        return pd.DataFrame()
+
+    if "score" not in df.columns:
+        selector_col = "selector_class" if "selector_class" in df.columns else None
+        if selector_col:
+            count_df = (
+                df.groupby("ticker")[selector_col]
+                .nunique()
+                .reset_index(name="selector_hits")
+            )
+        else:
+            count_df = (
+                df.groupby("ticker")
+                .size()
+                .reset_index(name="selector_hits")
+            )
+        df = df.merge(count_df, on="ticker", how="left")
+        max_hits = float(df["selector_hits"].max() or 1.0)
+        # Convert "number of triggered selectors" to 0-100 score.
+        df["score"] = (df["selector_hits"] / max_hits * 100.0).round(2)
+
+    agg_map: Dict[str, Any] = {"score": "max"}
+    if "name" in df.columns:
+        agg_map["name"] = "first"
+    if "last_close" in df.columns:
+        agg_map["last_close"] = "last"
+    if "trade_date" in df.columns:
+        agg_map["trade_date"] = "last"
+    if "selector_alias" in df.columns:
+        agg_map["selector_alias"] = lambda s: ", ".join(
+            sorted({str(v).strip() for v in s if str(v).strip()})
+        )
+    if "selector_class" in df.columns:
+        agg_map["selector_class"] = lambda s: ", ".join(
+            sorted({str(v).strip() for v in s if str(v).strip()})
+        )
+
+    grouped = df.groupby("ticker", as_index=False).agg(agg_map)
+    grouped["score"] = pd.to_numeric(grouped["score"], errors="coerce").fillna(0.0)
+    grouped = grouped[grouped["score"] >= float(min_score)]
+    grouped = grouped.sort_values("score", ascending=False)
+    if top_n > 0:
+        grouped = grouped.head(int(top_n))
+
+    if "action" not in grouped.columns:
+        grouped["action"] = grouped["score"].apply(
+            lambda s: "强烈买入" if s >= 85 else ("买入" if s >= 60 else "观察")
+        )
+
+    return grouped.reset_index(drop=True)
 
 # ----------------------------------------------------------------------
 #  路由实现
@@ -179,12 +246,19 @@ async def run_strategy(request: RunStrategyRequest):
 
             result_df = run_selectors_for_market(
                 trade_date=trade_date,
+                market=request.market,
                 selector_names=request.selector_names,
                 selector_params=request.selector_params,
                 progress_callback=_progress_callback
             )
         else:
             raise HTTPException(status_code=400, detail=f"未知的运行模式: {request.mode}")
+
+        result_df = _post_process_selector_results(
+            result_df,
+            min_score=request.min_score,
+            top_n=request.top_n,
+        )
 
         if result_df is None or result_df.empty:
             return {"status": "success", "count": 0, "data": [], "message": "未找到符合条件的标的"}
@@ -486,16 +560,33 @@ def _load_asset_pool_as_dicts() -> List[Dict[str, Any]]:
             pool_dicts.append(item)
     return pool_dicts
 
+# 首次部署时的默认资产池（种子数据）
+DEFAULT_ASSET_POOL = [
+    {"ticker": "013281", "name": "国泰海通30天滚动持有中短债债券A", "alias": ""},
+    {"ticker": "002611", "name": "博时黄金ETF联接C", "alias": ""},
+    {"ticker": "160615", "name": "鹏华沪深300ETF联接(LOF)A", "alias": ""},
+    {"ticker": "016858", "name": "国金量化多因子股票C", "alias": ""},
+    {"ticker": "159755", "name": "电池ETF", "alias": ""},
+    {"ticker": "006810", "name": "泰康港股通中证香港银行投资指数C", "alias": ""},
+]
+
 def _load_asset_pool() -> List[Any]:
-    """从 user_state.json 加载资产池"""
+    """从 user_state.json 加载资产池，首次部署自动种子化默认资产"""
     if not os.path.exists(USER_STATE_FILE):
-        return []
+        # 首次部署：写入默认资产并返回
+        _save_asset_pool(DEFAULT_ASSET_POOL)
+        return DEFAULT_ASSET_POOL
     try:
         with open(USER_STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data.get("selected_tickers", [])
+            pool = data.get("selected_tickers", [])
+            if not pool:
+                # 文件存在但资产池为空，种子化
+                _save_asset_pool(DEFAULT_ASSET_POOL)
+                return DEFAULT_ASSET_POOL
+            return pool
     except Exception:
-        return []
+        return DEFAULT_ASSET_POOL
 
 def _save_asset_pool(tickers: List[Any]) -> None:
     """保存资产池到 user_state.json"""

@@ -3,93 +3,128 @@
 职责：
 - 权限检查依赖
 - 用户信息获取
+- RBAC封装
 """
 
 from __future__ import annotations
 
+# 添加 logging 导入（移到顶部）
+import logging
+
+logger = logging.getLogger(__name__)
+
 from fastapi import Depends, HTTPException, status
 from typing import List
 
-from .auth import get_current_active_user, UserInDB
+from .auth import get_current_active_user, UserInDB, require_permission, require_any_permission, require_role, require_admin
 from core.rbac import get_rbac, Permission, Role
 from core.audit_log import get_audit_logger, AuditAction
 
 
-def require_permission(permission: Permission | str):
+__all__ = [
+    "require_permission",
+    "require_any_permission",
+    "require_role",
+    "require_admin",
+    "require_trade_permission",
+    "require_data_access",
+    "require_strategy_permission",
+    "log_access",
+    "Permission",
+    "Role",
+]
+
+
+def require_trade_permission(current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
     """
-    权限检查依赖工厂
+    交易相关操作权限检查
+    允许 TRADER 和 ADMIN 角色
 
     Args:
-        permission: 所需权限
+        current_user: 当前用户
 
     Returns:
-        依赖函数
+        当前用户（如果权限允许）
+
+    Raises:
+        HTTPException: 如果用户没有权限
     """
-    def permission_checker(current_user: UserInDB = Depends(get_current_active_user)):
-        rbac = get_rbac()
-        user_role = current_user.role or "viewer"
-        
-        if not rbac.check_permission(user_role, permission):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"权限不足：需要 {permission} 权限"
-            )
-        
-        return current_user
-    
-    return permission_checker
+    rbac = get_rbac()
+    user_role = current_user.role or "viewer"
+
+    # 允许 TRADER、ANALYST、ADMIN 执行交易相关操作
+    allowed_permissions = [Permission.EXECUTE_TRADE, Permission.MANAGE_STRATEGY]
+
+    if not rbac.check_any_permission(user_role, allowed_permissions):
+        logger.warning(
+            f"交易权限不足: 用户 {current_user.username} 缺少交易权限 (角色: {user_role})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="权限不足：需要交易员或更高权限"
+        )
+
+    return current_user
 
 
-def require_any_permission(permissions: List[Permission | str]):
+def require_data_access(current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
     """
-    检查是否有任一权限
+    数据访问权限检查
+    允许 ANALYST、TRADER、ADMIN 角色
 
     Args:
-        permissions: 权限列表
+        current_user: 当前用户
 
     Returns:
-        依赖函数
+        当前用户（如果权限允许）
+
+    Raises:
+        HTTPException: 如果用户没有权限
     """
-    def permission_checker(current_user: UserInDB = Depends(get_current_active_user)):
-        rbac = get_rbac()
-        user_role = current_user.role or "viewer"
-        
-        if not rbac.has_any_permission(user_role, permissions):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"权限不足：需要以下任一权限 {permissions}"
-            )
-        
-        return current_user
-    
-    return permission_checker
+    rbac = get_rbac()
+    user_role = current_user.role or "viewer"
+
+    if not rbac.check_permission(user_role, Permission.VIEW_DATA):
+        logger.warning(
+            f"数据访问权限不足: 用户 {current_user.username} 缺少数据访问权限 (角色: {user_role})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="权限不足：需要数据访问权限"
+        )
+
+    return current_user
 
 
-def require_role(role: Role | str):
+def require_strategy_permission(current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
     """
-    角色检查依赖工厂
+    策略管理权限检查
+    允许 TRADER、ANALYST、ADMIN 角色
 
     Args:
-        role: 所需角色
+        current_user: 当前用户
 
     Returns:
-        依赖函数
+        当前用户（如果权限允许）
+
+    Raises:
+        HTTPException: 如果用户没有权限
     """
-    def role_checker(current_user: UserInDB = Depends(get_current_active_user)):
-        user_role = current_user.role or "viewer"
-        
-        if isinstance(role, Role):
-            role = role.value
-        
-        if user_role != role:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"权限不足：需要 {role} 角色"
-            )
-        
-        return current_user
-    
-    return role_checker
+    rbac = get_rbac()
+    user_role = current_user.role or "viewer"
+
+    allowed_permissions = [Permission.MANAGE_STRATEGY, Permission.VIEW_STRATEGY]
+
+    if not rbac.check_any_permission(user_role, allowed_permissions):
+        logger.warning(
+            f"策略权限不足: 用户 {current_user.username} 缺少策略权限 (角色: {user_role})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="权限不足：需要策略管理权限"
+        )
+
+    return current_user
 
 
 def log_access(action: AuditAction | str, resource: str):
@@ -112,6 +147,5 @@ def log_access(action: AuditAction | str, resource: str):
             resource_type="api",
         )
         return current_user
-    
-    return access_logger
 
+    return access_logger

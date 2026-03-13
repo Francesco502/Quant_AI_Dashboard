@@ -93,7 +93,11 @@ try {
 # Start Next.js Frontend
 Write-Host "Starting Next.js Frontend (Port 8686)..." -ForegroundColor Yellow
 try {
-    Start-Process -FilePath "cmd" -ArgumentList "/c cd web && npm start"
+    $webPath = Join-Path $scriptPath "web"
+    if (-not (Test-Path $webPath)) {
+        throw "Web directory not found: $webPath"
+    }
+    Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$webPath`" && npm run dev"
     Write-Host "Next.js Frontend started in background" -ForegroundColor Green
 } catch {
     Write-Host "Failed to start Next.js Frontend: $_" -ForegroundColor Red

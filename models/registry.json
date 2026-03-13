@@ -32,9 +32,10 @@
         "model_type": "xgboost",
         "lookback": 60
       },
-      "status": "production",
+      "status": "archived",
       "model_path": "models/002611_xgboost.pkl",
-      "created_at": "2025-12-30 15:35:42"
+      "created_at": "2025-12-30 15:35:42",
+      "archived_at": "2026-03-05 16:00:03"
     },
     {
       "model_id": "xgb_006810_20251230_153542",
@@ -50,9 +51,10 @@
         "model_type": "xgboost",
         "lookback": 60
       },
-      "status": "production",
+      "status": "archived",
       "model_path": "models/006810_xgboost.pkl",
-      "created_at": "2025-12-30 15:35:42"
+      "created_at": "2025-12-30 15:35:42",
+      "archived_at": "2026-03-05 16:00:08"
     },
     {
       "model_id": "xgb_160615_20251230_153542",
@@ -68,9 +70,10 @@
         "model_type": "xgboost",
         "lookback": 60
       },
-      "status": "production",
+      "status": "archived",
       "model_path": "models/160615_xgboost.pkl",
-      "created_at": "2025-12-30 15:35:42"
+      "created_at": "2025-12-30 15:35:42",
+      "archived_at": "2026-03-05 16:00:04"
     },
     {
       "model_id": "xgb_013281_20251230_153542",
@@ -86,35 +89,223 @@
         "model_type": "xgboost",
         "lookback": 60
       },
-      "status": "production",
+      "status": "archived",
       "model_path": "models/013281_xgboost.pkl",
-      "created_at": "2025-12-30 15:35:42"
+      "created_at": "2025-12-30 15:35:42",
+      "archived_at": "2026-03-05 16:00:02"
     },
     {
-      "model_id": "xgb_013281_20260211_155826",
+      "model_id": "xgb_013281_20260305_160001",
       "ticker": "013281",
       "model_type": "xgboost",
-      "train_date": "2026-02-11",
+      "train_date": "2026-03-05",
       "train_data_range": [
-        "2025-05-20",
-        "2026-02-06"
+        "2009-04-03",
+        "2026-03-04"
       ],
       "features_version": "v1.0",
       "metrics": {
         "model_type": "xgboost",
-        "lookback": 60
+        "lookback": 60,
+        "direction_accuracy": 73.6842105263158,
+        "mae": 0.00030336036535246743,
+        "rmse": 0.0003276815999765966,
+        "strategy_sharpe": 15.263054215021223,
+        "strategy_cumreturn": 0.0016474107584879178
+      },
+      "status": "production",
+      "model_path": "D:\\LLT\\Code\\Quant\\Quant_AI_Dashboard-main\\models\\013281_xgboost.pkl",
+      "created_at": "2026-03-05 16:00:01",
+      "evaluated_at": "2026-03-05 16:00:02",
+      "production_since": "2026-03-05 16:00:02"
+    },
+    {
+      "model_id": "xgb_002611_20260305_160002",
+      "ticker": "002611",
+      "model_type": "xgboost",
+      "train_date": "2026-03-05",
+      "train_data_range": [
+        "2009-04-03",
+        "2026-03-04"
+      ],
+      "features_version": "v1.0",
+      "metrics": {
+        "model_type": "xgboost",
+        "lookback": 60,
+        "direction_accuracy": 50.87719298245614,
+        "mae": 0.10054826003913621,
+        "rmse": 0.13738818546295048,
+        "strategy_sharpe": -1.36438478100744,
+        "strategy_cumreturn": -0.014267941996324604
+      },
+      "status": "production",
+      "model_path": "D:\\LLT\\Code\\Quant\\Quant_AI_Dashboard-main\\models\\002611_xgboost.pkl",
+      "created_at": "2026-03-05 16:00:02",
+      "evaluated_at": "2026-03-05 16:00:03",
+      "production_since": "2026-03-05 16:00:03"
+    },
+    {
+      "model_id": "xgb_160615_20260305_160003",
+      "ticker": "160615",
+      "model_type": "xgboost",
+      "train_date": "2026-03-05",
+      "train_data_range": [
+        "2009-04-03",
+        "2026-03-04"
+      ],
+      "features_version": "v1.0",
+      "metrics": {
+        "model_type": "xgboost",
+        "lookback": 60,
+        "direction_accuracy": 47.36842105263158,
+        "mae": 0.016391223045186153,
+        "rmse": 0.019425103790625158,
+        "strategy_sharpe": -1.3103408009483408,
+        "strategy_cumreturn": -0.013436987404606674
+      },
+      "status": "production",
+      "model_path": "D:\\LLT\\Code\\Quant\\Quant_AI_Dashboard-main\\models\\160615_xgboost.pkl",
+      "created_at": "2026-03-05 16:00:03",
+      "evaluated_at": "2026-03-05 16:00:04",
+      "production_since": "2026-03-05 16:00:04"
+    },
+    {
+      "model_id": "xgb_016858_20260305_160005",
+      "ticker": "016858",
+      "model_type": "xgboost",
+      "train_date": "2026-03-05",
+      "train_data_range": [
+        "2009-04-03",
+        "2026-03-04"
+      ],
+      "features_version": "v1.0",
+      "metrics": {
+        "model_type": "xgboost",
+        "lookback": 60,
+        "direction_accuracy": 59.649122807017534,
+        "mae": 0.08295958723730328,
+        "rmse": 0.0962906291175845,
+        "strategy_sharpe": 3.6049921526680895,
+        "strategy_cumreturn": 0.04390955891883993
+      },
+      "status": "production",
+      "model_path": "D:\\LLT\\Code\\Quant\\Quant_AI_Dashboard-main\\models\\016858_xgboost.pkl",
+      "created_at": "2026-03-05 16:00:05",
+      "evaluated_at": "2026-03-05 16:00:05",
+      "production_since": "2026-03-05 16:00:05"
+    },
+    {
+      "model_id": "xgb_159755_20260305_160006",
+      "ticker": "159755",
+      "model_type": "xgboost",
+      "train_date": "2026-03-05",
+      "train_data_range": [
+        "2009-04-03",
+        "2026-03-04"
+      ],
+      "features_version": "v1.0",
+      "metrics": {
+        "model_type": "xgboost",
+        "lookback": 60,
+        "direction_accuracy": 50.87719298245614,
+        "mae": 0.02587513312293811,
+        "rmse": 0.030591678836403347,
+        "strategy_sharpe": 0.5643359616552873,
+        "strategy_cumreturn": 0.009558971877142422
+      },
+      "status": "production",
+      "model_path": "D:\\LLT\\Code\\Quant\\Quant_AI_Dashboard-main\\models\\159755_xgboost.pkl",
+      "created_at": "2026-03-05 16:00:06",
+      "evaluated_at": "2026-03-05 16:00:06",
+      "production_since": "2026-03-05 16:00:06"
+    },
+    {
+      "model_id": "xgb_006810_20260305_160007",
+      "ticker": "006810",
+      "model_type": "xgboost",
+      "train_date": "2026-03-05",
+      "train_data_range": [
+        "2009-04-03",
+        "2026-03-04"
+      ],
+      "features_version": "v1.0",
+      "metrics": {
+        "model_type": "xgboost",
+        "lookback": 60,
+        "direction_accuracy": 49.122807017543856,
+        "mae": 0.017152620279338282,
+        "rmse": 0.020448862599644915,
+        "strategy_sharpe": -1.3603211690305395,
+        "strategy_cumreturn": -0.018788579006652022
+      },
+      "status": "production",
+      "model_path": "D:\\LLT\\Code\\Quant\\Quant_AI_Dashboard-main\\models\\006810_xgboost.pkl",
+      "created_at": "2026-03-05 16:00:07",
+      "evaluated_at": "2026-03-05 16:00:08",
+      "production_since": "2026-03-05 16:00:08"
+    },
+    {
+      "model_id": "013281_xgboost_20260310151800455919",
+      "ticker": "013281",
+      "model_type": "xgboost",
+      "train_date": "2026-03-10",
+      "train_data_range": {
+        "start": "2025-06-06",
+        "end": "2026-03-04",
+        "rows": 180
+      },
+      "features_version": "runtime",
+      "metrics": {
+        "MAE": 0.002110617788897595,
+        "RMSE": 0.002153730630228877,
+        "MAPE": 0.1858794439662412,
+        "SMAPE": 0.18569969242552115,
+        "Direction_Accuracy": 80.0,
+        "ECE": 0.2496994809644093,
+        "Strategy_NetReturn": 0.0012014103129129872,
+        "Strategy_Sharpe": 3.455240815598873,
+        "Strategy_MaxDrawdown": -0.0010000000000000009,
+        "Strategy_Turnover": 0.05
       },
       "status": "staging",
-      "model_path": "models/013281_xgboost.pkl",
-      "created_at": "2026-02-11 15:58:26"
+      "model_path": "models/013281_xgboost_20260310151800455919.joblib",
+      "created_at": "2026-03-10 15:18:00"
+    },
+    {
+      "model_id": "002611_xgboost_20260310151805576733",
+      "ticker": "002611",
+      "model_type": "xgboost",
+      "train_date": "2026-03-10",
+      "train_data_range": {
+        "start": "2025-06-06",
+        "end": "2026-03-04",
+        "rows": 180
+      },
+      "features_version": "runtime",
+      "metrics": {
+        "MAE": 0.18691909193349396,
+        "RMSE": 0.20566303846590547,
+        "MAPE": 5.276649900294135,
+        "SMAPE": 5.149979676672721,
+        "Direction_Accuracy": 60.0,
+        "ECE": 0.15813247105543266,
+        "Strategy_NetReturn": -0.17735186685177318,
+        "Strategy_Sharpe": -3.895560059076878,
+        "Strategy_MaxDrawdown": -0.17735186685177318,
+        "Strategy_Turnover": 0.45
+      },
+      "status": "staging",
+      "model_path": "models/002611_xgboost_20260310151805576733.joblib",
+      "created_at": "2026-03-10 15:18:05"
     }
   ],
   "production_models": {
     "159755.SZ": "xgb_159755.SZ_20251230_153542",
-    "002611": "xgb_002611_20251230_153542",
-    "006810": "xgb_006810_20251230_153542",
-    "160615": "xgb_160615_20251230_153542",
-    "013281": "xgb_013281_20251230_153542"
-  },
-  "updated_at": "2026-02-11 15:58:26"
+    "002611": "xgb_002611_20260305_160002",
+    "006810": "xgb_006810_20260305_160007",
+    "160615": "xgb_160615_20260305_160003",
+    "013281": "xgb_013281_20260305_160001",
+    "016858": "xgb_016858_20260305_160005",
+    "159755": "xgb_159755_20260305_160006"
+  }
 }

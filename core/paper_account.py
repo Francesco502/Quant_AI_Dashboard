@@ -188,7 +188,13 @@ class PaperAccount:
             df = load_price_data([ticker], days=5)
             if df.empty or ticker not in df.columns:
                 raise ValueError(f"无法获取 {ticker} 的最新价格")
-            price = float(df[ticker].iloc[-1])
+            valid_prices = df[ticker].dropna()
+            if not valid_prices.empty:
+                price = float(valid_prices.iloc[-1])
+                if price <= 0:
+                    raise ValueError(f"获取到无效价格 (<=0): {ticker} @ {price}")
+            else:
+                raise ValueError(f"无法获取 {ticker} 的最新价格")
             
         # 2. 计算费用 (简化版：万分之三佣金，最低5元)
         amount = price * shares
@@ -297,7 +303,13 @@ class PaperAccount:
             df = load_price_data([ticker], days=5)
             if df.empty or ticker not in df.columns:
                 raise ValueError(f"无法获取 {ticker} 的最新价格")
-            price = float(df[ticker].iloc[-1])
+            valid_prices = df[ticker].dropna()
+            if not valid_prices.empty:
+                price = float(valid_prices.iloc[-1])
+                if price <= 0:
+                    raise ValueError(f"获取到无效价格 (<=0): {ticker} @ {price}")
+            else:
+                raise ValueError(f"无法获取 {ticker} 的最新价格")
             
         # 3. 计算收益与费用
         amount = price * shares
@@ -459,11 +471,11 @@ class PaperAccount:
                         valid_prices = price_df[ticker].dropna()
                         if not valid_prices.empty:
                             price = float(valid_prices.iloc[-1])
-                    
-                    # 如果批量获取失败，回退到 cost (保守估计) 或 0
-                    if price == 0:
-                        price = p["avg_cost"] # Fallback to cost if current price unavailable
-                    
+
+                    # 如果价格无效（0或负数），回退到成本价
+                    if not price or price <= 0:
+                        price = p["avg_cost"]  # Fallback to cost if current price unavailable
+
                     market_value += price * shares
                     p["current_price"] = price
                     p["market_value"] = price * shares
@@ -480,12 +492,266 @@ class PaperAccount:
                     market_value += p["shares"] * p["avg_cost"]
                     p["current_price"] = p["avg_cost"]
                     p["market_value"] = p["shares"] * p["avg_cost"]
-        
+                    p["unrealized_pnl"] = 0  # 无法计算浮动盈亏
+                    p["return_pct"] = 0.0
+
         total_assets = self.balance + market_value
-        
+
         return {
             "total_assets": total_assets,
             "cash": self.balance,
             "market_value": market_value,
             "positions": positions
         }
+
+    def batch_buy(self, orders: List[Dict]) -> List[Dict]:
+        """
+        批量买入资产（优化性能）
+
+        Args:
+            orders: 买入订单列表，每个订单包含 ticker, shares, price(可选)
+
+        Returns:
+            交易结果列表
+        """
+        if not self.account_id:
+            raise ValueError("账户未初始化")
+
+        if not orders:
+            return []
+
+        results = []
+        try:
+            cursor = self.db.conn.cursor()
+
+            for order in orders:
+                ticker = order["ticker"]
+                shares = order["shares"]
+                price = order.get("price")
+
+                # 1. 获取价格
+                if price is None:
+                    df = load_price_data([ticker], days=5)
+                    if df.empty or ticker not in df.columns:
+                        results.append({
+                            "success": False,
+                            "ticker": ticker,
+                            "error": f"无法获取 {ticker} 的最新价格"
+                        })
+                        continue
+                    valid_prices = df[ticker].dropna()
+                    if not valid_prices.empty:
+                        price = float(valid_prices.iloc[-1])
+                        if price <= 0:
+                            results.append({
+                                "success": False,
+                                "ticker": ticker,
+                                "error": f"获取到无效价格 (<=0): {ticker} @ {price}"
+                            })
+                            continue
+                    else:
+                        results.append({
+                            "success": False,
+                            "ticker": ticker,
+                            "error": f"无法获取 {ticker} 的最新价格"
+                        })
+                        continue
+
+                # 2. 计算费用
+                amount = price * shares
+                fee = max(5.0, amount * 0.0003)
+                total_cost = amount + fee
+
+                # 3. 检查余额
+                if self.balance < total_cost:
+                    results.append({
+                        "success": False,
+                        "ticker": ticker,
+                        "error": f"余额不足: 需要 {total_cost:.2f}, 当前 {self.balance:.2f}"
+                    })
+                    continue
+
+                # 4. 扣减余额
+                new_balance = self.balance - total_cost
+                cursor.execute("""
+                    UPDATE accounts
+                    SET balance = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (new_balance, self.account_id))
+
+                # 5. 更新持仓
+                cursor.execute("""
+                    SELECT shares, avg_cost FROM positions
+                    WHERE account_id = ? AND ticker = ?
+                """, (self.account_id, ticker))
+                pos_row = cursor.fetchone()
+
+                if pos_row:
+                    old_shares = pos_row["shares"]
+                    old_cost = pos_row["avg_cost"]
+                    new_shares = old_shares + shares
+                    new_cost = ((old_shares * old_cost) + total_cost) / new_shares
+
+                    cursor.execute("""
+                        UPDATE positions
+                        SET shares = ?, avg_cost = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE account_id = ? AND ticker = ?
+                    """, (new_shares, new_cost, self.account_id, ticker))
+                else:
+                    new_shares = shares
+                    new_cost = total_cost / shares
+                    cursor.execute("""
+                        INSERT INTO positions (account_id, ticker, shares, avg_cost)
+                        VALUES (?, ?, ?, ?)
+                    """, (self.account_id, ticker, shares, new_cost))
+
+                # 6. 记录交易历史
+                cursor.execute("""
+                    INSERT INTO trade_history (account_id, ticker, action, price, shares, fee)
+                    VALUES (?, ?, 'BUY', ?, ?, ?)
+                """, (self.account_id, ticker, price, shares, fee))
+
+                self.db.conn.commit()
+                self.balance = new_balance
+
+                logger.info(f"买入成功: {ticker} {shares}股 @ {price:.2f}")
+                results.append({
+                    "success": True,
+                    "ticker": ticker,
+                    "action": "BUY",
+                    "price": price,
+                    "shares": shares,
+                    "cost": total_cost,
+                    "balance": new_balance
+                })
+
+            return results
+
+        except Exception as e:
+            self.db.conn.rollback()
+            logger.error(f"批量买入失败: {e}")
+            raise
+
+    def batch_sell(self, orders: List[Dict]) -> List[Dict]:
+        """
+        批量卖出资产（优化性能）
+
+        Args:
+            orders: 卖出订单列表，每个订单包含 ticker, shares, price(可选)
+
+        Returns:
+            交易结果列表
+        """
+        if not self.account_id:
+            raise ValueError("账户未初始化")
+
+        if not orders:
+            return []
+
+        results = []
+        try:
+            cursor = self.db.conn.cursor()
+
+            for order in orders:
+                ticker = order["ticker"]
+                shares = order["shares"]
+                price = order.get("price")
+
+                # 1. 获取持仓
+                cursor.execute("""
+                    SELECT shares, avg_cost FROM positions
+                    WHERE account_id = ? AND ticker = ?
+                """, (self.account_id, ticker))
+                pos_row = cursor.fetchone()
+
+                if not pos_row or pos_row["shares"] < shares:
+                    current_shares = pos_row["shares"] if pos_row else 0
+                    results.append({
+                        "success": False,
+                        "ticker": ticker,
+                        "error": f"持仓不足: 需要 {shares}, 当前 {current_shares}"
+                    })
+                    continue
+
+                # 2. 获取价格
+                if price is None:
+                    df = load_price_data([ticker], days=5)
+                    if df.empty or ticker not in df.columns:
+                        results.append({
+                            "success": False,
+                            "ticker": ticker,
+                            "error": f"无法获取 {ticker} 的最新价格"
+                        })
+                        continue
+                    valid_prices = df[ticker].dropna()
+                    if not valid_prices.empty:
+                        price = float(valid_prices.iloc[-1])
+                        if price <= 0:
+                            results.append({
+                                "success": False,
+                                "ticker": ticker,
+                                "error": f"获取到无效价格 (<=0): {ticker} @ {price}"
+                            })
+                            continue
+                    else:
+                        results.append({
+                            "success": False,
+                            "ticker": ticker,
+                            "error": f"无法获取 {ticker} 的最新价格"
+                        })
+                        continue
+
+                # 3. 计算收益与费用
+                amount = price * shares
+                fee = max(5.0, amount * 0.0003) + (amount * 0.001)
+                net_income = amount - fee
+
+                # 4. 增加余额
+                new_balance = self.balance + net_income
+                cursor.execute("""
+                    UPDATE accounts
+                    SET balance = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (new_balance, self.account_id))
+
+                # 5. 更新持仓
+                new_shares = pos_row["shares"] - shares
+                if new_shares == 0:
+                    cursor.execute("""
+                        UPDATE positions
+                        SET shares = 0, updated_at = CURRENT_TIMESTAMP
+                        WHERE account_id = ? AND ticker = ?
+                    """, (self.account_id, ticker))
+                else:
+                    cursor.execute("""
+                        UPDATE positions
+                        SET shares = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE account_id = ? AND ticker = ?
+                    """, (new_shares, self.account_id, ticker))
+
+                # 6. 记录交易历史
+                cursor.execute("""
+                    INSERT INTO trade_history (account_id, ticker, action, price, shares, fee)
+                    VALUES (?, ?, 'SELL', ?, ?, ?)
+                """, (self.account_id, ticker, price, shares, fee))
+
+                self.db.conn.commit()
+                self.balance = new_balance
+
+                logger.info(f"卖出成功: {ticker} {shares}股 @ {price:.2f}")
+                results.append({
+                    "success": True,
+                    "ticker": ticker,
+                    "action": "SELL",
+                    "price": price,
+                    "shares": shares,
+                    "income": net_income,
+                    "balance": new_balance
+                })
+
+            return results
+
+        except Exception as e:
+            self.db.conn.rollback()
+            logger.error(f"批量卖出失败: {e}")
+            raise

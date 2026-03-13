@@ -1,7 +1,7 @@
 "use client"
 
 import React, { createContext, useContext, useState, useEffect } from "react"
-import { api, DataSourceResponse } from "./api"
+import { api } from "./api"
 
 interface SettingsContextType {
   dataSources: string[]
@@ -14,19 +14,22 @@ interface SettingsContextType {
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined)
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  const [dataSources, setDataSourcesState] = useState<string[]>([])
+  const [dataSources, setDataSourcesState] = useState<string[]>(["AkShare", "Binance"])
   const [apiKeys, setApiKeysState] = useState<Record<string, string>>({})
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(
+    () => typeof window !== "undefined" && !!localStorage.getItem("token")
+  )
 
   // Load from API on mount
   useEffect(() => {
+    if (typeof window === "undefined" || !localStorage.getItem("token")) return
+
     api.stz.getDataSources()
       .then((res) => {
         setDataSourcesState(res.sources || ["AkShare", "Binance"])
         setApiKeysState(res.api_keys || {})
       })
-      .catch((err) => {
-        console.error("Failed to load data sources:", err)
+      .catch(() => {
         setDataSourcesState(["AkShare", "Binance"])
       })
       .finally(() => setIsLoading(false))
@@ -35,12 +38,14 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   // Save to API when changed
   const updateDataSources = (newSources: string[]) => {
     setDataSourcesState(newSources)
-    api.stz.updateDataSources(newSources, apiKeys).catch(console.error)
+    if (typeof window === "undefined" || !localStorage.getItem("token")) return
+    void api.stz.updateDataSources(newSources, apiKeys).catch(() => undefined)
   }
 
   const updateApiKeys = (newKeys: Record<string, string>) => {
     setApiKeysState(newKeys)
-    api.stz.updateDataSources(dataSources, newKeys).catch(console.error)
+    if (typeof window === "undefined" || !localStorage.getItem("token")) return
+    void api.stz.updateDataSources(dataSources, newKeys).catch(() => undefined)
   }
 
   return (

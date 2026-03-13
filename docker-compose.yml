@@ -1,134 +1,58 @@
+# ============================================================
+# Quant-AI Dashboard v2.0.0-alpha.1 — 单容器部署（2核2GB 专用）
+#
+# 架构：1 个容器内用 Supervisor 管理 Nginx + Uvicorn + Daemon
+#   - Nginx    : 托管前端静态文件 + 反向代理 API/WS（端口 80）
+#   - Uvicorn  : FastAPI 单 worker（端口 8685，内部）
+#   - Daemon   : 定时数据更新 / 模型训练（可选，ENABLE_DAEMON 控制）
+#
+# 使用：
+#   docker-compose up -d            # 启动
+#   docker-compose logs -f          # 查看日志
+#   docker-compose down             # 停止
+# ============================================================
+
 services:
-  # ============================================================
-  # FastAPI 后端 API 服务
-  # ============================================================
-  backend:
-    image: francescoli/quant_backend:v1.0.0
+  quant-app:
+    image: francescoli/quant_app:v2.0.0-alpha.1
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: quant-backend
-    command: python -m uvicorn api.main:app --host 0.0.0.0 --port 8685 --workers 2
+      dockerfile: Dockerfile.optimized
+    container_name: quant-app
     ports:
-      - "8685:8685"
+      - "8686:80"     # 统一入口（Nginx）
+      - "8685:8685"   # 后端 API（可选，调试用）
     volumes:
-      # 数据目录（持久化：行情数据、选股结果、DB）
       - ./data:/app/data
-      # 日志目录
       - ./logs:/app/logs
-      # 策略配置
       - ./strategies:/app/strategies
-      # 风控配置
-      - ./risk_config.json:/app/risk_config.json
-      # 模型注册表
       - ./models:/app/models
     environment:
       - PYTHONUNBUFFERED=1
-      # JWT 密钥（生产环境务必修改！）
+      # ---- 低配优化 ----
+      - DISABLE_HEAVY_MODELS=true
+      - ENABLE_DAEMON=true
+      # ---- 认证 ----
       - SECRET_KEY=${SECRET_KEY:-quant-ai-dashboard-secret-key-change-me}
-      # API 数据源 Token
-      - ALPHA_VANTAGE_KEY=${ALPHA_VANTAGE_KEY:-}
-      - TUSHARE_TOKEN=${TUSHARE_TOKEN:-}
-      # 登录密码（初始 admin 密码）
       - APP_LOGIN_PASSWORD=${APP_LOGIN_PASSWORD:-}
       - APP_LOGIN_PASSWORD_HASH=${APP_LOGIN_PASSWORD_HASH:-}
-      # CORS 允许的前端域名（生产环境应设置为实际域名）
+      # ---- 数据源 ----
+      - ALPHA_VANTAGE_KEY=${ALPHA_VANTAGE_KEY:-}
+      - TUSHARE_TOKEN=${TUSHARE_TOKEN:-}
+      # ---- CORS ----
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8686}
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1800M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
     restart: unless-stopped
-    networks:
-      - quant-network
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8685/api/health')"]
+      test: ["CMD", "curl", "-f", "http://localhost/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
-
-  # ============================================================
-  # Next.js 前端服务
-  # ============================================================
-  frontend:
-    image: francescoli/quant_frontend:v1.0.0
-    build:
-      context: ./web
-      dockerfile: Dockerfile
-    container_name: quant-frontend
-    ports:
-      - "8686:8686"
-    environment:
-      - NODE_ENV=production
-      # 注意：NEXT_PUBLIC_* 是构建时变量，运行时设置无效
-      # Docker 部署使用 Nginx 反向代理，API URL 在 Dockerfile 中设置为 /api
-    restart: unless-stopped
-    networks:
-      - quant-network
-    depends_on:
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "node", "-e", "const http=require('http');const r=http.get('http://localhost:8686',res=>{process.exit(res.statusCode===200?0:1)});r.on('error',()=>process.exit(1));"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-
-  # ============================================================
-  # 后台守护进程（数据更新 + 定时任务）
-  # ============================================================
-  daemon:
-    image: francescoli/quant_backend:v1.0.0
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: quant-daemon
-    command: python run_daemon.py
-    volumes:
-      # 与后端共享数据目录
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./strategies:/app/strategies
-      - ./risk_config.json:/app/risk_config.json
-      - ./models:/app/models
-    environment:
-      - PYTHONUNBUFFERED=1
-      - ALPHA_VANTAGE_KEY=${ALPHA_VANTAGE_KEY:-}
-      - TUSHARE_TOKEN=${TUSHARE_TOKEN:-}
-      - APP_LOGIN_PASSWORD=${APP_LOGIN_PASSWORD:-}
-      - APP_LOGIN_PASSWORD_HASH=${APP_LOGIN_PASSWORD_HASH:-}
-    restart: unless-stopped
-    networks:
-      - quant-network
-    depends_on:
-      backend:
-        condition: service_healthy
-
-  # ============================================================
-  # Nginx 反向代理（统一入口）
-  # ============================================================
-  nginx:
-    image: nginx:1.25-alpine
-    container_name: quant-nginx
-    ports:
-      - "80:80"
-      # 如果配置了 HTTPS，取消下面的注释
-      # - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      # HTTPS 证书（可选）
-      # - ./nginx/certs:/etc/nginx/certs:ro
-    restart: unless-stopped
-    networks:
-      - quant-network
-    depends_on:
-      - frontend
-      - backend
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
-networks:
-  quant-network:
-    driver: bridge
+      start_period: 60s

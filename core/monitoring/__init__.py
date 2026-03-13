@@ -2,7 +2,7 @@
 
 from .metrics import MetricsCollector
 from .health_checker import HealthChecker, HealthStatus
-from .system_monitor import SystemMonitor
+from .system_monitor import SystemMonitor, SystemMetrics, MonitoringStatus, get_system_monitor, restart_system_monitor
 from .alert_manager import (
     AlertManager,
     AlertRule,
@@ -15,13 +15,29 @@ from .alert_manager import (
     WebhookChannel,
     TelegramChannel,
     DingTalkChannel,
+    FeishuChannel,
+    WeComChannel,
+)
+from .config import (
+    MonitoringConfig,
+    SystemMonitorConfig,
+    AlertRuleConfig,
+    AlertChannelConfig,
+    get_monitoring_config,
+    reload_monitoring_config,
 )
 
 __all__ = [
+    # Metrics
     "MetricsCollector",
+    # Health
     "HealthChecker",
     "HealthStatus",
+    # Monitoring
     "SystemMonitor",
+    "SystemMetrics",
+    "MonitoringStatus",
+    # Alerting
     "AlertManager",
     "AlertRule",
     "AlertChannel",
@@ -33,4 +49,13 @@ __all__ = [
     "WebhookChannel",
     "TelegramChannel",
     "DingTalkChannel",
+    "FeishuChannel",
+    "WeComChannel",
+    # Config
+    "MonitoringConfig",
+    "SystemMonitorConfig",
+    "AlertRuleConfig",
+    "AlertChannelConfig",
+    "get_monitoring_config",
+    "reload_monitoring_config",
 ]

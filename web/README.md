@@ -1,4 +1,4 @@
-# Quant-AI Dashboard Frontend (v1.0.0)
+# Quant-AI Dashboard Frontend (v2.0.0-alpha.1)
 
 Frontend application for Quant-AI Dashboard, built with Next.js App Router.
 
@@ -29,7 +29,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8685/api
 ```bash
 npm run lint
 npm run build
-npm run start
+npm run preview
 ```
 
 ## Structure
@@ -38,5 +38,5 @@ npm run start
 - `src/lib/api.ts`: typed API client and request contracts
 
 ## Versioned Release Docs
-- `../docs/RELEASE_NOTES_v1.0.0.md`
-- `../docs/CODE_CHANGES_v1.0.0.md`
+- `../docs/RELEASE_NOTES_v2.0.0-alpha.1.md`
+- `../docs/CODE_CHANGES_v2.0.0-alpha.1.md`

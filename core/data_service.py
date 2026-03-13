@@ -40,7 +40,7 @@ except ImportError:
 
 import yfinance as yf
 
-from . import data_store
+from . import data_store, tushare_provider
 from .error_handler import handle_error, create_data_error, create_network_error
 from .data_quality import DataQualityChecker, validate_data_before_analysis
 
@@ -101,15 +101,31 @@ def get_active_data_sources() -> List[str]:
         return ["AkShare", "Binance"]
 
 def get_api_keys() -> Dict[str, str]:
-    """获取数据源 API Keys"""
+    """获取数据源 API Keys（优先从环境变量读取，其次从用户状态文件读取）"""
+    api_keys = {}
+
+    # 从环境变量读取（优先级更高）
+    if os.getenv("ALPHA_VANTAGE_KEY"):
+        api_keys["ALPHA_VANTAGE_KEY"] = os.getenv("ALPHA_VANTAGE_KEY")
+    if os.getenv("TUSHARE_TOKEN"):
+        api_keys["TUSHARE_TOKEN"] = os.getenv("TUSHARE_TOKEN")
+
+    # 从用户状态文件读取（降级方案）
     if not USER_STATE_FILE.exists():
-         return {}
+        return api_keys
     try:
         with open(USER_STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data.get("api_keys", {})
+            file_keys = data.get("api_keys", {})
+            # 只有当环境变量没有设置时才使用文件中的值
+            if not api_keys.get("ALPHA_VANTAGE_KEY") and file_keys.get("ALPHA_VANTAGE_KEY"):
+                api_keys["ALPHA_VANTAGE_KEY"] = file_keys["ALPHA_VANTAGE_KEY"]
+            if not api_keys.get("TUSHARE_TOKEN") and file_keys.get("TUSHARE_TOKEN"):
+                api_keys["TUSHARE_TOKEN"] = file_keys["TUSHARE_TOKEN"]
     except Exception:
-        return {}
+        pass
+
+    return api_keys
 
 
 
@@ -342,14 +358,9 @@ def load_price_data_tushare(
     data_dict: Dict[str, pd.Series] = {}
 
     for ticker in tickers:
-        t = ticker.upper()
-        if ".SZ" in t or ".SS" in t:
-            code6 = t.replace(".SZ", "").replace(".SS", "")
-            # Tushare 使用 .SZ/.SH 后缀
-            suffix = ".SZ" if "SZ" in t else ".SH"
-            ts_code = f"{code6}{suffix}"
-        else:
-            # 对于纯数字或其他格式，暂不由 Tushare 处理
+        ts_code = tushare_provider.normalize_cn_ticker(ticker)
+        if ts_code is None:
+            # 非中国市场代码暂不由 Tushare 处理
             continue
 
         df = pd.DataFrame()
@@ -618,7 +629,7 @@ def load_ohlcv_data_akshare(tickers: List[str], days: int) -> Dict[str, pd.DataF
     result: Dict[str, pd.DataFrame] = {}
 
     # 使用并发请求，但限制并发数避免被封，并设置较短的超时时间（5秒）
-    max_workers = min(len(tickers), 8)  # 最多8个并发
+    max_workers = min(len(tickers), 3)  # 低配优化：最多3个并发
     timeout_seconds = 5  # 每个请求最多等待5秒
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -662,13 +673,9 @@ def load_ohlcv_data_tushare(
     result: Dict[str, pd.DataFrame] = {}
 
     for ticker in tickers:
-        t = ticker.upper()
-        if ".SZ" in t or ".SS" in t:
-            code6 = t.replace(".SZ", "").replace(".SS", "")
-            suffix = ".SZ" if "SZ" in t else ".SH"
-            ts_code = f"{code6}{suffix}"
-        else:
-            # 非 A 股标的暂不由 Tushare 处理
+        ts_code = tushare_provider.normalize_cn_ticker(ticker)
+        if ts_code is None:
+            # 非中国市场标的暂不由 Tushare 处理
             continue
 
         try:
@@ -755,7 +762,7 @@ def load_price_data_alpha_vantage(
     if not tickers:
         return pd.DataFrame()
 
-    max_workers = min(len(tickers), 4)
+    max_workers = min(len(tickers), 2)  # 低配优化
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -871,7 +878,7 @@ def load_price_data_binance(tickers: List[str], days: int) -> pd.DataFrame:
         return pd.DataFrame()
 
     limit = min(max(days * 2, 50), 1000)
-    max_workers = min(len(tickers), 4)
+    max_workers = min(len(tickers), 2)  # 低配优化
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
@@ -900,7 +907,7 @@ def load_ohlcv_data_binance(tickers: List[str], days: int) -> Dict[str, pd.DataF
         return {}
 
     limit = min(max(days * 2, 50), 1000)
-    max_workers = min(len(tickers), 4)
+    max_workers = min(len(tickers), 2)  # 低配优化
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
@@ -1043,7 +1050,7 @@ def load_ohlcv_data_alpha_vantage(
     if not tickers or not api_key:
         return {}
 
-    max_workers = min(len(tickers), 4)
+    max_workers = min(len(tickers), 2)  # 低配优化
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -1392,6 +1399,29 @@ def _load_price_data_remote(
     return pd.concat(data_frames, axis=1).ffill().bfill()
 
 
+def _clean_price_dataframe(df: pd.DataFrame, max_one_day_return: float = 0.30, ffill_limit: int = 5) -> pd.DataFrame:
+    """
+    方案一：数据清洗增强。对每列：去重、前向填充（限制天数）、单日收益率 Winsorize（默认±30%）。
+    """
+    out = df.copy()
+    for col in out.columns:
+        s = out[col].dropna()
+        if s.empty:
+            continue
+        s = s[~s.index.duplicated(keep="first")]
+        s = s.sort_index()
+        s = s.ffill(limit=ffill_limit).bfill(limit=ffill_limit)
+        if len(s) < 2:
+            out[col] = s.reindex(out.index)
+            continue
+        # 单日收益率截断后重建价格
+        ret = s.pct_change()
+        ret = ret.clip(lower=-max_one_day_return, upper=max_one_day_return)
+        clean = s.iloc[0] * (1 + ret.fillna(0)).cumprod()
+        out[col] = clean.reindex(out.index)
+    return out.ffill().bfill()
+
+
 def load_price_data(
     tickers: List[str],
     days: int,
@@ -1403,12 +1433,30 @@ def load_price_data(
     if not tickers:
         return pd.DataFrame()
 
+    # API 响应文件缓存（Dexter 借鉴）：命中则直接返回
+    try:
+        from .api_response_cache import get_cached, set_cached, is_api_cache_enabled
+        if is_api_cache_enabled():
+            cache_params = {"tickers": sorted(tickers), "days": days}
+            cached = get_cached("prices", cache_params)
+            if cached is not None:
+                df = pd.DataFrame.from_dict(cached, orient="split")
+                if not df.empty and hasattr(df.index, "astype"):
+                    try:
+                        df.index = pd.to_datetime(df.index)
+                    except Exception:
+                        pass
+                return df
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug("api_response_cache get_cached skip: %s", e)
+
     if alpha_vantage_key is None or tushare_token is None:
         keys = get_api_keys()
         if alpha_vantage_key is None:
-            alpha_vantage_key = keys.get("AlphaVantage")
+            alpha_vantage_key = keys.get("ALPHA_VANTAGE_KEY")
         if tushare_token is None:
-            tushare_token = keys.get("Tushare")
+            tushare_token = keys.get("TUSHARE_TOKEN")
 
     if data_sources is None:
         data_sources = get_active_data_sources()
@@ -1472,6 +1520,10 @@ def load_price_data(
 
     result_df = result.ffill().bfill()
     
+    # 方案一：数据清洗增强（去重、前向填充限制、异常收益率截断）
+    if not result_df.empty:
+        result_df = _clean_price_dataframe(result_df)
+    
     # 数据质量检查
     if not result_df.empty:
         is_valid, warnings = validate_data_before_analysis(result_df, tickers, min_data_points=30)
@@ -1481,7 +1533,17 @@ def load_price_data(
             logger = logging.getLogger(__name__)
             for warning in warnings:
                 logger.warning(f"数据质量警告: {warning}")
-    
+
+    # API 响应文件缓存：写入本次结果
+    try:
+        from .api_response_cache import set_cached, is_api_cache_enabled
+        if is_api_cache_enabled() and not result_df.empty:
+            cache_params = {"tickers": sorted(tickers), "days": days}
+            set_cached("prices", cache_params, result_df.to_dict(orient="split"))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug("api_response_cache set_cached skip: %s", e)
+
     return result_df
 
 
@@ -1507,9 +1569,9 @@ def load_ohlcv_data(
     if alpha_vantage_key is None or tushare_token is None:
         keys = get_api_keys()
         if alpha_vantage_key is None:
-            alpha_vantage_key = keys.get("AlphaVantage")
+            alpha_vantage_key = keys.get("ALPHA_VANTAGE_KEY")
         if tushare_token is None:
-            tushare_token = keys.get("Tushare")
+            tushare_token = keys.get("TUSHARE_TOKEN")
 
     if data_sources is None:
         data_sources = get_active_data_sources()
@@ -1555,6 +1617,259 @@ def load_ohlcv_data(
     return out
 
 
+# ================================================================
+#  外部数据源接口
+# ================================================================
 
+
+def load_external_data(
+    economic: bool = True,
+    industry: bool = True,
+    sentiment: bool = True,
+    flow: bool = True,
+    start_date: str = "2010-01-01",
+    end_date: str = None,
+) -> Dict[str, Any]:
+    """
+    加载外部数据（宏观经济、行业轮动、市场情绪、资金流向）
+
+    Args:
+        economic: 是否加载宏观经济数据
+        industry: 是否加载行业轮动数据
+        sentiment: 是否加载市场情绪数据
+        flow: 是否加载资金流向数据
+        start_date: 开始日期
+        end_date: 结束日期
+
+    Returns:
+        外部数据字典
+    """
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    external_data = {}
+
+    try:
+        from .data.external.loader import ExternalDataLoader
+    except ImportError:
+        try:
+            from core.data.external.loader import ExternalDataLoader
+        except ImportError:
+            return external_data
+
+    loader = ExternalDataLoader(data_dir="data/external")
+
+    if economic:
+        try:
+            economic_data = loader.economic_loader.get_all_data(start_date, end_date)
+            external_data["economic"] = economic_data
+        except Exception:
+            external_data["economic"] = {}
+
+    if industry:
+        try:
+            industry_df = loader.industry_loader.get_industry_rotation(start_date, end_date)
+            external_data["industry"] = industry_df
+        except Exception:
+            external_data["industry"] = pd.DataFrame()
+
+    if sentiment:
+        try:
+            sentiment_df = loader.sentiment_loader.get_market_sentiment(start_date, end_date)
+            external_data["sentiment"] = sentiment_df
+        except Exception:
+            external_data["sentiment"] = pd.DataFrame()
+
+    if flow:
+        try:
+            flow_df = loader.flow_loader.get_flow_data(start_date, end_date)
+            external_data["flow"] = flow_df
+        except Exception:
+            external_data["flow"] = pd.DataFrame()
+
+    return external_data
+
+
+def merge_price_with_external(
+    price_df: pd.DataFrame,
+    external_data: Dict[str, Any] = None,
+    start_date: str = "2010-01-01",
+    end_date: str = None,
+) -> pd.DataFrame:
+    """
+    将价格数据与外部数据合并
+
+    Args:
+        price_df: 价格数据
+        external_data: 外部数据字典（若为None则自动加载）
+        start_date: 开始日期
+        end_date: 结束日期
+
+    Returns:
+        合并后的DataFrame
+    """
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    if external_data is None:
+        external_data = load_external_data(
+            economic=True, industry=True, sentiment=True, flow=True,
+            start_date=start_date, end_date=end_date
+        )
+
+    try:
+        from .data.external.loader import ExternalDataLoader
+    except ImportError:
+        try:
+            from core.data.external.loader import ExternalDataLoader
+        except ImportError:
+            return price_df
+
+    loader = ExternalDataLoader(data_dir="data/external")
+    merged_df = loader.merge_price_with_external(price_df, external_data)
+
+    return merged_df
+
+
+def get_external_features(
+    price_df: pd.DataFrame,
+    start_date: str = "2010-01-01",
+    end_date: str = None,
+) -> pd.DataFrame:
+    """
+    获取外部数据特征（完整的特征工程管道）
+
+    流程：
+    1. 加载外部数据
+    2. 数据合并
+    3. 特征提取
+
+    Args:
+        price_df: 价格数据
+        start_date: 开始日期
+        end_date: 结束日期
+
+    Returns:
+        包含所有特征的DataFrame
+    """
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        from .data.external.loader import ExternalDataLoader
+    except ImportError:
+        try:
+            from core.data.external.loader import ExternalDataLoader
+        except ImportError:
+            return price_df
+
+    loader = ExternalDataLoader(data_dir="data/external")
+    features_df = loader.get_full_pipeline(price_df, start_date, end_date)
+
+    return features_df
+
+
+def get_economic_summary(start_date: str = "2010-01-01", end_date: str = None) -> Dict[str, Any]:
+    """
+    获取宏观经济摘要
+
+    Args:
+        start_date: 开始日期
+        end_date: 结束日期
+
+    Returns:
+        宏观经济摘要字典
+    """
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        from .data.external.loader import ExternalDataLoader
+    except ImportError:
+        try:
+            from core.data.external.loader import ExternalDataLoader
+        except ImportError:
+            return {}
+
+    loader = ExternalDataLoader(data_dir="data/external")
+    return loader.get_economic_summary(start_date, end_date)
+
+
+def get_industry_summary(start_date: str = "2010-01-01", end_date: str = None) -> Dict[str, Any]:
+    """
+    获取行业轮动摘要
+
+    Args:
+        start_date: 开始日期
+        end_date: 结束日期
+
+    Returns:
+        行业轮动摘要字典
+    """
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        from .data.external.loader import ExternalDataLoader
+    except ImportError:
+        try:
+            from core.data.external.loader import ExternalDataLoader
+        except ImportError:
+            return {}
+
+    loader = ExternalDataLoader(data_dir="data/external")
+    return loader.get_industry_summary(start_date, end_date)
+
+
+def get_sentiment_summary(start_date: str = "2010-01-01", end_date: str = None) -> Dict[str, Any]:
+    """
+    获取市场情绪摘要
+
+    Args:
+        start_date: 开始日期
+        end_date: 结束日期
+
+    Returns:
+        市场情绪摘要字典
+    """
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        from .data.external.loader import ExternalDataLoader
+    except ImportError:
+        try:
+            from core.data.external.loader import ExternalDataLoader
+        except ImportError:
+            return {}
+
+    loader = ExternalDataLoader(data_dir="data/external")
+    return loader.get_sentiment_summary(start_date, end_date)
+
+
+def get_flow_summary(start_date: str = "2010-01-01", end_date: str = None) -> Dict[str, Any]:
+    """
+    获取资金流向摘要
+
+    Args:
+        start_date: 开始日期
+        end_date: 结束日期
+
+    Returns:
+        资金流向摘要字典
+    """
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        from .data.external.loader import ExternalDataLoader
+    except ImportError:
+        try:
+            from core.data.external.loader import ExternalDataLoader
+        except ImportError:
+            return {}
+
+    loader = ExternalDataLoader(data_dir="data/external")
+    return loader.get_flow_summary(start_date, end_date)
 
 

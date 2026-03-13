@@ -37,7 +37,7 @@ def main():
     # Start Backend
     print("Launching Backend (FastAPI)...")
     backend_process = subprocess.Popen(
-        [PYTHON_EXE, "-m", "uvicorn", "api.main:app", "--port", "8000", "--host", "127.0.0.1"],
+        [PYTHON_EXE, "-m", "uvicorn", "api.main:app", "--port", "8685", "--host", "127.0.0.1"],
         cwd=PROJECT_ROOT,
         stdout=subprocess.DEVNULL, # Mute output to keep console clean
         stderr=subprocess.DEVNULL
@@ -56,7 +56,7 @@ def main():
 
     try:
         print("Waiting for services to be ready...")
-        if not wait_for_service("http://127.0.0.1:8000/docs", timeout=60):
+        if not wait_for_service("http://127.0.0.1:8685/docs", timeout=60):
             print("Backend failed to start.")
             return 1
             

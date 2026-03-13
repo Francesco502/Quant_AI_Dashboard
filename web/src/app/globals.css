@@ -123,12 +123,21 @@
   * {
     @apply border-border;
   }
-  
+
   body {
     @apply bg-background text-foreground antialiased;
+    font-family: var(--font-dm-sans), var(--font-noto-sc), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* 优化中文在小屏幕上的显示 */
+  @media (max-width: 640px) {
+    body {
+      font-weight: 400;
+      letter-spacing: 0.01em;
+    }
   }
 
   /* Scrollbar styling — minimal, integrated */

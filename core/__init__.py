@@ -2,6 +2,8 @@
 核心逻辑模块：
 - forecasting: 时序预测（当前为轻量级 Demo，可替换为 LSTM/Transformer）
 - portfolio: 组合优化（Markowitz 均值-方差 + 夏普比率）
+- tuning: 自动化调参（网格搜索 + 贝叶斯优化）
+- external: 外部数据源（宏观经济、行业轮动、市场情绪、资金流向）
 """
 
 # 导出版本信息
@@ -16,6 +18,15 @@ __all__ = [
 
 # 阶段一：基础设施升级 - 新增模块
 from .feature_store import FeatureStore, get_feature_store
+
+# 阶段二：特征工程增强 - 新增子模块
+from .features.basic import VolatilityFeatures, TrendFeatures
+from .features.advanced import (
+    MomentumFeatures,
+    EfficiencyFeatures,
+    MeanReversionFeatures,
+)
+
 from .signal_store import SignalStore, get_signal_store
 
 # 阶段二：训练/预测解耦 - 新增模块
@@ -30,6 +41,10 @@ from .strategy_framework import (
     StrategySignal,
 )
 from .strategy_manager import StrategyManager, get_strategy_manager
+
+# 阶段一新增：持仓分析
+from .portfolio_analyzer import PortfolioAnalyzer
+from .decision_dashboard import DecisionDashboard, get_decision_dashboard
 
 # 阶段四：完整信号执行闭环 - 新增模块
 from .signal_executor import SignalExecutor, RiskChecker, get_signal_executor
@@ -104,10 +119,57 @@ from .monitoring import (
     AlertSeverity,
     ComparisonOperator,
 )
+# 性能监控
+from .memory_monitor import MemoryMonitor, get_memory_monitor, check_and_cleanup
+from .trading_calendar import TradingCalendar, get_trading_calendar, is_trading_day
+
+# 阶段六：外部数据源模块 - 新增
+from .data.external import (
+    EconomicDataLoader,
+    IndustryDataLoader,
+    SentimentDataLoader,
+    FlowDataLoader,
+    ExternalDataLoader,
+)
+from .data_service import (
+    load_external_data,
+    merge_price_with_external,
+    get_external_features,
+    get_economic_summary,
+    get_industry_summary,
+    get_sentiment_summary,
+    get_flow_summary,
+)
+
+# 阶段七：自动化调参模块 - 新增
+from .tuner import (
+    auto_tune,
+    quick_tune,
+    precise_tune,
+    get_tuning_results,
+    load_best_params,
+    tune_and_update_registry,
+    compare_tuning_results,
+)
+from .tuning.grid_search import (
+    grid_search,
+    get_quick_grid,
+    get_full_grid,
+)
+from .tuning.bayesian_opt import (
+    bayesian_search,
+    get_bayesian_space,
+)
 
 __all__ = [
     "FeatureStore",
     "get_feature_store",
+    # 特征工程子模块
+    "VolatilityFeatures",
+    "TrendFeatures",
+    "MomentumFeatures",
+    "EfficiencyFeatures",
+    "MeanReversionFeatures",
     "SignalStore",
     "get_signal_store",
     "TrainingPipeline",
@@ -118,6 +180,10 @@ __all__ = [
     "StrategySignal",
     "StrategyManager",
     "get_strategy_manager",
+    # 阶段一新增：持仓分析
+    "PortfolioAnalyzer",
+    "DecisionDashboard",
+    "get_decision_dashboard",
     "SignalExecutor",
     "RiskChecker",
     "get_signal_executor",
@@ -187,5 +253,38 @@ __all__ = [
     "AlertRule",
     "AlertSeverity",
     "ComparisonOperator",
+    # 性能监控
+    "MemoryMonitor",
+    "get_memory_monitor",
+    "check_and_cleanup",
+    "TradingCalendar",
+    "get_trading_calendar",
+    "is_trading_day",
+    # 阶段六：自动化调参模块 - 新增
+    "auto_tune",
+    "quick_tune",
+    "precise_tune",
+    "get_tuning_results",
+    "load_best_params",
+    "tune_and_update_registry",
+    "compare_tuning_results",
+    "grid_search",
+    "get_quick_grid",
+    "get_full_grid",
+    "bayesian_search",
+    "get_bayesian_space",
+    # 阶段七：外部数据源模块 - 新增
+    "EconomicDataLoader",
+    "IndustryDataLoader",
+    "SentimentDataLoader",
+    "FlowDataLoader",
+    "ExternalDataLoader",
+    "load_external_data",
+    "merge_price_with_external",
+    "get_external_features",
+    "get_economic_summary",
+    "get_industry_summary",
+    "get_sentiment_summary",
+    "get_flow_summary",
 ]
 

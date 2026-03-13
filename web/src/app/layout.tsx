@@ -1,31 +1,23 @@
-import { DM_Sans } from "next/font/google";
-import "./globals.css";
-import { Header } from "@/components/layout/header";
-import { cn } from "@/lib/utils";
-import { Providers } from "@/components/providers";
-
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-  variable: "--font-dm-sans",
-});
+﻿import "./globals.css"
+import { Header } from "@/components/layout/header"
+import { cn } from "@/lib/utils"
+import { Providers } from "@/components/providers"
 
 export const metadata = {
   title: "Quant AI Dashboard",
   description: "Advanced Quantitative Trading Dashboard",
-};
+}
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode;
+  children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="zh-CN">
       <body
         className={cn(
-          dmSans.className,
-          "min-h-screen noise-bg",
+          "min-h-screen noise-bg font-sans",
           "bg-[#F5F5F3] dark:bg-[#0A0A0A]"
         )}
       >
@@ -39,5 +31,5 @@ export default function RootLayout({
         </Providers>
       </body>
     </html>
-  );
+  )
 }

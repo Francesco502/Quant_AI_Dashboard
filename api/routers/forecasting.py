@@ -1,57 +1,105 @@
-"""
-AI预测 API 路由
-"""
+"""Forecasting API routes."""
+
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from typing import List, Optional
 from pydantic import BaseModel
-from core.advanced_forecasting import run_forecast, quick_predict, advanced_price_forecast
+
+from core.advanced_forecasting import (
+    advanced_price_forecast,
+    get_available_models,
+    quick_predict,
+    run_forecast,
+)
 
 router = APIRouter()
 
+
 class ForecastRequest(BaseModel):
-    """预测请求模型"""
+    """Forecast request payload."""
+
     tickers: List[str]
     horizon: int = 30
     model_type: str = "prophet"
     use_enhanced_features: bool = False
 
+
+MODEL_NAME_MAPPING = {
+    "XGBoost": "xgboost",
+    "LightGBM": "lightgbm",
+    "Prophet": "prophet",
+    "ARIMA": "arima",
+    "Random Forest": "random_forest",
+    "LSTM": "lstm",
+    "GRU": "gru",
+    "Sklearn": "random_forest",
+}
+
+
 @router.post("/predict")
 async def predict(request: ForecastRequest):
-    """
-    高级预测接口 (Prophet)
-    """
+    """Run batch forecasting for one or more tickers."""
+
     try:
         results = {}
         for ticker in request.tickers:
             try:
-                # 调用核心预测函数
-                pred_result = run_forecast(
+                results[ticker] = run_forecast(
                     ticker=ticker,
                     horizon=request.horizon,
-                    model_type=request.model_type
+                    model_type=request.model_type,
                 )
-                results[ticker] = pred_result
-            except Exception as e:
-                results[ticker] = {"error": str(e)}
+            except Exception as exc:  # noqa: BLE001
+                results[ticker] = {"error": str(exc)}
 
         return {"status": "success", "results": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"预测服务异常: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Forecast service error: {exc}") from exc
 
+
+@router.get("/models")
+async def list_models():
+    """Return the forecast model ids the frontend can offer."""
+
+    availability = get_available_models()
+    enabled_models = {
+        model_id
+        for label, model_id in MODEL_NAME_MAPPING.items()
+        if availability.get(label)
+    }
+
+    preferred_order = [
+        "auto",
+        "xgboost",
+        "lightgbm",
+        "prophet",
+        "arima",
+        "random_forest",
+        "ensemble",
+        "lstm",
+        "gru",
+    ]
+    models = [
+        model_name
+        for model_name in preferred_order
+        if model_name in {"auto", "ensemble"} or model_name in enabled_models
+    ]
+
+    return {"models": models, "availability": availability}
 
 
 @router.get("/predict/{ticker}")
 async def predict_get(
     ticker: str,
-    horizon: int = Query(5, description="预测天数"),
-    model_type: str = Query("xgboost", description="模型类型"),
-    use_production_model: bool = Query(True, description="是否使用生产模型"),
-    lookback_days: Optional[int] = Query(None, description="训练数据回看天数"),
+    horizon: int = Query(5, description="Forecast horizon in trading days."),
+    model_type: str = Query("xgboost", description="Model type."),
+    use_production_model: bool = Query(True, description="Whether to prefer the production model."),
+    lookback_days: Optional[int] = Query(None, description="Lookback window for local data."),
 ):
-    """快速预测（GET方式）"""
+    """Run a single-ticker forecast."""
+
     try:
-        pred = quick_predict(
+        result = quick_predict(
             ticker=ticker,
             horizon=horizon,
             model_type=model_type,
@@ -60,36 +108,52 @@ async def predict_get(
             lookback_days=lookback_days,
         )
 
-        if pred is None or pred.empty:
-            raise HTTPException(status_code=400, detail=f"无法为 {ticker} 生成预测")
+        if result is None:
+            from core.data_store import load_local_price_history
 
-        return {
+            has_data = load_local_price_history(ticker)
+            if has_data is None or has_data.empty or len(has_data) < 6:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{ticker} does not have enough local price history. "
+                        "Load at least 6 trading days first."
+                    ),
+                )
+            raise HTTPException(status_code=400, detail=f"Unable to generate a forecast for {ticker}.")
+
+        prediction_frame = result["prediction"] if isinstance(result, dict) else result
+        if prediction_frame is None or prediction_frame.empty:
+            raise HTTPException(status_code=400, detail=f"Unable to generate a forecast for {ticker}.")
+
+        payload = {
             "ticker": ticker,
             "predictions": [
                 {"date": str(date), "price": float(price)}
-                for date, price in pred["prediction"].items()
+                for date, price in prediction_frame["prediction"].items()
             ],
             "horizon": horizon,
         }
+        if isinstance(result, dict) and result.get("metrics"):
+            payload["metrics"] = result["metrics"]
+        return payload
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"预测失败: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Forecast failed: {exc}") from exc
 
 
 @router.post("/batch-predict")
 async def batch_predict(request: ForecastRequest):
-    """批量预测（使用高级预测接口）"""
+    """Run a multi-ticker forecast using local price history."""
+
     try:
         from core.data_service import load_price_data
 
-        # 加载价格数据
         price_data = load_price_data(tickers=request.tickers, days=365)
-
         if price_data is None or price_data.empty:
-            raise HTTPException(status_code=400, detail="无法加载价格数据")
+            raise HTTPException(status_code=400, detail="Unable to load price data.")
 
-        # 执行预测
         forecast_df = advanced_price_forecast(
             price_data,
             horizon=request.horizon,
@@ -97,7 +161,6 @@ async def batch_predict(request: ForecastRequest):
             use_enhanced_features=request.use_enhanced_features,
         )
 
-        # 转换为字典格式
         results = {}
         for ticker in forecast_df.columns:
             results[ticker] = [
@@ -108,6 +171,5 @@ async def batch_predict(request: ForecastRequest):
         return {"results": results, "horizon": request.horizon}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"批量预测失败: {str(e)}")
-
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Batch forecast failed: {exc}") from exc

@@ -1,21 +1,23 @@
-"""订单管理系统
+"""订单管理器 - 持久化版本
 
 职责：
-- 完整的订单生命周期管理
+- 完整的订单生命周期管理（PENDING, SUBMITTED, FILLED, CANCELLED, REJECTED等）
 - 订单状态追踪
 - 订单修改和撤销
 - 订单历史记录
+- 止损止盈规则管理
 """
 
 from __future__ import annotations
 
 import uuid
 import logging
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-from .order_types import (
+from core.database import Database, get_database
+from core.order_types import (
     Order,
     OrderType,
     OrderSide,
@@ -24,83 +26,68 @@ from .order_types import (
     Fill,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
 class OrderManager:
-    """订单管理器"""
+    """
+    订单管理器 - 持久化版本
 
-    def __init__(self):
+    所有订单状态变更立即写入数据库
+    """
+
+    def __init__(self, db: Database):
         """初始化订单管理器"""
-        # 订单存储 {order_id: Order}
-        self.orders: Dict[str, Order] = {}
-        
-        # 按标的索引 {symbol: [order_id, ...]}
-        self.orders_by_symbol: Dict[str, List[str]] = defaultdict(list)
-        
-        # 按状态索引 {status: [order_id, ...]}
-        self.orders_by_status: Dict[OrderStatus, List[str]] = defaultdict(list)
-        
-        # 订单历史（已完成的订单）
-        self.order_history: List[Order] = []
-        self.max_history = 10000
-        
-        # 成交日志
-        self.execution_log: List[Fill] = []
-        self.max_execution_log = 10000
-        
-        # 回调函数
-        self.on_order_created: Optional[Callable[[Order], None]] = None
-        self.on_order_filled: Optional[Callable[[Order], None]] = None
-        self.on_order_cancelled: Optional[Callable[[Order], None]] = None
-        self.on_order_rejected: Optional[Callable[[Order], None]] = None
-        
+        self.db = db
+
+        # 内存缓存
+        self._order_cache: Dict[str, Order] = {}
+        self._order_by_symbol: Dict[str, List[str]] = defaultdict(list)
+        self._order_by_status: Dict[OrderStatus, List[str]] = defaultdict(list)
+
         logger.info("订单管理器初始化完成")
+
+    # ==================== 订单创建与持久化 ====================
 
     def create_order(
         self,
+        account_id: int,
         symbol: str,
         side: OrderSide,
+        order_type: OrderType,
         quantity: int,
-        order_type: OrderType = OrderType.MARKET,
         price: Optional[float] = None,
         stop_price: Optional[float] = None,
         time_in_force: TimeInForce = TimeInForce.DAY,
-        client_order_id: Optional[str] = None,
         strategy_id: Optional[str] = None,
-        account_id: Optional[str] = None,
-        metadata: Optional[Dict] = None,
     ) -> Order:
         """
-        创建订单
+        创建订单 - 立即持久化
 
         Args:
+            account_id: 账户ID
             symbol: 标的代码
             side: 订单方向（BUY/SELL）
-            quantity: 数量
             order_type: 订单类型（MARKET/LIMIT/STOP/STOP_LIMIT）
+            quantity: 数量
             price: 限价（限价单必需）
             stop_price: 止损价（止损单必需）
             time_in_force: 有效期
-            client_order_id: 客户端订单ID
             strategy_id: 策略ID
-            account_id: 账户ID
-            metadata: 元数据
 
         Returns:
             创建的订单对象
         """
         # 生成订单ID
         order_id = f"ORD_{uuid.uuid4().hex[:12].upper()}"
-        
+
         # 验证订单参数
         if order_type == OrderType.LIMIT and price is None:
             raise ValueError("限价单必须指定价格")
         if order_type in [OrderType.STOP, OrderType.STOP_LIMIT] and stop_price is None:
             raise ValueError("止损单必须指定止损价")
-        
-        # 创建订单
+
+        # 创建订单对象
         order = Order(
             order_id=order_id,
             symbol=symbol,
@@ -110,296 +97,626 @@ class OrderManager:
             price=price,
             stop_price=stop_price,
             time_in_force=time_in_force,
-            client_order_id=client_order_id or order_id,
             strategy_id=strategy_id,
-            account_id=account_id,
-            metadata=metadata or {},
+            account_id=str(account_id),
+            status=OrderStatus.PENDING,
         )
-        
-        # 存储订单
-        self.orders[order_id] = order
-        self.orders_by_symbol[symbol].append(order_id)
-        self.orders_by_status[OrderStatus.PENDING].append(order_id)
-        
-        # 触发回调
-        if self.on_order_created:
-            try:
-                self.on_order_created(order)
-            except Exception as e:
-                logger.error(f"订单创建回调异常: {e}")
-        
+
+        # 持久化到数据库
+        self._persist_order(order)
+
+        # 更新内存缓存
+        self._order_cache[order_id] = order
+        self._order_by_symbol[symbol].append(order_id)
+        self._order_by_status[OrderStatus.PENDING].append(order_id)
+
         logger.info(f"订单已创建: {order_id} - {symbol} {side.value} {quantity} {order_type.value}")
         return order
 
+    def _persist_order(self, order: Order):
+        """将订单持久化到数据库"""
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            INSERT INTO orders
+            (order_id, account_id, symbol, side, order_type,
+             quantity, price, stop_price, status, time_in_force,
+             strategy_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """, (
+            order.order_id,
+            order.account_id,
+            order.symbol,
+            order.side.value,
+            order.order_type.value,
+            order.quantity,
+            order.price,
+            order.stop_price,
+            order.status.value,
+            order.time_in_force.value,
+            order.strategy_id
+        ))
+        self.db.conn.commit()
+
+    def submit_order(self, order_id: str) -> bool:
+        """提交订单"""
+        order = self._order_cache.get(order_id)
+        if not order:
+            order = self._load_order(order_id)
+            if not order:
+                logger.error(f"订单不存在: {order_id}")
+                return False
+
+        if order.status != OrderStatus.PENDING:
+            logger.warning(f"订单状态不允许提交: {order_id} - {order.status.value}")
+            return False
+
+        # 更新订单状态
+        order.update_status(OrderStatus.SUBMITTED)
+
+        # 持久化状态
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            UPDATE orders
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE order_id = ?
+        """, (order.status.value, order_id))
+        self.db.conn.commit()
+
+        # 更新内存索引
+        self._order_by_status[OrderStatus.PENDING].remove(order_id)
+        self._order_by_status[OrderStatus.SUBMITTED].append(order_id)
+
+        logger.info(f"订单已提交: {order_id}")
+        return True
+
+    def _load_order(self, order_id: str) -> Optional[Order]:
+        """从数据库加载订单"""
+        cursor = self.db.conn.cursor()
+        cursor.execute("SELECT * FROM orders WHERE order_id = ?", (order_id,))
+        row = cursor.fetchone()
+        if row:
+            return self._row_to_order(row)
+        return None
+
+    def _row_to_order(self, row) -> Order:
+        """从数据库行转换为Order对象"""
+        return Order(
+            order_id=row["order_id"],
+            symbol=row["symbol"],
+            side=OrderSide(row["side"]),
+            order_type=OrderType(row["order_type"]),
+            quantity=row["quantity"],
+            price=row["price"],
+            stop_price=row["stop_price"],
+            time_in_force=TimeInForce(row["time_in_force"]) if "time_in_force" in row and row["time_in_force"] else TimeInForce.DAY,
+            status=OrderStatus(row["status"]),
+            created_time=datetime.fromisoformat(row["created_at"]) if "created_at" in row and row["created_at"] else datetime.now(),
+            filled_quantity=row["filled_quantity"] if "filled_quantity" in row else 0,
+            avg_fill_price=row["avg_fill_price"] if "avg_fill_price" in row else 0.0,
+            strategy_id=row["strategy_id"] if "strategy_id" in row else None,
+            account_id=row["account_id"] if "account_id" in row else None,
+        )
+
+    # ==================== 订单查询 ====================
+
     def get_order(self, order_id: str) -> Optional[Order]:
-        """获取订单"""
-        return self.orders.get(order_id)
+        """获取订单（优先从缓存，其次从数据库）"""
+        order = self._order_cache.get(order_id)
+        if order:
+            return order
+        return self._load_order(order_id)
+
+    def get_orders_by_account(self, account_id: int, status: Optional[OrderStatus] = None) -> List[Order]:
+        """获取账户的订单列表"""
+        cursor = self.db.conn.cursor()
+        query = """
+            SELECT * FROM orders
+            WHERE account_id = ?
+        """
+        params = [account_id]
+
+        if status:
+            query += " AND status = ?"
+            params.append(status.value)
+
+        query += " ORDER BY created_at DESC"
+        cursor.execute(query, params)
+
+        return [self._row_to_order(row) for row in cursor.fetchall()]
+
+    def get_active_orders(self, account_id: Optional[int] = None) -> List[Order]:
+        """获取活跃订单（未完成的订单）"""
+        active_statuses = [OrderStatus.PENDING, OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED]
+
+        cursor = self.db.conn.cursor()
+        if account_id:
+            cursor.execute("""
+                SELECT * FROM orders
+                WHERE status IN (?, ?, ?) AND account_id = ?
+                ORDER BY created_at DESC
+            """, (OrderStatus.PENDING.value, OrderStatus.SUBMITTED.value, OrderStatus.PARTIALLY_FILLED.value, account_id))
+        else:
+            cursor.execute("""
+                SELECT * FROM orders
+                WHERE status IN (?, ?, ?)
+                ORDER BY created_at DESC
+            """, (OrderStatus.PENDING.value, OrderStatus.SUBMITTED.value, OrderStatus.PARTIALLY_FILLED.value))
+
+        return [self._row_to_order(row) for row in cursor.fetchall()]
 
     def get_orders_by_symbol(self, symbol: str, status: Optional[OrderStatus] = None) -> List[Order]:
         """获取指定标的的订单"""
-        order_ids = self.orders_by_symbol.get(symbol, [])
-        orders = [self.orders[oid] for oid in order_ids if oid in self.orders]
-        
-        if status:
-            orders = [o for o in orders if o.status == status]
-        
-        return orders
-
-    def get_orders_by_status(self, status: OrderStatus) -> List[Order]:
-        """获取指定状态的订单"""
-        order_ids = self.orders_by_status.get(status, [])
-        return [self.orders[oid] for oid in order_ids if oid in self.orders]
-
-    def submit_order(self, order_id: str) -> bool:
+        cursor = self.db.conn.cursor()
+        query = """
+            SELECT * FROM orders
+            WHERE symbol = ?
         """
-        提交订单
+        params = [symbol]
 
-        Args:
-            order_id: 订单ID
+        if status:
+            query += " AND status = ?"
+            params.append(status.value)
 
-        Returns:
-            是否成功
+        query += " ORDER BY created_at DESC"
+        cursor.execute(query, params)
+
+        return [self._row_to_order(row) for row in cursor.fetchall()]
+
+    # ==================== 订单修改与取消 ====================
+
+    def modify_order(self, order_id: str, quantity: Optional[int] = None, price: Optional[float] = None) -> bool:
+        """
+        修改订单（仅支持PENDING状态的订单）
         """
         order = self.get_order(order_id)
         if not order:
             logger.error(f"订单不存在: {order_id}")
             return False
-        
+
+        # 只能修改PENDING状态的订单
         if order.status != OrderStatus.PENDING:
-            logger.warning(f"订单状态不允许提交: {order_id} - {order.status.value}")
+            logger.warning(f"订单状态不允许修改: {order_id} - {order.status.value}")
             return False
-        
-        # 更新状态
-        order.update_status(OrderStatus.SUBMITTED)
-        self._update_status_index(order)
-        
-        logger.info(f"订单已提交: {order_id}")
+
+        # 修改数量
+        if quantity is not None and quantity > 0:
+            order.quantity = quantity
+            order.remaining_quantity = quantity
+
+        # 修改价格
+        if price is not None and order.order_type == OrderType.LIMIT:
+            order.price = price
+
+        # 持久化修改
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            UPDATE orders
+            SET quantity = ?, price = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE order_id = ?
+        """, (order.quantity, order.price, order_id))
+        self.db.conn.commit()
+
+        logger.info(f"订单已修改: {order_id}")
         return True
 
     def cancel_order(self, order_id: str, reason: Optional[str] = None) -> bool:
         """
-        撤销订单
-
-        Args:
-            order_id: 订单ID
-            reason: 撤销原因
-
-        Returns:
-            是否成功
+        取消订单
         """
         order = self.get_order(order_id)
         if not order:
             logger.error(f"订单不存在: {order_id}")
             return False
-        
-        # 只有待提交、已提交、部分成交的订单可以撤销
-        if order.status not in [
-            OrderStatus.PENDING,
-            OrderStatus.SUBMITTED,
-            OrderStatus.PARTIALLY_FILLED
-        ]:
+
+        # 只能取消未完成的订单
+        if order.status not in [OrderStatus.PENDING, OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED]:
             logger.warning(f"订单状态不允许撤销: {order_id} - {order.status.value}")
             return False
-        
-        # 更新状态
+
+        # 更新订单状态
         order.update_status(OrderStatus.CANCELLED, reason)
+
+        # 持久化状态
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            UPDATE orders
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE order_id = ?
+        """, (order.status.value, order_id))
+        self.db.conn.commit()
+
+        # 处理冻结资源的解冻
+        self._release_frozen_resources(order)
+
+        # 更新内存索引
         self._update_status_index(order)
-        
-        # 触发回调
-        if self.on_order_cancelled:
-            try:
-                self.on_order_cancelled(order)
-            except Exception as e:
-                logger.error(f"订单撤销回调异常: {e}")
-        
+
         logger.info(f"订单已撤销: {order_id} - {reason or ''}")
         return True
 
-    def modify_order(
-        self,
-        order_id: str,
-        quantity: Optional[int] = None,
-        price: Optional[float] = None,
-    ) -> bool:
-        """
-        修改订单
+    def _release_frozen_resources(self, order: Order):
+        """释放冻结的资源"""
+        account_id = int(order.account_id)
 
-        Args:
-            order_id: 订单ID
-            quantity: 新数量
-            price: 新价格（限价单）
+        if order.side == OrderSide.BUY:
+            # 买入订单：解冻资金
+            cost = order.quantity * (order.price or 0)
+            cursor = self.db.conn.cursor()
+            cursor.execute("""
+                UPDATE accounts
+                SET frozen = frozen - ?, balance = balance + ?
+                WHERE id = ? AND frozen >= ?
+            """, (cost, cost, account_id, cost))
+        else:
+            # 卖出订单：解冻持仓（如果订单未成交）
+            cursor = self.db.conn.cursor()
+            cursor.execute("""
+                UPDATE positions
+                SET available_shares = available_shares + ?
+                WHERE account_id = ? AND ticker = ?
+            """, (order.quantity, account_id, order.symbol))
 
-        Returns:
-            是否成功
-        """
-        order = self.get_order(order_id)
-        if not order:
-            logger.error(f"订单不存在: {order_id}")
-            return False
-        
-        # 只有待提交、已提交的订单可以修改
-        if order.status not in [OrderStatus.PENDING, OrderStatus.SUBMITTED]:
-            logger.warning(f"订单状态不允许修改: {order_id} - {order.status.value}")
-            return False
-        
-        # 修改数量
-        if quantity is not None and quantity > 0:
-            # 调整剩余数量
-            old_remaining = order.remaining_quantity
-            order.quantity = order.filled_quantity + quantity
-            order.remaining_quantity = quantity
-        
-        # 修改价格
-        if price is not None and order.order_type == OrderType.LIMIT:
-            order.price = price
-        
-        logger.info(f"订单已修改: {order_id}")
-        return True
+        self.db.conn.commit()
 
-    def reject_order(self, order_id: str, reason: str) -> bool:
-        """
-        拒绝订单
-
-        Args:
-            order_id: 订单ID
-            reason: 拒绝原因
-
-        Returns:
-            是否成功
-        """
-        order = self.get_order(order_id)
-        if not order:
-            return False
-        
-        order.update_status(OrderStatus.REJECTED, reason)
-        self._update_status_index(order)
-        
-        # 移动到历史
-        self._move_to_history(order)
-        
-        # 触发回调
-        if self.on_order_rejected:
-            try:
-                self.on_order_rejected(order)
-            except Exception as e:
-                logger.error(f"订单拒绝回调异常: {e}")
-        
-        logger.warning(f"订单已拒绝: {order_id} - {reason}")
-        return True
+    # ==================== 成交处理 ====================
 
     def add_fill(self, order_id: str, fill: Fill) -> bool:
         """
         添加成交记录
+        """
+        order = self.get_order(order_id)
+        if not order:
+            logger.error(f"订单不存在: {order_id}")
+            return False
+
+        # 添加成交
+        order.add_fill(fill)
+
+        # 持久化成交记录
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            INSERT INTO fills
+            (fill_id, order_id, account_id, symbol, side, quantity, price, commission, slippage, executed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            fill.fill_id,
+            fill.order_id,
+            int(fill.account_id) if hasattr(fill, 'account_id') else 1,
+            fill.symbol,
+            fill.side.value,
+            fill.quantity,
+            fill.price,
+            fill.commission,
+            getattr(fill, 'slippage', 0) or 0,
+            fill.timestamp.isoformat()
+        ))
+
+        # 更新订单状态
+        cursor.execute("""
+            UPDATE orders
+            SET filled_quantity = ?, avg_fill_price = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE order_id = ?
+        """, (
+            order.filled_quantity,
+            order.avg_fill_price,
+            order.status.value,
+            order_id
+        ))
+
+        self.db.conn.commit()
+
+        # 更新内存缓存
+        self._order_cache[order_id] = order
+        self._update_status_index(order)
+
+        logger.info(f"订单成交: {order_id} - {fill.quantity}@{fill.price}")
+        return True
+
+    def batch_add_fills(self, order_id: str, fills: List[Fill]) -> bool:
+        """
+        批量添加成交记录（优化性能）
 
         Args:
             order_id: 订单ID
-            fill: 成交记录
+            fills: 成交记录列表
 
         Returns:
             是否成功
         """
+        if not fills:
+            return True
+
         order = self.get_order(order_id)
         if not order:
+            logger.error(f"订单不存在: {order_id}")
             return False
-        
-        # 添加成交
-        success = order.add_fill(fill)
-        if success:
-            # 记录到执行日志
-            self.execution_log.append(fill)
-            if len(self.execution_log) > self.max_execution_log:
-                self.execution_log = self.execution_log[-self.max_execution_log:]
-            
-            # 更新状态索引
+
+        # 添加所有成交
+        for fill in fills:
+            order.add_fill(fill)
+
+        try:
+            cursor = self.db.conn.cursor()
+
+            # 批量插入fills
+            fills_data = [(
+                fill.fill_id,
+                fill.order_id,
+                int(fill.account_id) if hasattr(fill, 'account_id') else 1,
+                fill.symbol,
+                fill.side.value,
+                fill.quantity,
+                fill.price,
+                fill.commission,
+                getattr(fill, 'slippage', 0) or 0,
+                fill.timestamp.isoformat()
+            ) for fill in fills]
+
+            cursor.executemany("""
+                INSERT INTO fills
+                (fill_id, order_id, account_id, symbol, side, quantity, price, commission, slippage, executed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, fills_data)
+
+            # 批量更新订单状态
+            cursor.execute("""
+                UPDATE orders
+                SET filled_quantity = ?, avg_fill_price = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE order_id = ?
+            """, (
+                order.filled_quantity,
+                order.avg_fill_price,
+                order.status.value,
+                order_id
+            ))
+
+            self.db.conn.commit()
+
+            # 更新内存缓存
+            self._order_cache[order_id] = order
             self._update_status_index(order)
-            
-            # 如果全部成交，移动到历史
-            if order.status == OrderStatus.FILLED:
-                self._move_to_history(order)
-                
-                # 触发回调
-                if self.on_order_filled:
-                    try:
-                        self.on_order_filled(order)
-                    except Exception as e:
-                        logger.error(f"订单成交回调异常: {e}")
-            
-            logger.info(f"订单成交: {order_id} - {fill.quantity}@{fill.price}")
-        
-        return success
+
+            logger.info(f"批量订单成交: {order_id} - {len(fills)}笔成交")
+            return True
+
+        except Exception as e:
+            logger.error(f"批量添加成交失败: {order_id}, error={e}")
+            if self.db.conn:
+                self.db.conn.rollback()
+            return False
 
     def _update_status_index(self, order: Order):
-        """更新状态索引"""
-        # 从旧状态移除
-        for status, order_ids in self.orders_by_status.items():
+        """更新订单状态索引"""
+        # 移除旧索引
+        for status, order_ids in self._order_by_status.items():
             if order.order_id in order_ids:
                 order_ids.remove(order.order_id)
                 break
-        
-        # 添加到新状态
-        self.orders_by_status[order.status].append(order.order_id)
 
-    def _move_to_history(self, order: Order):
-        """移动到历史"""
-        if order.order_id in self.orders:
-            del self.orders[order.order_id]
-            
-            # 从索引中移除
-            if order.symbol in self.orders_by_symbol:
-                if order.order_id in self.orders_by_symbol[order.symbol]:
-                    self.orders_by_symbol[order.symbol].remove(order.order_id)
-            
-            self._update_status_index(order)
-            
-            # 添加到历史
-            self.order_history.append(order)
-            if len(self.order_history) > self.max_history:
-                self.order_history = self.order_history[-self.max_history:]
-    
-    def get_order_status(self, order_id: str) -> Optional[Dict]:
-        """获取订单状态"""
-        order = self.get_order(order_id)
-        if not order:
-            return None
-        
+        # 添加新索引
+        self._order_by_status[order.status].append(order.order_id)
+
+    # ==================== 止损止盈规则管理 ====================
+
+    def set_stop_loss(
+        self,
+        account_id: int,
+        symbol: str,
+        entry_price: float,
+        stop_type: str = "percentage",
+        stop_price: Optional[float] = None,
+        stop_percentage: Optional[float] = None,
+        quantity: Optional[int] = None
+    ):
+        """设置止损规则"""
+        rule = self._build_stop_loss_rule(
+            account_id, symbol, entry_price, stop_type, stop_price, stop_percentage, quantity
+        )
+
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO stop_loss_rules
+            (account_id, symbol, rule_type, stop_type, trigger_price, quantity, enabled, created_at, last_triggered_at, cooldown_seconds)
+            VALUES (?, ?, 'STOP_LOSS', ?, ?, ?, 1, CURRENT_TIMESTAMP, NULL, 60)
+        """, (
+            account_id,
+            symbol,
+            rule["stop_type"],
+            rule["trigger_price"],
+            rule.get("quantity")
+        ))
+        self.db.conn.commit()
+
+        logger.info(f"设置止损规则: {symbol}, 价格={rule['trigger_price']:.2f}")
+
+    def set_take_profit(
+        self,
+        account_id: int,
+        symbol: str,
+        entry_price: float,
+        take_profit_type: str = "percentage",
+        take_profit_price: Optional[float] = None,
+        take_profit_percentage: Optional[float] = None,
+        quantity: Optional[int] = None
+    ):
+        """设置止盈规则"""
+        rule = self._build_stop_loss_rule(
+            account_id, symbol, entry_price, take_profit_type, take_profit_price, take_profit_percentage, quantity
+        )
+
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO stop_loss_rules
+            (account_id, symbol, rule_type, stop_type, trigger_price, quantity, enabled, created_at, last_triggered_at, cooldown_seconds)
+            VALUES (?, ?, 'TAKE_PROFIT', ?, ?, ?, 1, CURRENT_TIMESTAMP, NULL, 60)
+        """, (
+            account_id,
+            symbol,
+            rule["stop_type"],
+            rule["trigger_price"],
+            rule.get("quantity")
+        ))
+        self.db.conn.commit()
+
+        logger.info(f"设置止盈规则: {symbol}, 价格={rule['trigger_price']:.2f}")
+
+    def _build_stop_loss_rule(
+        self,
+        account_id: int,
+        symbol: str,
+        entry_price: float,
+        stop_type: str,
+        stop_price: Optional[float],
+        stop_percentage: Optional[float],
+        quantity: Optional[int]
+    ) -> Dict:
+        """构建止损规则"""
+        if stop_type == "percentage" and stop_percentage:
+            trigger_price = entry_price * (1 - stop_percentage) if stop_percentage > 0 else 0
+        elif stop_type == "trailing" and stop_percentage:
+            trigger_price = entry_price * (1 - stop_percentage)
+        elif stop_price:
+            trigger_price = stop_price
+        else:
+            trigger_price = entry_price * 0.95  # 默认5%止损
+
         return {
-            "order_id": order.order_id,
-            "status": order.status.value,
-            "filled_quantity": order.filled_quantity,
-            "remaining_quantity": order.remaining_quantity,
-            "avg_fill_price": order.avg_fill_price,
-            "total_commission": order.total_commission,
+            "account_id": account_id,
+            "symbol": symbol,
+            "stop_type": stop_type,
+            "trigger_price": trigger_price,
+            "quantity": quantity
         }
-    
-    def get_order_statistics(self) -> Dict:
-        """获取订单统计信息"""
-        stats = {
-            "total_orders": len(self.orders) + len(self.order_history),
-            "active_orders": len(self.orders),
-            "history_orders": len(self.order_history),
-            "by_status": {
-                status.value: len(order_ids)
-                for status, order_ids in self.orders_by_status.items()
-            },
-            "total_fills": len(self.execution_log),
-            "total_commission": sum(
-                order.total_commission
-                for order in list(self.orders.values()) + self.order_history
-            ),
-        }
-        return stats
-    
-    def cleanup_expired_orders(self):
-        """清理过期订单"""
-        now = datetime.now()
-        expired_orders = []
-        
-        for order in list(self.orders.values()):
-            if order.time_in_force == TimeInForce.DAY:
-                # 当日有效订单，检查是否过期
-                if order.created_time.date() < now.date():
-                    expired_orders.append(order.order_id)
-        
-        for order_id in expired_orders:
-            self.cancel_order(order_id, reason="订单已过期")
 
+    def remove_stop_loss(self, account_id: int, symbol: str):
+        """移除止损规则"""
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            DELETE FROM stop_loss_rules
+            WHERE account_id = ? AND symbol = ? AND rule_type = 'STOP_LOSS'
+        """, (account_id, symbol))
+        self.db.conn.commit()
+        logger.info(f"移除止损规则: {symbol}")
+
+    def remove_take_profit(self, account_id: int, symbol: str):
+        """移除止盈规则"""
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            DELETE FROM stop_loss_rules
+            WHERE account_id = ? AND symbol = ? AND rule_type = 'TAKE_PROFIT'
+        """, (account_id, symbol))
+        self.db.conn.commit()
+        logger.info(f"移除止盈规则: {symbol}")
+
+    def deactivate_rule(self, rule_id: int):
+        """停用止损止盈规则（触发后调用）"""
+        cursor = self.db.conn.cursor()
+        cursor.execute("""
+            UPDATE stop_loss_rules
+            SET enabled = 0, last_triggered_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (rule_id,))
+        self.db.conn.commit()
+
+    def get_active_stop_rules(self, account_id: Optional[int] = None) -> List[Dict]:
+        """获取活跃的止损止盈规则（带有冷却时间检查）"""
+        cursor = self.db.conn.cursor()
+        if account_id:
+            cursor.execute("""
+                SELECT * FROM stop_loss_rules
+                WHERE account_id = ? AND enabled = 1
+                ORDER BY created_at
+            """, (account_id,))
+        else:
+            cursor.execute("""
+                SELECT * FROM stop_loss_rules
+                WHERE enabled = 1
+                ORDER BY created_at
+            """)
+
+        rules = [dict(row) for row in cursor.fetchall()]
+
+        # 过滤冷却中的规则
+        now = datetime.now()
+        filtered_rules = []
+        for rule in rules:
+            # 检查是否在冷却期内
+            if rule.get("last_triggered_at"):
+                try:
+                    last_triggered = datetime.fromisoformat(rule["last_triggered_at"])
+                    cooldown = rule.get("cooldown_seconds", 60)
+                    if (now - last_triggered).total_seconds() < cooldown:
+                        continue  # 仍在冷却期，跳过
+                except (ValueError, TypeError):
+                    pass  # 时间格式错误，继续使用
+            filtered_rules.append(rule)
+
+        return filtered_rules
+
+    def get_account_stop_rules(self, account_id: int) -> Dict[str, Dict]:
+        """获取账户所有止损止盈规则"""
+        rules = self.get_active_stop_rules(account_id)
+
+        result = {}
+        for rule in rules:
+            symbol = rule["symbol"]
+            if symbol not in result:
+                result[symbol] = {"stop_loss": None, "take_profit": None}
+
+            if rule["rule_type"] == "STOP_LOSS":
+                result[symbol]["stop_loss"] = rule
+            else:
+                result[symbol]["take_profit"] = rule
+
+        return result
+
+    # ==================== 统计信息 ====================
+
+    def get_order_statistics(self, account_id: Optional[int] = None) -> Dict:
+        """获取订单统计信息"""
+        cursor = self.db.conn.cursor()
+        if account_id:
+            cursor.execute("""
+                SELECT status, COUNT(*) as count
+                FROM orders
+                WHERE account_id = ?
+                GROUP BY status
+            """, (account_id,))
+        else:
+            cursor.execute("""
+                SELECT status, COUNT(*) as count
+                FROM orders
+                GROUP BY status
+            """)
+
+        by_status = {row["status"]: row["count"] for row in cursor.fetchall()}
+
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM orders
+        """)
+        total = cursor.fetchone()["total"]
+
+        cursor.execute("""
+            SELECT COALESCE(SUM(quantity), 0) as total_filled FROM fills
+        """)
+        total_filled = cursor.fetchone()["total_filled"]
+
+        return {
+            "total_orders": total,
+            "by_status": by_status,
+            "total_filled_quantity": total_filled,
+        }
+
+    # ==================== 订单转交易 ====================
+
+    def order_to_trade(self, order: Order) -> Dict:
+        """将订单转换为交易记录（用于历史回溯）"""
+        return {
+            "ticker": order.symbol,
+            "action": "BUY" if order.side == OrderSide.BUY else "SELL",
+            "price": order.avg_fill_price,
+            "shares": order.filled_quantity,
+            "fee": order.total_commission,
+            "trade_time": order.filled_time.isoformat() if order.filled_time else None,
+            "order_id": order.order_id,
+        }

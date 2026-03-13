@@ -198,8 +198,10 @@ def apply_equal_weight_rebalance(
     if order_manager is not None:
         # 将Trade转换为Order并创建订单
         orders: List[Order] = []
+        account_id = int(account.get("account_id", 1))
         for trade in trades:
             order = order_manager.create_order(
+                account_id=account_id,
                 symbol=trade.ticker,
                 side=OrderSide.BUY if trade.side == "BUY" else OrderSide.SELL,
                 quantity=trade.shares,

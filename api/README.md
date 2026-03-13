@@ -1,4 +1,4 @@
-# Quant-AI Dashboard API (v1.0.0)
+# Quant-AI Dashboard API (v2.0.0-alpha.1)
 
 FastAPI backend for the personal research and paper-trading workflow.
 
@@ -42,5 +42,5 @@ curl http://localhost:8685/api/backtest/strategies \
 - Set `NEXT_PUBLIC_API_URL=http://127.0.0.1:8685/api` for local development.
 
 ## Versioned Release Docs
-- `../docs/RELEASE_NOTES_v1.0.0.md`
-- `../docs/CODE_CHANGES_v1.0.0.md`
+- `../docs/RELEASE_NOTES_v2.0.0-alpha.1.md`
+- `../docs/CODE_CHANGES_v2.0.0-alpha.1.md`

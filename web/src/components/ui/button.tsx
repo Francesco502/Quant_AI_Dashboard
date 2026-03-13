@@ -1,4 +1,4 @@
-import * as React from "react"
+﻿import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
 import { motion } from "framer-motion"
@@ -6,7 +6,7 @@ import { motion } from "framer-motion"
 import { cn } from "@/lib/utils"
 
 /* ----------------------------------------------------------------
-   Button — Skeuominimalism: subtle physical feel with press states
+   Button - Skeuominimalism: subtle physical feel with press states
    ---------------------------------------------------------------- */
 const buttonVariants = cva(
   "inline-flex items-center justify-center whitespace-nowrap text-[13px] font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:ring-offset-1 disabled:pointer-events-none disabled:opacity-40",
@@ -66,7 +66,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         whileTap={{ scale: 0.97 }}
         transition={{ type: "spring", stiffness: 500, damping: 30 }}
-        {...(props as any)}
+        {...(props as unknown as React.ComponentProps<typeof motion.button>)}
       />
     )
   }
@@ -74,3 +74,4 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 Button.displayName = "Button"
 
 export { Button, buttonVariants }
+

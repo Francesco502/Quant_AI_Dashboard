@@ -1,0 +1,44 @@
+﻿# Runtime baseline for 2-core / 2GB deployments.
+# Keep this list lean; optional stacks are commented out below.
+
+# Data + market sources
+numpy>=1.26.0
+pandas>=2.2.0
+pyarrow>=14.0.0
+scipy>=1.13.0
+yfinance>=0.2.44
+akshare>=1.12.0
+schedule>=1.2.0
+
+# API service
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+websockets>=12.0
+
+# ML baseline (lightweight enough for low-memory hosts)
+scikit-learn>=1.4.0
+xgboost>=2.0.0
+
+# Security + system
+bcrypt>=4.0.0
+python-dotenv>=1.0.0
+psutil>=5.9.0
+requests>=2.31.0
+aiohttp>=3.9.0
+python-jose[cryptography]>=3.3.0
+
+# LLM baseline
+openai>=1.0.0
+
+# Optional forecasting stacks (enable only when needed)
+# lightgbm>=4.3.0
+# scikit-optimize>=0.10.2
+# optuna>=3.0.0
+# prophet>=1.1.5
+# statsmodels>=0.14.0
+
+# Optional extra providers/tools
+# google-generativeai>=0.3.0
+# tavily-python>=0.3.0

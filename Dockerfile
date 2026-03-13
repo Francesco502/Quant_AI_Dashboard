@@ -44,4 +44,4 @@ RUN mkdir -p /app/data /app/logs /app/models
 EXPOSE 8685
 
 # 默认启动 API 服务（可通过 docker-compose command 覆盖为 daemon）
-CMD ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8685", "--workers", "2"]
+CMD ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8685", "--workers", "1", "--limit-concurrency", "8"]

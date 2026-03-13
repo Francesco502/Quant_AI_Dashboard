@@ -462,3 +462,110 @@ class RiskMonitor:
         self.emergency_stop = False
         logger.info("紧急停止状态已清除")
 
+    # ==================== 强制集成方法 ====================
+
+    def check_order(
+        self,
+        order: Dict,
+        portfolio: Dict,
+        current_prices: Dict[str, float]
+    ) -> RiskCheckResult:
+        """
+        检查订单风险（强制集成版本）
+
+        与 check_order_risk 的区别：
+        - 确保所有订单都经过风控
+        - 对高风险订单直接拒绝
+        - 记录所有风险事件到数据库
+        """
+        result = self.check_order_risk(order, portfolio, current_prices)
+
+        # 记录所有检查到数据库
+        self._persist_risk_check(order, result)
+
+        return result
+
+    def _persist_risk_check(self, order: Dict, result: RiskCheckResult):
+        """将风控检查结果持久化到数据库"""
+        import sqlite3
+        try:
+            # 获取数据库连接
+            from core.database import _db_instance
+            if _db_instance and _db_instance.conn:
+                cursor = _db_instance.conn.cursor()
+                cursor.execute("""
+                    INSERT INTO risk_events
+                    (account_id, event_type, severity, message, symbol, order_id, details)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    order.get("account_id"),
+                    "order_risk_check",
+                    result.risk_level.value,
+                    result.message,
+                    order.get("symbol"),
+                    order.get("order_id", "N/A"),
+                    str(result.metadata)
+                ))
+                _db_instance.conn.commit()
+        except Exception as e:
+            logger.debug(f"风控检查持久化失败: {e}")
+
+    # ==================== 查询方法 ====================
+
+    def get_risk_events(
+        self,
+        account_id: Optional[int] = None,
+        limit: int = 50
+    ) -> List[Dict]:
+        """获取风险事件记录"""
+        import sqlite3
+        try:
+            from core.database import _db_instance
+            if _db_instance and _db_instance.conn:
+                cursor = _db_instance.conn.cursor()
+                if account_id:
+                    cursor.execute("""
+                        SELECT * FROM risk_events
+                        WHERE account_id = ?
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    """, (account_id, limit))
+                else:
+                    cursor.execute("""
+                        SELECT * FROM risk_events
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    """, (limit,))
+
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"获取风险事件失败: {e}")
+        return []
+
+    def get_daily_risk_summary(self, date: str) -> Dict:
+        """获取指定日期的风险汇总"""
+        try:
+            from core.database import _db_instance
+            if _db_instance and _db_instance.conn:
+                cursor = _db_instance.conn.cursor()
+                cursor.execute("""
+                    SELECT
+                        severity,
+                        COUNT(*) as count,
+                        GROUP_CONCAT(message) as messages
+                    FROM risk_events
+                    WHERE DATE(created_at) = ?
+                    GROUP BY severity
+                """, (date,))
+
+                summary = {"date": date, "by_severity": {}}
+                for row in cursor.fetchall():
+                    summary["by_severity"][row["severity"]] = {
+                        "count": row["count"],
+                        "messages": row["messages"]
+                    }
+                return summary
+        except Exception as e:
+            logger.error(f"获取风险汇总失败: {e}")
+        return {}
+

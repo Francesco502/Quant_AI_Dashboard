@@ -7,7 +7,13 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from api.auth import create_access_token, create_user, get_user_by_username
+from api.auth import (
+    authenticate_user,
+    bootstrap_admin_from_env,
+    create_access_token,
+    create_user,
+    get_user_by_username,
+)
 from api.main import app
 
 
@@ -71,3 +77,28 @@ def test_auth_permissions_for_admin_not_downgraded_to_viewer() -> None:
     body = response.json()
     assert body["role"] == "admin"
     assert "manage_user" in body["permissions"]
+
+
+def test_bootstrap_admin_requires_explicit_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    username = f"bootstrap_noenv_{uuid.uuid4().hex[:8]}"
+    monkeypatch.setenv("APP_ADMIN_USERNAME", username)
+    monkeypatch.delenv("APP_LOGIN_PASSWORD", raising=False)
+    monkeypatch.delenv("APP_LOGIN_PASSWORD_HASH", raising=False)
+
+    assert bootstrap_admin_from_env() is False
+    assert get_user_by_username(username) is None
+
+
+def test_bootstrap_admin_creates_configured_admin(monkeypatch: pytest.MonkeyPatch) -> None:
+    username = f"bootstrap_{uuid.uuid4().hex[:8]}"
+    password = "ReleaseReady123!"
+    monkeypatch.setenv("APP_ADMIN_USERNAME", username)
+    monkeypatch.setenv("APP_LOGIN_PASSWORD", password)
+    monkeypatch.delenv("APP_LOGIN_PASSWORD_HASH", raising=False)
+
+    assert bootstrap_admin_from_env() is True
+
+    user = get_user_by_username(username)
+    assert user is not None
+    assert user.role == "admin"
+    assert authenticate_user(username, password) is not None

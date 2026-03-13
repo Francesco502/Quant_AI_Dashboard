@@ -1,5 +1,5 @@
 # ============================================================
-# Quant-AI Dashboard v2.0.0-alpha.1 — 单容器部署（2核2GB 专用）
+# Quant-AI Dashboard v2.0.0 — 单容器部署（2核2GB 专用）
 #
 # 架构：1 个容器内用 Supervisor 管理 Nginx + Uvicorn + Daemon
 #   - Nginx    : 托管前端静态文件 + 反向代理 API/WS（端口 80）
@@ -14,7 +14,7 @@
 
 services:
   quant-app:
-    image: francescoli/quant_app:v2.0.0-alpha.1
+    image: francescoli/quant_app:v2.0.0
     build:
       context: .
       dockerfile: Dockerfile.optimized

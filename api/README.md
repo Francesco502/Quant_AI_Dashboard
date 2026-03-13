@@ -1,4 +1,4 @@
-# Quant-AI Dashboard API (v2.0.0-alpha.1)
+# Quant-AI Dashboard API (v2.0.0)
 
 FastAPI backend for the personal research and paper-trading workflow.
 
@@ -19,7 +19,7 @@ Most `/api/*` endpoints are protected by bearer token middleware.
 ```bash
 curl -X POST http://localhost:8685/api/auth/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=admin&password=admin123"
+  -d "username=admin&password=<your-configured-password>"
 ```
 
 ### Call protected endpoint
@@ -42,5 +42,6 @@ curl http://localhost:8685/api/backtest/strategies \
 - Set `NEXT_PUBLIC_API_URL=http://127.0.0.1:8685/api` for local development.
 
 ## Versioned Release Docs
-- `../docs/RELEASE_NOTES_v2.0.0-alpha.1.md`
-- `../docs/CODE_CHANGES_v2.0.0-alpha.1.md`
+- `../docs/RELEASE_NOTES_v2.0.0.md`
+- `../docs/RELEASE_STATUS_v2.0.0.md`
+- `../docs/UPGRADE_TO_v2.0.0.md`

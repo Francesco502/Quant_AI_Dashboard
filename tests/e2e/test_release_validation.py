@@ -1,4 +1,4 @@
-﻿"""Release validation tests that rely on externally running services.
+"""Release validation tests that rely on externally running services.
 
 These tests are intentionally excluded from default CI and local quick runs.
 Enable with `RUN_EXTERNAL_E2E=1`.
@@ -7,6 +7,7 @@ Enable with `RUN_EXTERNAL_E2E=1`.
 from __future__ import annotations
 
 import os
+import uuid
 
 import pytest
 import requests
@@ -24,12 +25,30 @@ if os.getenv("RUN_EXTERNAL_E2E", "").strip().lower() not in {"1", "true", "yes",
 
 API_URL = os.getenv("API_URL", "http://localhost:8685/api")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8686")
+TEST_LOGIN_USERNAME = os.getenv("TEST_LOGIN_USERNAME", "")
+TEST_LOGIN_PASSWORD = os.getenv("TEST_LOGIN_PASSWORD", "")
+
+
+def _ensure_login_credentials() -> tuple[str, str]:
+    if TEST_LOGIN_USERNAME and TEST_LOGIN_PASSWORD:
+        return TEST_LOGIN_USERNAME, TEST_LOGIN_PASSWORD
+
+    username = f"e2e_{uuid.uuid4().hex[:8]}"
+    password = "ReleaseValidation123!"
+    response = requests.post(
+        f"{API_URL}/auth/register",
+        json={"username": username, "password": password},
+        timeout=20,
+    )
+    response.raise_for_status()
+    return username, password
 
 
 def _login_and_get_token() -> str:
+    username, password = _ensure_login_credentials()
     response = requests.post(
         f"{API_URL}/auth/token",
-        data={"username": "admin", "password": "admin123"},
+        data={"username": username, "password": password},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=20,
     )
@@ -63,14 +82,16 @@ def test_protected_endpoint_with_token() -> None:
 
 
 def test_login_ui_stores_token() -> None:
+    username, password = _ensure_login_credentials()
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.goto(f"{FRONTEND_URL}/login")
         page.wait_for_load_state("networkidle")
 
-        page.fill('input[id="username"]', "admin")
-        page.fill('input[id="password"]', "admin123")
+        page.fill('input[id="username"]', username)
+        page.fill('input[id="password"]', password)
         page.click('button[type="submit"]')
         page.wait_for_timeout(1500)
 

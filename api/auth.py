@@ -116,19 +116,6 @@ def create_user(username: str, password: str, role: str = "viewer") -> bool:
         return False
 
 
-# 初始化默认 Admin (如果不存在)
-def _ensure_default_admin() -> None:
-    try:
-        if get_user_by_username("admin"):
-            return
-        if create_user("admin", "admin123", role=Role.ADMIN.value):
-            logger.info("初始化默认管理员用户: admin / admin123")
-        else:
-            logger.warning("默认管理员 admin 创建失败（可能已存在或数据库错误）")
-    except Exception as e:
-        logger.warning("初始化默认管理员失败: %s", e, exc_info=True)
-
-
 def _truncate_password(password: str) -> bytes:
     """将密码编码为 UTF-8 并截断到 72 字节（bcrypt 限制）"""
     encoded = password.encode("utf-8")
@@ -153,7 +140,53 @@ def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(_truncate_password(password), bcrypt.gensalt()).decode("utf-8")
 
 
-_ensure_default_admin()
+def _get_bootstrap_admin_username() -> str:
+    username = (os.getenv("APP_ADMIN_USERNAME") or "admin").strip()
+    return username or "admin"
+
+
+def _get_bootstrap_admin_password_hash() -> Optional[str]:
+    configured_hash = (os.getenv("APP_LOGIN_PASSWORD_HASH") or "").strip()
+    if configured_hash:
+        return configured_hash
+
+    configured_password = os.getenv("APP_LOGIN_PASSWORD")
+    if configured_password:
+        configured_password = configured_password.strip()
+        if configured_password:
+            return get_password_hash(configured_password)
+
+    return None
+
+
+def bootstrap_admin_from_env() -> bool:
+    """Create the bootstrap admin only when credentials are explicitly configured."""
+    username = _get_bootstrap_admin_username()
+
+    try:
+        if get_user_by_username(username):
+            return False
+
+        hashed_password = _get_bootstrap_admin_password_hash()
+        if not hashed_password:
+            logger.warning(
+                "未创建默认管理员：请通过 APP_LOGIN_PASSWORD 或 APP_LOGIN_PASSWORD_HASH 显式配置首个管理员账号"
+            )
+            return False
+
+        cursor = db.conn.cursor()
+        cursor.execute(
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            (username, hashed_password),
+        )
+        db.conn.commit()
+
+        get_user_role_manager().set_user_role(username, Role.ADMIN.value, assigned_by="system")
+        logger.info("已初始化管理员账号: %s", username)
+        return True
+    except Exception as e:
+        logger.warning("初始化管理员失败: %s", e, exc_info=True)
+        return False
 
 
 def get_user(username: str) -> Optional[UserInDB]:

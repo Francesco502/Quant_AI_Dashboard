@@ -44,7 +44,11 @@ from .routers import (
     strategy_templates,
 )
 from .websocket_manager import WebSocketManager
-from .auth import router as auth_router, AuthenticationMiddleware as AuthMiddleware
+from .auth import (
+    router as auth_router,
+    AuthenticationMiddleware as AuthMiddleware,
+    bootstrap_admin_from_env,
+)
 from .middleware import RateLimitMiddleware, PerformanceMiddleware
 from core.version import VERSION
 from core.memory_monitor import get_memory_monitor
@@ -63,6 +67,7 @@ async def lifespan(app: FastAPI):
     logger.info("API 服务启动中...")
     logger.info("初始化认证与授权系统...")
     try:
+        bootstrap_admin_from_env()
         from core.rbac import get_rbac
         rbac = get_rbac()
         logger.info(f"RBAC系统初始化完成，支持 {len(rbac.get_available_roles())} 个角色")

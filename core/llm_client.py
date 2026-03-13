@@ -13,7 +13,7 @@ Message = Dict[str, str]
 
 DEFAULT_OPENAI_COMPAT_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1"
 DEFAULT_OPENAI_MODEL = "qwen3.5-plus"
-DEFAULT_OPENAI_API_KEY = "sk-sp-df5a1f3c1bb045f2a948b11564fa4f06"
+DEFAULT_OPENAI_API_KEY = ""
 
 
 @dataclass
@@ -184,6 +184,8 @@ def _build_config_from_env() -> LLMConfig:
         )
 
     api_key = os.getenv("OPENAI_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or DEFAULT_OPENAI_API_KEY
+    if not api_key:
+        return LLMConfig(provider="dummy", model="dummy", api_key="", base_url=None)
     base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("DASHSCOPE_BASE_URL") or DEFAULT_OPENAI_COMPAT_BASE_URL
     model = os.getenv("OPENAI_MODEL") or os.getenv("DASHSCOPE_MODEL") or DEFAULT_OPENAI_MODEL
     return LLMConfig(provider="openai_compat", model=model, api_key=api_key, base_url=base_url)

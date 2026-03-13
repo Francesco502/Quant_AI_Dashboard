@@ -1,4 +1,4 @@
-# Quant-AI Dashboard Frontend (v2.0.0-alpha.1)
+# Quant-AI Dashboard Frontend (v2.0.0)
 
 Frontend application for Quant-AI Dashboard, built with Next.js App Router.
 
@@ -38,5 +38,6 @@ npm run preview
 - `src/lib/api.ts`: typed API client and request contracts
 
 ## Versioned Release Docs
-- `../docs/RELEASE_NOTES_v2.0.0-alpha.1.md`
-- `../docs/CODE_CHANGES_v2.0.0-alpha.1.md`
+- `../docs/RELEASE_NOTES_v2.0.0.md`
+- `../docs/RELEASE_STATUS_v2.0.0.md`
+- `../docs/UPGRADE_TO_v2.0.0.md`

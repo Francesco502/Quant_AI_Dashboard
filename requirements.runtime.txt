@@ -34,8 +34,8 @@ openai>=1.0.0
 
 # Optional forecasting stacks (enable only when needed)
 # lightgbm>=4.3.0
-# scikit-optimize>=0.10.2
-# optuna>=3.0.0
+scikit-optimize>=0.10.2
+optuna>=3.0.0
 # prophet>=1.1.5
 # statsmodels>=0.14.0
 

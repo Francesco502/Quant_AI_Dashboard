@@ -1,0 +1,18 @@
+export const SONG_COLORS = {
+  ink: "#4D4742",
+  celadon: "#4D7358",
+  indigo: "#6F7C8E",
+  plum: "#7A6973",
+  ochre: "#B08E61",
+  cinnabar: "#B6453C",
+  moss: "#8A9174",
+  paper: "#F3EEE7",
+  mist: "rgba(77, 71, 66, 0.08)",
+  grid: "rgba(92, 86, 80, 0.14)",
+  axis: "#756D67",
+  historyFill: "rgba(118, 133, 123, 0.22)",
+  forecastFill: "rgba(111, 124, 142, 0.16)",
+  riskFill: "rgba(163, 110, 99, 0.18)",
+  positive: "#B6453C",
+  negative: "#4D7358",
+} as const

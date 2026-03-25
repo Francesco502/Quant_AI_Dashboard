@@ -22,6 +22,7 @@ from core.risk_types import RiskAction, RiskLevel
 from core.interfaces.broker_adapter import BrokerAdapter, Position as BrokerPosition
 from core.order_types import Order, OrderSide, OrderType, OrderStatus, Fill
 from core.broker_simulator import Trade, generate_rebalance_trades, apply_trades_to_account
+from core.paper_trading_fees import estimate_buy_total_cost
 
 logger = logging.getLogger(__name__)
 
@@ -101,13 +102,13 @@ class TradingService:
 
         # 3. 风控检查（强制）
         portfolio = self.account_mgr.get_positions(account_id)
-        account_info = self.broker.get_account_info()
         current_prices = self._get_current_prices([symbol])
+        reference_price = current_prices.get(symbol)
 
-        portfolio_dict = self._portfolio_to_dict(account, portfolio, account_info)
+        portfolio_dict = self._portfolio_to_dict(account, portfolio, {})
 
         risk_result = self.risk_monitor.check_order_risk(
-            order=self._order_to_dict(order),
+            order=self._order_to_dict(order, reference_price),
             portfolio=portfolio_dict,
             current_prices=current_prices
         )
@@ -126,7 +127,7 @@ class TradingService:
 
         # 4. 预占资源
         try:
-            self._reserve_resources(order, account_id)
+            self._reserve_resources(order, account_id, reference_price)
         except Exception as e:
             self.order_mgr.cancel_order(order.order_id, reason=f"资源预占失败: {str(e)}")
             return {"success": False, "order_id": order.order_id, "message": str(e)}
@@ -173,22 +174,26 @@ class TradingService:
                 "message": "订单已提交"
             }
 
-    def _order_to_dict(self, order: Order) -> Dict:
+    def _order_to_dict(self, order: Order, reference_price: Optional[float] = None) -> Dict:
         """Order对象转字典（用于风控检查）"""
+        price = order.price if order.price is not None else reference_price
         return {
             "symbol": order.symbol,
             "side": order.side.value,
             "quantity": order.quantity,
-            "price": order.price or 0,
+            "price": price,
             "order_type": order.order_type.value,
             "account_id": order.account_id
         }
 
-    def _reserve_resources(self, order: Order, account_id: int):
+    def _reserve_resources(self, order: Order, account_id: int, reference_price: Optional[float] = None):
         """预占资源"""
         if order.side == OrderSide.BUY:
-            # 买入：冻结资金
-            cost = order.quantity * (order.price or 0)
+            reservation_price = order.price if order.price is not None else reference_price
+            if reservation_price is None or reservation_price <= 0:
+                raise TradingError(f"无法估算订单价格: {order.symbol}")
+            cost = estimate_buy_total_cost(reservation_price, order.quantity)
+            order.metadata["reserved_cash"] = cost
             self.account_mgr.freeze_funds(account_id, cost)
         else:
             # 卖出：冻结持仓
@@ -198,7 +203,9 @@ class TradingService:
         """释放冻结资源"""
         account_id = int(order.account_id)
         if order.side == OrderSide.BUY:
-            cost = order.quantity * (order.price or 0)
+            cost = float(order.metadata.get("reserved_cash") or 0)
+            if cost <= 0 and order.price is not None and order.price > 0:
+                cost = estimate_buy_total_cost(order.price, order.quantity)
             self.account_mgr.unfreeze_funds(account_id, cost)
         else:
             self.account_mgr.unfreeze_shares(account_id, order.symbol, order.quantity)
@@ -222,7 +229,7 @@ class TradingService:
                 fills_data.append((
                     fill.fill_id,
                     fill.order_id,
-                    int(fill.account_id) if hasattr(fill, 'account_id') else 1,
+                    int(order.account_id) if order.account_id else 1,
                     fill.symbol,
                     fill.side.value,
                     fill.quantity,
@@ -598,13 +605,44 @@ class TradingService:
         """获取用户所有账户"""
         return self.account_mgr.list_accounts_with_positions(user_id)
 
+    def reset_account(
+        self,
+        user_id: int,
+        account_id: int,
+        initial_balance: float,
+        account_name: Optional[str] = None,
+    ) -> Dict:
+        """Reset an account back to cash-only state."""
+        account = self.account_mgr.reset_account(
+            account_id=account_id,
+            user_id=user_id,
+            initial_balance=initial_balance,
+            account_name=account_name,
+        )
+        return {
+            "success": True,
+            "account_id": account.id,
+            "account_name": account.account_name,
+            "balance": account.balance,
+            "initial_capital": account.initial_capital,
+            "message": "账户已重置为初始状态",
+        }
+
     def cancel_order(self, order_id: str) -> Dict:
         """取消订单"""
         order = self.order_mgr.get_order(order_id)
         if not order:
             return {"success": False, "message": "订单不存在"}
 
+        releasable_statuses = [OrderStatus.PENDING, OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED]
+        should_release = order.status in releasable_statuses
+
         if self.order_mgr.cancel_order(order_id, reason="用户取消"):
+            if should_release:
+                try:
+                    self._release_frozen_resources(order)
+                except Exception as exc:
+                    logger.warning(f"释放冻结资源失败: {order_id} - {exc}")
             return {"success": True, "message": "订单已取消"}
         return {"success": False, "message": "订单无法取消"}
 
@@ -646,13 +684,13 @@ class TradingService:
 
         account = self.account_mgr.get_account(account_id, user_id)
         portfolio = self.account_mgr.get_positions(account_id)
-        account_info = self.broker.get_account_info()
         current_prices = self._get_current_prices([symbol])
+        reference_price = current_prices.get(symbol)
 
-        portfolio_dict = self._portfolio_to_dict(account, portfolio, account_info)
+        portfolio_dict = self._portfolio_to_dict(account, portfolio, {})
 
         risk_result = self.risk_monitor.check_order_risk(
-            order=self._order_to_dict(order),
+            order=self._order_to_dict(order, reference_price),
             portfolio=portfolio_dict,
             current_prices=current_prices
         )

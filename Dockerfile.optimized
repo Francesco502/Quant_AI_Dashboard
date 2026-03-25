@@ -1,5 +1,5 @@
 # ============================================================
-# Quant-AI Dashboard v2.0.0 - Optimized single-container image
+# Quant-AI Dashboard v2.1.0 - Optimized single-container image
 # Target: 2-core / 2GB runtime environment
 #
 # Process model:
@@ -58,6 +58,9 @@ ENV PATH=/root/.local/bin:$PATH
 COPY api/ ./api/
 COPY core/ ./core/
 COPY run_daemon.py set_password.py ./
+COPY daemon_config.json risk_config.json env.example ./
+COPY models/registry.json ./models/registry.json
+COPY strategies/config.json ./strategies/config.json
 
 # Frontend static files -> Nginx doc root
 COPY --from=frontend-build /build/out /var/www/html

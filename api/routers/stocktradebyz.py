@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 from datetime import datetime
+from time import time
 import logging
 
 from core.stocktradebyz_adapter import (
@@ -21,11 +22,29 @@ from core.stocktradebyz_adapter import (
 )
 from core.data_store import BASE_DIR
 from core.app_utils import save_selector_results
-from core.data_service import get_active_data_sources, get_api_keys, load_price_data
+from core.asset_metadata import (
+    get_asset_hint,
+    resolve_asset_type,
+    search_assets,
+    should_prefer_fund_nav,
+    supports_realtime_quote,
+)
+from core.data_service import (
+    get_active_data_sources,
+    get_api_key_status,
+    load_cn_realtime_quotes_sina,
+    load_price_data,
+)
 from core.market_scanner import MarketScanner
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+_ASSET_POOL_CACHE_TTL_SECONDS = 180
+_ASSET_POOL_RESPONSE_CACHE: Dict[str, Any] = {
+    "signature": "",
+    "loaded_at": 0.0,
+    "items": [],
+}
 
 # 全局扫描器实例
 market_scanner = MarketScanner()
@@ -70,13 +89,28 @@ class Asset(BaseModel):
     name: Optional[str] = ""
     alias: Optional[str] = ""
     last_price: Optional[float] = None
+    asset_type: Optional[str] = None
+    last_price_date: Optional[str] = None
+    price_source: Optional[str] = None
 
 class AssetPoolRequest(BaseModel):
     tickers: List[Any] # Can be str (legacy) or Dict/Asset
 
 class SingleAssetRequest(BaseModel):
     ticker: str
+    asset_name: Optional[str] = ""
+    asset_type: Optional[str] = None
     alias: Optional[str] = ""
+
+
+class AssetSearchResult(BaseModel):
+    ticker: str
+    name: str
+    asset_type: str
+    market: str = "CN"
+    source: Optional[str] = None
+    category: Optional[str] = None
+    score: Optional[int] = None
 
 class AliasUpdateRequest(BaseModel):
     ticker: str
@@ -172,33 +206,28 @@ async def scan_market(request: ScanMarketRequest):
 
 @router.get("/data-sources")
 async def get_data_sources():
-    """获取当前数据源配置（有序）及 API Keys"""
+    """获取当前数据源配置。统一由服务端环境变量控制。"""
     try:
         return {
             "sources": get_active_data_sources(),
-            "api_keys": get_api_keys()
+            "api_key_status": get_api_key_status(),
+            "configuration_mode": "env_locked",
         }
     except Exception as e:
         logger.error(f"获取数据源失败: {e}")
-        return {"sources": ["AkShare", "Binance"], "api_keys": {}}
+        return {
+            "sources": ["AkShare", "Binance"],
+            "api_key_status": {"Tushare": False, "AlphaVantage": False},
+            "configuration_mode": "env_locked",
+        }
 
 @router.post("/data-sources")
 async def update_data_sources(request: DataSourceRequest):
-    """更新数据源配置并触发联动"""
-    try:
-        old_sources = get_active_data_sources()
-        _save_data_sources(request.sources, request.api_keys)
-        
-        # 联动逻辑：如果首选数据源改变，可能需要重新初始化连接或下载数据
-        if old_sources != request.sources:
-            logger.info(f"数据源配置已更新: {old_sources} -> {request.sources}")
-            # TODO: 在此处触发实际的数据下载或重连逻辑
-            # await data_manager.reload_sources(request.sources)
-            
-        return {"status": "success", "sources": request.sources}
-    except Exception as e:
-        logger.error(f"更新数据源失败: {e}")
-        raise HTTPException(status_code=500, detail=f"更新数据源失败: {str(e)}")
+    """禁止在前端修改数据源配置。"""
+    raise HTTPException(
+        status_code=403,
+        detail="数据源和 API Key 由服务器环境变量统一管理，前端不允许修改。",
+    )
 
 @router.get("/strategies", response_model=List[SelectorConfigModel])
 async def list_strategies():
@@ -228,13 +257,13 @@ async def run_strategy(request: RunStrategyRequest):
         if request.mode == "universe":
             if not request.tickers:
                 # 尝试从资产池加载
-                pool_tickers = _load_asset_pool()
+                pool_tickers = _normalize_ticker_list(_load_asset_pool())
                 if not pool_tickers:
                      raise HTTPException(status_code=400, detail="资产池为空，请先添加资产或指定 tickers")
                 request.tickers = pool_tickers
 
             result_df = run_selectors_for_universe(
-                tickers=request.tickers,
+                tickers=_normalize_ticker_list(request.tickers),
                 trade_date=trade_date,
                 selector_names=request.selector_names,
                 selector_params=request.selector_params
@@ -284,169 +313,69 @@ async def run_strategy(request: RunStrategyRequest):
         raise HTTPException(status_code=500, detail=f"运行战法失败: {str(e)}")
 
 @router.get("/asset-pool", response_model=List[Asset])
-async def get_asset_pool():
-    """获取当前资产池（自动迁移旧格式）并附加最新价格"""
+async def get_asset_pool(force_refresh: bool = Query(False)):
+    """获取当前资产池并附带按资产类型路由后的最新价格。"""
     try:
-        raw_pool = _load_asset_pool()
-        assets = []
-        tickers_to_fetch = []
-        
-        # 1. 解析资产池
-        for item in raw_pool:
-            if isinstance(item, str):
-                asset = Asset(ticker=item, name="", alias="")
-                assets.append(asset)
-                tickers_to_fetch.append(item)
-            elif isinstance(item, dict):
-                asset = Asset(**item)
-                assets.append(asset)
-                tickers_to_fetch.append(asset.ticker)
-        
-        # 2. 批量获取最新价格（尝试获取过去几天的数据以确保有数据）
-        if tickers_to_fetch:
-            try:
-                # 使用 data_service 的统一接口
-                # 注意：load_price_data 返回的是一个 DataFrame，列为 ticker，行为日期索引
-                price_df = load_price_data(tickers_to_fetch, days=10)
-                if price_df is not None and not price_df.empty:
-                    # 统一将索引视为时间序列
-                    price_df = price_df.sort_index()
-
-                for asset in assets:
-                    try:
-                        if price_df is None or asset.ticker not in price_df.columns:
-                            continue
-                        series = price_df[asset.ticker].dropna()
-                        if series.empty:
-                            continue
-                        # 直接取最后一个非空值作为最新价格/净值
-                        asset.last_price = float(series.iloc[-1])
-                    except Exception:
-                        # 单个资产价格解析失败不影响整体返回
-                        continue
-            except Exception as e:
-                logger.error(f"批量获取价格失败: {e}")
-                # 不影响返回资产列表，只是没有价格
-                pass
-
-        return assets
+        return _build_asset_pool_response(_load_asset_pool_as_dicts(), force_refresh=force_refresh)
     except Exception as e:
         logger.error(f"获取资产池失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取资产池失败: {str(e)}")
+
+
+@router.get("/asset-search", response_model=List[AssetSearchResult])
+async def search_asset_candidates(
+    q: str = Query(..., min_length=1, description="资产代码或名称关键字"),
+    limit: int = Query(12, ge=1, le=30),
+):
+    """按代码或名称搜索资产，让用户确认后再添加。"""
+    try:
+        return search_assets(q, limit=limit)
+    except Exception as e:
+        logger.error(f"搜索资产失败: {e}")
+        raise HTTPException(status_code=500, detail=f"搜索资产失败: {str(e)}")
 
 @router.post("/asset-pool")
 async def update_asset_pool(request: AssetPoolRequest):
     """更新资产池"""
     try:
-        # 兼容处理：如果是字符串列表，转为对象
-        new_pool = []
-        for item in request.tickers:
-             if isinstance(item, str):
-                 new_pool.append({"ticker": item, "name": "", "alias": ""})
-             elif isinstance(item, dict):
-                 new_pool.append(item)
-             elif isinstance(item, Asset):
-                 new_pool.append(item.dict())
-        
+        new_pool = _dedupe_pool_assets([_normalize_pool_asset_entry(item) for item in request.tickers])
         _save_asset_pool(new_pool)
         return {"status": "success", "count": len(new_pool)}
     except Exception as e:
         logger.error(f"更新资产池失败: {e}")
         raise HTTPException(status_code=500, detail=f"更新资产池失败: {str(e)}")
 
-def _fetch_asset_name(ticker: str) -> str:
-    """尝试获取资产名称（支持A股和ETF）"""
-    if not AKSHARE_AVAILABLE:
-        return ""
-    
-    clean_ticker = ticker.replace(".SZ", "").replace(".SS", "").replace(".OF", "")
-    is_otc_fund = ticker.endswith(".OF")
-    
-    # 0. 显式场外基金 (.OF)
-    if is_otc_fund:
-         try:
-             # fund_em_open_fund_info 获取基金详情，包含名称
-             info = ak.fund_em_open_fund_info(fund=clean_ticker, indicator="单位净值走势")
-             # AkShare 接口返回格式多变，这里假设它可能失败，若失败尝试 fund_name_em 等
-             # 实际上 fund_open_fund_info_em 不返回名称。
-             # 使用 ak.fund_em_fund_name() 获取所有基金名称表太慢。
-             # 尝试 ak.fund_individual_basic_info_xq(symbol=clean_ticker)
-             pass
-         except:
-             pass
-         
-         # 尝试从 fund_em_open_fund_info 的某些字段，或者直接用 fund_name_em 搜索（如果缓存了）
-         # 简单起见，尝试 fund_individual_basic_info_xq (雪球接口通常较快)
-         try:
-             # 注意：akshare 接口名可能变动，这里使用 fund_name_em 的搜索功能如果存在
-             pass
-         except:
-             pass
-         
-         # 兜底：尝试获取净值数据，如果能获取到，暂时返回 "场外基金-代码"
-         # 或者使用 fund_em_open_fund_info 返回的列名? 不行。
-         return f"场外基金-{clean_ticker}"
-
-    # 1. 尝试作为 A 股获取
-    try:
-        # stock_individual_info_em 有时会SSL失败，尝试更轻量的接口或忽略SSL错误
-        # 这里为了稳健性，先尝试 fund_open (因为之前测试它是通的) 如果是ETF的话
-        pass
-    except:
-        pass
-
-    # 简单策略：优先尝试 fund_open_fund_info_em 如果看起来像基金
-    if clean_ticker.isdigit() and (clean_ticker.startswith("1") or clean_ticker.startswith("5")):
-         try:
-             df = ak.fund_open_fund_info_em(symbol=clean_ticker, indicator="单位净值走势")
-             # 这个接口不直接返回名称，需要另一个接口 fund_em_open_fund_info
-             # 换用 fund_em_open_fund_info (基类信息)
-             # 注意：AkShare 接口变动频繁，这里仅作尝试
-             pass
-         except:
-             pass
-    
-    # 尝试 stock_individual_info_em (A股)
-    try:
-        # 注意：这里可能会抛出 SSL 错误，必须捕获
-        info = ak.stock_individual_info_em(symbol=clean_ticker)
-        # info 是 DataFrame, 包含 'item', 'value'
-        if info is not None and not info.empty:
-            name_row = info[info['item'] == '股票简称']
-            if not name_row.empty:
-                return name_row.iloc[0]['value']
-    except Exception:
-        pass
-        
-    return ""
-
 @router.post("/asset-pool/add")
 async def add_asset_to_pool(request: SingleAssetRequest):
     """添加单个资产到资产池"""
     try:
         current_pool = _load_asset_pool_as_dicts()
-        ticker = request.ticker.strip().upper()
-        
-        # 检查是否存在
-        exists = False
-        for asset in current_pool:
-            if asset["ticker"] == ticker:
-                exists = True
-                break
-        
-        if not exists:
-            # 尝试获取名称
-            name = _fetch_asset_name(ticker)
-            new_asset = {
-                "ticker": ticker,
-                "name": name,
-                "alias": request.alias or ""
+        new_asset = _normalize_pool_asset_entry(
+            {
+                "ticker": request.ticker,
+                "name": request.asset_name,
+                "asset_type": request.asset_type,
+                "alias": request.alias,
             }
+        )
+
+        exists = any(asset["ticker"] == new_asset["ticker"] for asset in current_pool)
+
+        if not exists:
             current_pool.append(new_asset)
+            current_pool = _dedupe_pool_assets(current_pool)
             _save_asset_pool(current_pool)
-            return {"status": "success", "message": f"已添加 {ticker}", "pool": current_pool}
-        else:
-            return {"status": "success", "message": f"{ticker} 已存在", "pool": current_pool}
+            return {
+                "status": "success",
+                "message": f"已添加 {new_asset['ticker']}",
+                "pool": _build_asset_pool_response(current_pool),
+            }
+
+        return {
+            "status": "success",
+            "message": f"{new_asset['ticker']} 已存在",
+            "pool": _build_asset_pool_response(current_pool),
+        }
     except Exception as e:
         logger.error(f"添加资产失败: {e}")
         raise HTTPException(status_code=500, detail=f"添加资产失败: {str(e)}")
@@ -462,9 +391,9 @@ async def delete_asset_from_pool(request: SingleAssetRequest):
         
         if len(new_pool) < len(current_pool):
             _save_asset_pool(new_pool)
-            return {"status": "success", "message": f"已移除 {ticker}", "pool": new_pool}
+            return {"status": "success", "message": f"已移除 {ticker}", "pool": _build_asset_pool_response(new_pool)}
         else:
-            return {"status": "success", "message": f"{ticker} 不在资产池中", "pool": new_pool}
+            return {"status": "success", "message": f"{ticker} 不在资产池中", "pool": _build_asset_pool_response(new_pool)}
     except Exception as e:
         logger.error(f"移除资产失败: {e}")
         raise HTTPException(status_code=500, detail=f"移除资产失败: {str(e)}")
@@ -485,7 +414,7 @@ async def update_asset_alias(request: AliasUpdateRequest):
         
         if updated:
             _save_asset_pool(current_pool)
-            return {"status": "success", "message": f"已更新 {ticker} 别名", "pool": current_pool}
+            return {"status": "success", "message": f"已更新 {ticker} 别名", "pool": _build_asset_pool_response(current_pool)}
         else:
             raise HTTPException(status_code=404, detail="资产不存在")
     except HTTPException:
@@ -549,67 +478,252 @@ async def get_history_detail(date_str: str):
 #  辅助函数
 # ----------------------------------------------------------------------
 
+LEGACY_TICKER_MAP = {
+    "016858": "006195",
+}
+
+
+def _lookup_catalog_asset(ticker: str) -> Dict[str, Any]:
+    normalized = str(ticker or "").strip().upper()
+    digits = "".join(ch for ch in normalized if ch.isdigit())
+    query = digits or normalized
+    if not query:
+        return {}
+
+    for item in search_assets(query, limit=8):
+        item_ticker = str(item.get("ticker") or "").strip().upper()
+        item_digits = "".join(ch for ch in item_ticker if ch.isdigit())
+        if item_ticker == normalized or (digits and item_digits == digits):
+            return item
+    return {}
+
+
+def _normalize_pool_ticker(raw_ticker: Any) -> str:
+    ticker = str(raw_ticker or "").strip().upper()
+    digits = "".join(ch for ch in ticker if ch.isdigit())
+    if digits and digits in LEGACY_TICKER_MAP:
+        mapped = LEGACY_TICKER_MAP[digits]
+        if ticker == digits:
+            return mapped
+        return ticker.replace(digits, mapped)
+    return ticker
+
+
+def _normalize_pool_asset_entry(item: Any) -> Dict[str, Any]:
+    raw: Dict[str, Any]
+    if isinstance(item, Asset):
+        raw = item.dict()
+    elif isinstance(item, dict):
+        raw = dict(item)
+    else:
+        raw = {"ticker": item}
+
+    ticker = _normalize_pool_ticker(raw.get("ticker"))
+    if not ticker:
+        raise ValueError("Asset pool entry is missing ticker")
+
+    hint = get_asset_hint(ticker)
+    raw_name = str(raw.get("name") or raw.get("asset_name") or "").strip()
+    raw_type = raw.get("asset_type")
+    catalog_item: Dict[str, Any] = {}
+    if not raw_name or not (raw_type or hint.get("asset_type")):
+        catalog_item = _lookup_catalog_asset(ticker)
+
+    name = str(raw_name or hint.get("name") or catalog_item.get("name") or "").strip()
+    alias = str(raw.get("alias") or "").strip()
+    asset_type = resolve_asset_type(
+        ticker,
+        asset_name=name,
+        asset_type=raw_type or hint.get("asset_type") or catalog_item.get("asset_type"),
+    )
+
+    return {
+        "ticker": ticker,
+        "name": name,
+        "alias": alias,
+        "asset_type": asset_type,
+    }
+
+
+def _dedupe_pool_assets(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for item in items:
+        normalized = _normalize_pool_asset_entry(item)
+        ticker = normalized["ticker"]
+        if ticker in seen:
+            continue
+        seen.add(ticker)
+        deduped.append(normalized)
+    return deduped
+
+
 def _load_asset_pool_as_dicts() -> List[Dict[str, Any]]:
-    """加载资产池并确保为字典列表格式"""
+    """加载资产池并确保为统一结构。"""
     raw_pool = _load_asset_pool()
-    pool_dicts = []
-    for item in raw_pool:
+    normalized = _dedupe_pool_assets(raw_pool)
+    if raw_pool != normalized:
+        _save_asset_pool(normalized)
+    return normalized
+
+
+def _normalize_ticker_list(items: Optional[List[Any]]) -> List[str]:
+    normalized: List[str] = []
+    seen: set[str] = set()
+
+    for item in items or []:
+        ticker = ""
         if isinstance(item, str):
-            pool_dicts.append({"ticker": item, "name": "", "alias": ""})
+            ticker = item
         elif isinstance(item, dict):
-            pool_dicts.append(item)
-    return pool_dicts
+            ticker = str(item.get("ticker", ""))
+        elif hasattr(item, "ticker"):
+            ticker = str(getattr(item, "ticker", ""))
+
+        clean_ticker = _normalize_pool_ticker(ticker.strip().upper())
+        if not clean_ticker or clean_ticker in seen:
+            continue
+
+        seen.add(clean_ticker)
+        normalized.append(clean_ticker)
+
+    return normalized
 
 # 首次部署时的默认资产池（种子数据）
 DEFAULT_ASSET_POOL = [
-    {"ticker": "013281", "name": "国泰海通30天滚动持有中短债债券A", "alias": ""},
-    {"ticker": "002611", "name": "博时黄金ETF联接C", "alias": ""},
-    {"ticker": "160615", "name": "鹏华沪深300ETF联接(LOF)A", "alias": ""},
-    {"ticker": "016858", "name": "国金量化多因子股票C", "alias": ""},
-    {"ticker": "159755", "name": "电池ETF", "alias": ""},
-    {"ticker": "006810", "name": "泰康港股通中证香港银行投资指数C", "alias": ""},
+    {"ticker": "013281", "name": "国泰海通30天滚动持有中短债债券A", "alias": "", "asset_type": "fund"},
+    {"ticker": "002611", "name": "博时黄金ETF联接C", "alias": "", "asset_type": "fund"},
+    {"ticker": "160615", "name": "鹏华沪深300ETF联接(LOF)A", "alias": "", "asset_type": "fund"},
+    {"ticker": "006195", "name": "国金量化多因子股票A", "alias": "", "asset_type": "fund"},
+    {"ticker": "159755", "name": "广发国证新能源车电池ETF", "alias": "", "asset_type": "etf"},
+    {"ticker": "006810", "name": "泰康港股通中证香港银行投资指数C", "alias": "", "asset_type": "fund"},
 ]
 
+
 def _load_asset_pool() -> List[Any]:
-    """从 user_state.json 加载资产池，首次部署自动种子化默认资产"""
+    """从 user_state.json 加载资产池，首次部署自动种子化默认资产。"""
     if not os.path.exists(USER_STATE_FILE):
-        # 首次部署：写入默认资产并返回
         _save_asset_pool(DEFAULT_ASSET_POOL)
-        return DEFAULT_ASSET_POOL
+        return list(DEFAULT_ASSET_POOL)
     try:
         with open(USER_STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             pool = data.get("selected_tickers", [])
             if not pool:
-                # 文件存在但资产池为空，种子化
                 _save_asset_pool(DEFAULT_ASSET_POOL)
-                return DEFAULT_ASSET_POOL
+                return list(DEFAULT_ASSET_POOL)
             return pool
     except Exception:
-        return DEFAULT_ASSET_POOL
+        return list(DEFAULT_ASSET_POOL)
+
+
+def _extract_latest_price(series: Optional[pd.Series]) -> Optional[tuple[float, str]]:
+    if series is None:
+        return None
+    clean = pd.to_numeric(series, errors="coerce").dropna()
+    if clean.empty:
+        return None
+    latest_idx = pd.to_datetime(clean.index[-1])
+    return float(clean.iloc[-1]), latest_idx.strftime("%Y-%m-%d")
+
+
+def _pool_cache_signature(pool_items: List[Dict[str, Any]]) -> str:
+    return json.dumps(pool_items, ensure_ascii=False, sort_keys=True)
+
+
+def _invalidate_asset_pool_response_cache() -> None:
+    _ASSET_POOL_RESPONSE_CACHE["signature"] = ""
+    _ASSET_POOL_RESPONSE_CACHE["loaded_at"] = 0.0
+    _ASSET_POOL_RESPONSE_CACHE["items"] = []
+
+
+def _restore_cached_asset_pool_response(signature: str) -> Optional[List[Asset]]:
+    if _ASSET_POOL_RESPONSE_CACHE.get("signature") != signature:
+        return None
+    loaded_at = float(_ASSET_POOL_RESPONSE_CACHE.get("loaded_at") or 0.0)
+    if time() - loaded_at > _ASSET_POOL_CACHE_TTL_SECONDS:
+        return None
+
+    cached_items = _ASSET_POOL_RESPONSE_CACHE.get("items") or []
+    return [Asset(**item) for item in cached_items]
+
+
+def _store_cached_asset_pool_response(signature: str, items: List[Asset]) -> None:
+    _ASSET_POOL_RESPONSE_CACHE["signature"] = signature
+    _ASSET_POOL_RESPONSE_CACHE["loaded_at"] = time()
+    _ASSET_POOL_RESPONSE_CACHE["items"] = [item.dict() for item in items]
+
+
+def _build_asset_pool_response(pool_items: List[Dict[str, Any]], *, force_refresh: bool = False) -> List[Asset]:
+    assets = [Asset(**_normalize_pool_asset_entry(item)) for item in pool_items]
+    if not assets:
+        return []
+
+    signature = _pool_cache_signature([asset.dict() for asset in assets])
+    if not force_refresh:
+        cached = _restore_cached_asset_pool_response(signature)
+        if cached is not None:
+            return cached
+
+    tickers = [asset.ticker for asset in assets]
+    price_df = pd.DataFrame()
+    try:
+        price_df = load_price_data(tickers, days=70, refresh_stale=force_refresh)
+    except Exception as exc:
+        logger.warning("读取资产池通用价格失败: %s", exc)
+
+    realtime_candidates = [
+        asset.ticker
+        for asset in assets
+        if supports_realtime_quote(
+            asset.ticker,
+            asset_name=asset.name,
+            asset_type=asset.asset_type,
+        )
+    ]
+    realtime_quotes: Dict[str, Dict[str, object]] = {}
+    if realtime_candidates:
+        try:
+            realtime_quotes = load_cn_realtime_quotes_sina(realtime_candidates)
+        except Exception as exc:
+            logger.warning("读取资产池实时行情失败: %s", exc)
+
+    for asset in assets:
+        latest_price: Optional[float] = None
+        latest_date: Optional[str] = None
+        price_source: Optional[str] = None
+
+        if not price_df.empty and asset.ticker in price_df.columns:
+            latest = _extract_latest_price(price_df[asset.ticker])
+            if latest:
+                latest_price, latest_date = latest
+                price_source = "fund_nav" if should_prefer_fund_nav(
+                    asset.ticker,
+                    asset_name=asset.name,
+                    asset_type=asset.asset_type,
+                ) else "price_history"
+
+        quote = realtime_quotes.get(asset.ticker)
+        if quote:
+            quote_price = quote.get("price")
+            if isinstance(quote_price, (int, float)) and float(quote_price) > 0:
+                latest_price = float(quote_price)
+                latest_date = str(quote.get("trade_date") or latest_date or "")
+                price_source = "sina_realtime"
+
+        asset.last_price = latest_price
+        asset.last_price_date = latest_date
+        asset.price_source = price_source
+
+    _store_cached_asset_pool_response(signature, assets)
+    return assets
+
 
 def _save_asset_pool(tickers: List[Any]) -> None:
-    """保存资产池到 user_state.json"""
+    """保存资产池到 user_state.json。"""
     os.makedirs(os.path.dirname(USER_STATE_FILE), exist_ok=True)
-    
-    # 先读取现有数据以保留其他字段
-    current_data = {}
-    if os.path.exists(USER_STATE_FILE):
-        try:
-            with open(USER_STATE_FILE, "r", encoding="utf-8") as f:
-                current_data = json.load(f)
-        except Exception:
-            pass
-    
-    current_data["selected_tickers"] = tickers
-    
-    with open(USER_STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(current_data, f, ensure_ascii=False, indent=2)
 
-def _save_data_sources(sources: List[str], api_keys: Optional[Dict[str, str]] = None) -> None:
-    """保存数据源配置到 user_state.json"""
-    os.makedirs(os.path.dirname(USER_STATE_FILE), exist_ok=True)
-    
     current_data = {}
     if os.path.exists(USER_STATE_FILE):
         try:
@@ -617,10 +731,9 @@ def _save_data_sources(sources: List[str], api_keys: Optional[Dict[str, str]] = 
                 current_data = json.load(f)
         except Exception:
             pass
-    
-    current_data["data_sources"] = sources
-    if api_keys is not None:
-        current_data["api_keys"] = api_keys
-    
+
+    current_data["selected_tickers"] = _dedupe_pool_assets([_normalize_pool_asset_entry(item) for item in tickers])
+
     with open(USER_STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(current_data, f, ensure_ascii=False, indent=2)
+    _invalidate_asset_pool_response_cache()

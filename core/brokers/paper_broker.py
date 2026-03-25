@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from core.interfaces.broker_adapter import BrokerAdapter, Position
 from core.order_types import Order, OrderStatus, OrderSide, OrderType, Fill
 from core.paper_account import PaperAccount, InsufficientFundsError, InsufficientSharesError
+from core.paper_trading_fees import estimate_trade_fee
 from core.risk_monitor import RiskMonitor
 from core.risk_types import RiskAction, RiskCheckResult
 import logging
@@ -251,47 +252,39 @@ class PaperBrokerAdapter(BrokerAdapter):
             current_prices=current_prices
         )
 
-    def _execute_market_order(self, order: Order) -> Order:
-        """执行市价单"""
-        # 获取当前价格
-        current_price = self._get_current_price(order.symbol)
-
-        # 检查价格有效性
-        if current_price is None or current_price <= 0:
+    def _mark_order_filled(self, order: Order, execution_price: float) -> Order:
+        """仅生成成交回报，账户变更由 TradingService 统一处理。"""
+        if execution_price is None or execution_price <= 0:
             order.status = OrderStatus.REJECTED
             order.error_message = f"无法获取有效价格: {order.symbol}"
-            logger.warning(f"市价单被拒绝: {order.order_id} - {order.error_message}")
+            logger.warning(f"订单被拒绝: {order.order_id} - {order.error_message}")
             return order
 
-        if order.side == OrderSide.BUY:
-            result = self.paper_account.buy(order.symbol, order.quantity, price=current_price)
-        else:
-            result = self.paper_account.sell(order.symbol, order.quantity, price=current_price)
+        execution_price = round(float(execution_price), 4)
+        commission = estimate_trade_fee(order.side, execution_price, order.quantity)
+        fill = Fill(
+            fill_id=f"FILL_{datetime.now().timestamp()}",
+            order_id=order.order_id,
+            symbol=order.symbol,
+            side=order.side,
+            quantity=order.quantity,
+            price=execution_price,
+            timestamp=datetime.now(),
+            commission=commission,
+        )
 
-        if result and result.get("success"):
-            order.status = OrderStatus.FILLED
-            order.filled_quantity = order.quantity
-            order.avg_fill_price = result["price"]
-            order.filled_time = datetime.now()
-            order.remaining_quantity = 0
-
-            # 创建成交记录
-            fill = Fill(
-                fill_id=f"FILL_{datetime.now().timestamp()}",
-                order_id=order.order_id,
-                symbol=order.symbol,
-                side=order.side,
-                quantity=order.quantity,
-                price=result["price"],
-                timestamp=datetime.now(),
-                commission=result.get("fee", 0)
-            )
-            order.fills.append(fill)
-
-        else:
-            order.status = OrderStatus.FAILED
-
+        order.status = OrderStatus.FILLED
+        order.filled_quantity = order.quantity
+        order.avg_fill_price = execution_price
+        order.filled_time = fill.timestamp
+        order.remaining_quantity = 0
+        order.fills = [fill]
         return order
+
+    def _execute_market_order(self, order: Order) -> Order:
+        """执行市价单"""
+        current_price = self._get_current_price(order.symbol)
+        return self._mark_order_filled(order, current_price or 0.0)
 
     def _place_limit_order(self, order: Order) -> Order:
         """提交限价单到订单簿"""
@@ -304,25 +297,6 @@ class PaperBrokerAdapter(BrokerAdapter):
             order.error_message = f"无法获取有效价格进行限价单验证: {order.symbol}"
             logger.warning(f"限价单被拒绝: {order.order_id} - {order.error_message}")
             return order
-
-        # 检查资金/持仓
-        total_cost = order.quantity * order.price
-
-        if order.side == OrderSide.BUY:
-            # 检查资金
-            account_info = self.get_account_info()
-            if account_info["cash"] < total_cost:
-                order.status = OrderStatus.REJECTED
-                order.error_message = "资金不足"
-                return order
-        else:
-            # 检查持仓
-            positions = self.get_positions()
-            position = next((p for p in positions if p.ticker == order.symbol), None)
-            if not position or position.shares < order.quantity:
-                order.status = OrderStatus.REJECTED
-                order.error_message = "持仓不足"
-                return order
 
         # 将订单添加到订单簿等待撮合
         entry = OrderBookEntry(
@@ -391,41 +365,19 @@ class PaperBrokerAdapter(BrokerAdapter):
         if not side_orders:
             self._tracked_symbols.discard(entry.symbol)
 
-        # 从订单对象映射中移除
-        if entry.order_id in self._limit_orders:
-            del self._limit_orders[entry.order_id]
+        order = self._limit_orders.pop(entry.order_id, None)
+        if order is None:
+            order = Order(
+                order_id=entry.order_id,
+                symbol=entry.symbol,
+                side=entry.side,
+                order_type=OrderType.LIMIT,
+                quantity=entry.quantity,
+                price=entry.price,
+                account_id=str(entry.account_id),
+            )
 
-        # 创建Order对象（设置 account_id）
-        order = Order(
-            order_id=entry.order_id,
-            symbol=entry.symbol,
-            side=entry.side,
-            order_type=OrderType.LIMIT,
-            quantity=entry.quantity,
-            price=entry.price,
-            account_id=str(entry.account_id)
-        )
-
-        # 调用 _execute_market_order 执行实际交易
-        result_order = self._execute_market_order(order)
-
-        # 将执行结果复制到原订单
-        order.status = result_order.status
-        order.filled_quantity = result_order.filled_quantity
-        order.avg_fill_price = result_order.avg_fill_price
-        order.filled_time = result_order.filled_time
-        order.fills = result_order.fills
-
-        # 更新原订单簿中的订单状态
-        if entry.order_id in self._limit_orders:
-            orig_order = self._limit_orders[entry.order_id]
-            orig_order.status = result_order.status
-            orig_order.filled_quantity = result_order.filled_quantity
-            orig_order.avg_fill_price = result_order.avg_fill_price
-            orig_order.filled_time = result_order.filled_time
-            orig_order.fills = result_order.fills
-
-        return order
+        return self._mark_order_filled(order, fill_price)
 
     # ==================== 价格管理 ====================
 
@@ -481,8 +433,7 @@ class PaperBrokerAdapter(BrokerAdapter):
         应定期调用
         """
         for symbol, price in current_prices.items():
-            # 暂未实现独立的止损订单簿
-            # 止损逻辑由TradingService统一管理
+            # 止损与止盈规则由 TradingService 统一管理，这里只负责价格轮询入口。
             pass
 
     # ==================== 结算 ====================

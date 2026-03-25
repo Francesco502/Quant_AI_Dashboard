@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Lock, User, UserPlus } from "lucide-react"
-import { API_BASE_URL } from "@/lib/api"
+import { getEffectiveApiBaseUrl } from "@/lib/api"
+import { SONG_COLORS } from "@/lib/chart-theme"
 import { motion } from "framer-motion"
 import Link from "next/link"
 
@@ -39,7 +40,7 @@ export default function RegisterPage() {
     setLoading(true)
 
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/register`, {
+      const res = await fetch(`${getEffectiveApiBaseUrl()}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -79,7 +80,7 @@ export default function RegisterPage() {
               创建账户
             </h1>
             <p className="text-[13px] text-foreground/40">
-              注册新的 Quant AI Dashboard 账户
+              注册新的 Quant AI 研习台账户
             </p>
           </div>
 
@@ -89,8 +90,8 @@ export default function RegisterPage() {
               animate={{ opacity: 1, scale: 1 }}
               className="text-center space-y-3"
             >
-              <div className="text-[13px] text-emerald-600/80 dark:text-emerald-400/80 font-medium bg-emerald-500/[0.06] p-4 rounded-xl">
-                注册成功! 正在跳转到登录页面...
+              <div className="rounded-xl p-4 text-[13px] font-medium" style={{ color: SONG_COLORS.positive, backgroundColor: "rgba(77, 115, 88, 0.08)" }}>
+                注册成功，正在跳转到登录页…
               </div>
             </motion.div>
           ) : (
@@ -105,6 +106,7 @@ export default function RegisterPage() {
                     className="pl-9"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
+                    autoComplete="username"
                     required
                     minLength={3}
                   />
@@ -122,6 +124,7 @@ export default function RegisterPage() {
                     className="pl-9"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="new-password"
                     required
                     minLength={6}
                   />
@@ -139,6 +142,7 @@ export default function RegisterPage() {
                     className="pl-9"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
                     required
                     minLength={6}
                   />
@@ -149,7 +153,8 @@ export default function RegisterPage() {
                 <motion.div
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="text-[12px] text-red-500/80 text-center bg-red-500/[0.06] p-2.5 rounded-lg"
+                  className="rounded-lg p-2.5 text-center text-[12px]"
+                  style={{ color: SONG_COLORS.negative, backgroundColor: "rgba(182, 69, 60, 0.08)" }}
                 >
                   {error}
                 </motion.div>
@@ -160,7 +165,7 @@ export default function RegisterPage() {
               </Button>
 
               <div className="text-center text-[12px] text-foreground/35 mt-4">
-                已有账户?{" "}
+                已有账户？{" "}
                 <Link href="/login" className="text-foreground/60 hover:text-foreground/80 font-medium transition-colors">
                   返回登录
                 </Link>

@@ -1,16 +1,16 @@
-﻿"use client"
+"use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { AlertCircle, Layers3 } from "lucide-react"
+
 import { api as apiClient } from "@/lib/api"
-import { GlassCard } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Button } from "@/components/ui/button"
+import { CardDescription, CardTitle, GlassCard } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Input } from "@/components/ui/input"
-import { Layers, Play, Clock, FileText, AlertCircle, GraduationCap } from "lucide-react"
-import { HelpTooltip } from "@/components/ui/tooltip"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useStrategies } from "@/lib/use-strategies"
 import { StrategyLearningCard } from "@/components/trading/StrategyLearningCard"
 
@@ -81,7 +81,14 @@ export default function StrategiesPage() {
   const [lastResult, setLastResult] = useState<StrategyResult | null>(null)
 
   const selectableStrategies = useMemo(
-    () => activeStrategies.filter((s) => !!s.class_name).map((s) => ({ name: s.alias || s.class_name, className: s.class_name })),
+    () =>
+      activeStrategies
+        .filter((s) => !!s.class_name)
+        .map((s) => ({
+          value: s.class_name,
+          label: s.alias || s.class_name,
+          className: s.class_name,
+        })),
     [activeStrategies]
   )
 
@@ -100,6 +107,7 @@ export default function StrategiesPage() {
   }, [fetchHistory])
 
   const runStrategy = async () => {
+    if (!tradeDate) return
     setRunning(true)
     setLastResult(null)
     try {
@@ -112,7 +120,7 @@ export default function StrategiesPage() {
       const rows = normalizeRows((response as { data?: unknown }).data)
       setLastResult({
         status: "success",
-        message: `Generated ${rows.length} rows`,
+        message: `本次共筛出 ${rows.length} 条结果`,
         count: rows.length,
         data: rows,
       })
@@ -121,7 +129,7 @@ export default function StrategiesPage() {
       console.error("Strategy run failed", error)
       setLastResult({
         status: "error",
-        message: "Run failed. Please check logs.",
+        message: "运行失败，请检查日志或数据源状态。",
       })
     } finally {
       setRunning(false)
@@ -135,7 +143,7 @@ export default function StrategiesPage() {
       const rows = normalizeRows(detail)
       setLastResult({
         status: "success",
-        message: `Loaded history for ${date}`,
+        message: `已载入 ${date} 的历史结果`,
         count: rows.length,
         data: rows,
       })
@@ -143,7 +151,7 @@ export default function StrategiesPage() {
       console.error("History detail load failed", error)
       setLastResult({
         status: "error",
-        message: "Failed to load selected history.",
+        message: "读取历史记录失败。",
       })
     } finally {
       setRunning(false)
@@ -151,66 +159,61 @@ export default function StrategiesPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground/90 flex items-center gap-2">
-            <Layers className="h-5 w-5" />
-            Strategy Workbench
-            <HelpTooltip content="Run market selectors and inspect historical runs." />
-          </h1>
-          <p className="text-sm text-muted-foreground">Manual strategy execution and result inspection.</p>
-        </div>
+    <div className="mx-auto max-w-7xl space-y-6">
+      <div className="space-y-2">
+        <Badge variant="outline" className="w-fit rounded-full px-3 py-1 text-xs">
+          量化策略
+        </Badge>
+        <h1 className="text-3xl font-semibold tracking-[-0.03em] text-foreground/90">量化策略工作台</h1>
       </div>
 
       <Tabs defaultValue="run" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="run" className="flex items-center gap-2">
-            <Play className="h-4 w-4" />
-            Run
-          </TabsTrigger>
-          <TabsTrigger value="learn" className="flex items-center gap-2">
-            <GraduationCap className="h-4 w-4" />
-            Learn
-          </TabsTrigger>
-          <TabsTrigger value="history" className="flex items-center gap-2">
-            <Clock className="h-4 w-4" />
-            History
-          </TabsTrigger>
+          <TabsTrigger value="run">执行策略</TabsTrigger>
+          <TabsTrigger value="learn">策略教学</TabsTrigger>
+          <TabsTrigger value="history">历史记录</TabsTrigger>
         </TabsList>
 
         <TabsContent value="run" className="space-y-6">
-          <div className="grid gap-6 md:grid-cols-3">
-            <GlassCard className="h-fit space-y-4 p-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Trade Date</label>
-                <Input type="date" value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
+          <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
+            <GlassCard className="space-y-4 p-5">
+              <div className="space-y-1">
+                <CardTitle className="flex items-center gap-2">
+                  <Layers3 className="h-4 w-4 text-primary" />
+                  运行参数
+                </CardTitle>
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">Mode</label>
+                <label className="text-sm font-medium">交易日期</label>
+                <Input type="date" value={tradeDate} onChange={(event) => setTradeDate(event.target.value)} />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">运行范围</label>
                 <Select value={mode} onValueChange={(value) => setMode(value as "universe" | "market")}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="universe">Asset Pool</SelectItem>
-                    <SelectItem value="market">Market Scan</SelectItem>
+                    <SelectItem value="universe">资产池</SelectItem>
+                    <SelectItem value="market">市场扫描</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">Strategy</label>
+                <label className="text-sm font-medium">策略</label>
                 <Select value={selectedStrategy} onValueChange={setSelectedStrategy}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Active Strategies</SelectItem>
+                    <SelectItem value="all">全部启用策略</SelectItem>
                     {selectableStrategies.map((strategy) => (
-                      <SelectItem key={strategy.name} value={strategy.name}>
-                        {strategy.name} ({strategy.className})
+                      <SelectItem key={strategy.className} value={strategy.value}>
+                        {strategy.label}
+                        {strategy.label !== strategy.className ? ` (${strategy.className})` : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -218,40 +221,40 @@ export default function StrategiesPage() {
               </div>
 
               <Button onClick={runStrategy} disabled={running || strategiesLoading || !tradeDate} className="w-full">
-                {running ? "Running..." : "Run Strategy"}
+                {running ? "运行中..." : "运行策略"}
               </Button>
             </GlassCard>
 
-            <div className="md:col-span-2 space-y-4">
+            <div className="space-y-4">
               {lastResult ? (
-                <GlassCard className="p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-lg font-semibold">Run Result</h3>
-                      <Badge variant={lastResult.status === "success" ? "default" : "destructive"}>
-                        {lastResult.status}
-                      </Badge>
+                <GlassCard className="space-y-4 p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <CardTitle>运行结果</CardTitle>
+                      <CardDescription>{lastResult.message}</CardDescription>
                     </div>
-                    <span className="text-sm text-muted-foreground">{lastResult.message}</span>
+                    <Badge variant={lastResult.status === "success" ? "default" : "destructive"}>
+                      {lastResult.status === "success" ? "成功" : "失败"}
+                    </Badge>
                   </div>
 
                   {lastResult.data && lastResult.data.length > 0 ? (
-                    <div className="rounded-md border overflow-hidden overflow-x-auto">
+                    <div className="overflow-hidden rounded-2xl border border-border/60">
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Ticker</TableHead>
-                            <TableHead>Name</TableHead>
-                            <TableHead>Selector</TableHead>
-                            <TableHead className="text-right">Last Close</TableHead>
+                            <TableHead>代码</TableHead>
+                            <TableHead>名称</TableHead>
+                            <TableHead>策略别名</TableHead>
+                            <TableHead className="text-right">最新价</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {lastResult.data.map((row, index) => (
                             <TableRow key={`${row.ticker}-${index}`}>
                               <TableCell className="font-medium">{row.ticker}</TableCell>
-                              <TableCell>{row.name}</TableCell>
-                              <TableCell>{row.selector_alias}</TableCell>
+                              <TableCell>{row.name || "-"}</TableCell>
+                              <TableCell>{row.selector_alias || "-"}</TableCell>
                               <TableCell className="text-right">{Number(row.last_close).toFixed(2)}</TableCell>
                             </TableRow>
                           ))}
@@ -259,15 +262,16 @@ export default function StrategiesPage() {
                       </Table>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2 text-muted-foreground">
+                    <div className="flex items-center gap-2 rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
                       <AlertCircle className="h-4 w-4" />
-                      No rows matched current settings.
+                      当前条件下没有命中结果。
                     </div>
                   )}
                 </GlassCard>
               ) : (
-                <GlassCard className="p-8 text-center text-muted-foreground">
-                  Select parameters and run the strategy.
+                <GlassCard className="space-y-2 p-8 text-center text-muted-foreground">
+                  <div className="text-base font-medium text-foreground/80">等待运行</div>
+                  <p className="text-sm leading-6">选好参数后点击“运行策略”，结果会显示在这里。</p>
                 </GlassCard>
               )}
             </div>
@@ -275,26 +279,26 @@ export default function StrategiesPage() {
         </TabsContent>
 
         <TabsContent value="learn">
-          <StrategyLearningCard />
+          <StrategyLearningCard strategyName={selectableStrategies[0]?.label} />
         </TabsContent>
 
         <TabsContent value="history">
-          <GlassCard className="p-4 space-y-4">
-            <h3 className="text-lg font-semibold flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              History
-            </h3>
+          <GlassCard className="space-y-4 p-5">
+            <div className="space-y-1">
+              <CardTitle>历史记录</CardTitle>
+              <CardDescription>查看以往运行结果，适合做复盘与对照。</CardDescription>
+            </div>
             {history.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No history available.</div>
+              <div className="text-sm text-muted-foreground">暂无历史记录。</div>
             ) : (
-              <div className="rounded-md border overflow-hidden">
+              <div className="overflow-hidden rounded-2xl border border-border/60">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>File</TableHead>
-                      <TableHead className="text-right">Rows</TableHead>
-                      <TableHead className="text-right">Action</TableHead>
+                      <TableHead>日期</TableHead>
+                      <TableHead>文件</TableHead>
+                      <TableHead className="text-right">条数</TableHead>
+                      <TableHead className="text-right">操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -305,7 +309,7 @@ export default function StrategiesPage() {
                         <TableCell className="text-right">{entry.count}</TableCell>
                         <TableCell className="text-right">
                           <Button variant="ghost" size="sm" onClick={() => void openHistory(entry.date)}>
-                            View
+                            查看
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -320,4 +324,3 @@ export default function StrategiesPage() {
     </div>
   )
 }
-

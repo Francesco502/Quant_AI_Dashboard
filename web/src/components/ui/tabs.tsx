@@ -5,10 +5,6 @@ import * as TabsPrimitive from "@radix-ui/react-tabs"
 
 import { cn } from "@/lib/utils"
 
-/* ----------------------------------------------------------------
-   Tabs — Frosted pill-style tabs with smooth active indicator
-   ---------------------------------------------------------------- */
-
 const Tabs = TabsPrimitive.Root
 
 const TabsList = React.forwardRef<
@@ -18,9 +14,8 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-9 items-center justify-center gap-0.5 rounded-xl p-1",
-      "bg-black/[0.04] dark:bg-white/[0.06]",
-      "text-foreground/45",
+      "inline-flex h-10 items-center justify-center gap-1 rounded-full border border-black/[0.06] bg-[rgba(248,244,238,0.88)] p-1",
+      "text-foreground/45 shadow-[0_8px_18px_rgba(41,33,25,0.035)]",
       className
     )}
     {...props}
@@ -35,16 +30,15 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-lg px-3 py-1 text-[13px] font-medium",
+      "inline-flex items-center justify-center whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-medium",
       "ring-offset-background transition-all duration-200",
       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:ring-offset-1",
       "disabled:pointer-events-none disabled:opacity-40",
-      /* Active state — elevated glass pill */
-      "data-[state=active]:bg-white/80 dark:data-[state=active]:bg-white/[0.1]",
+      "data-[state=active]:border data-[state=active]:border-black/[0.05]",
+      "data-[state=active]:bg-white/92 dark:data-[state=active]:bg-white/[0.1]",
       "data-[state=active]:text-foreground",
-      "data-[state=active]:shadow-[0_1px_3px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.6)]",
+      "data-[state=active]:shadow-[0_8px_18px_rgba(41,33,25,0.05),inset_0_1px_0_rgba(255,255,255,0.7)]",
       "dark:data-[state=active]:shadow-[0_1px_3px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.04)]",
-      /* Hover on inactive */
       "data-[state=inactive]:hover:text-foreground/65",
       "data-[state=inactive]:hover:bg-black/[0.02] dark:data-[state=inactive]:hover:bg-white/[0.03]",
       className
@@ -61,9 +55,8 @@ const TabsContent = React.forwardRef<
   <TabsPrimitive.Content
     ref={ref}
     className={cn(
-      "mt-3 ring-offset-background",
+      "mt-4 ring-offset-background",
       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:ring-offset-1",
-      /* Subtle enter animation */
       "data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-bottom-1",
       "data-[state=active]:duration-200",
       className

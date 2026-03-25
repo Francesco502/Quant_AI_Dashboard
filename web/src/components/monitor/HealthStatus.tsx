@@ -36,22 +36,22 @@ const checkIconsMap: Record<string, ComponentType<{ className?: string }>> = {
 }
 
 const checkStatusColors: Record<string, string> = {
-  healthy: "border-emerald-500/30 bg-emerald-500/10",
-  degraded: "border-amber-500/30 bg-amber-500/10",
-  unhealthy: "border-red-500/30 bg-red-500/10",
+  healthy: "border-[#4D7358]/24 bg-[rgba(77,115,88,0.08)]",
+  degraded: "border-[#B08E61]/24 bg-[rgba(176,142,97,0.08)]",
+  unhealthy: "border-[#B6453C]/24 bg-[rgba(182,69,60,0.08)]",
   unknown: "border-gray-500/30 bg-gray-500/10",
 }
 
 function getStatusInfo(status: string) {
   switch (status) {
     case "healthy":
-      return { icon: CheckCircle2, color: "text-emerald-600", bg: "bg-emerald-500", label: "Healthy" }
+      return { icon: CheckCircle2, color: "text-[#4D7358]", bg: "bg-[rgba(77,115,88,0.14)]", label: "健康" }
     case "degraded":
-      return { icon: AlertTriangle, color: "text-amber-600", bg: "bg-amber-500", label: "Degraded" }
+      return { icon: AlertTriangle, color: "text-[#8C724C]", bg: "bg-[rgba(176,142,97,0.14)]", label: "降级" }
     case "unhealthy":
-      return { icon: XCircle, color: "text-red-600", bg: "bg-red-500", label: "Unhealthy" }
+      return { icon: XCircle, color: "text-[#B6453C]", bg: "bg-[rgba(182,69,60,0.14)]", label: "异常" }
     default:
-      return { icon: Activity, color: "text-foreground", bg: "bg-foreground", label: "Unknown" }
+      return { icon: Activity, color: "text-foreground", bg: "bg-black/[0.08]", label: "未知" }
   }
 }
 
@@ -59,20 +59,20 @@ function getStatusBadge(status: string) {
   switch (status) {
     case "healthy":
       return (
-        <Badge variant="default" className="bg-emerald-600">
-          Healthy
+        <Badge variant="outline" className="border-[#4D7358]/18 bg-[rgba(77,115,88,0.10)] text-[#4D7358]">
+          健康
         </Badge>
       )
     case "degraded":
       return (
-        <Badge variant="outline" className="text-amber-600 border-amber-200">
-          Degraded
+        <Badge variant="outline" className="border-[#B08E61]/18 bg-[rgba(176,142,97,0.10)] text-[#8C724C]">
+          降级
         </Badge>
       )
     case "unhealthy":
-      return <Badge variant="destructive">Unhealthy</Badge>
+      return <Badge variant="destructive">异常</Badge>
     default:
-      return <Badge variant="secondary">Unknown</Badge>
+      return <Badge variant="secondary">未知</Badge>
   }
 }
 
@@ -134,12 +134,12 @@ export function HealthStatus({
 
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <h3 className="text-xl font-semibold text-foreground">System Health</h3>
+              <h3 className="text-xl font-semibold text-foreground">系统健康概览</h3>
               {getStatusBadge(health.status)}
             </div>
             <p className="text-sm text-foreground/60">
-              Last check:{" "}
-              {new Date(health.timestamp).toLocaleString("en-US", {
+              最近检查：{" "}
+              {new Date(health.timestamp).toLocaleString("zh-CN", {
                 year: "numeric",
                 month: "2-digit",
                 day: "2-digit",
@@ -161,11 +161,11 @@ export function HealthStatus({
                     className={cn(
                       "w-2 h-2 rounded-full shrink-0",
                       check.status === "healthy"
-                        ? "bg-emerald-500"
+                        ? "bg-[color:var(--market-down)]"
                         : check.status === "degraded"
-                          ? "bg-amber-500"
+                          ? "bg-[#B08E61]"
                           : check.status === "unhealthy"
-                            ? "bg-red-500"
+                            ? "bg-[color:var(--market-up)]"
                             : "bg-gray-500"
                     )}
                   />
@@ -196,11 +196,11 @@ export function HealthStatus({
                       className={cn(
                         "p-2 rounded-lg shrink-0",
                         check.status === "healthy"
-                          ? "bg-emerald-500/10 text-emerald-600"
+                          ? "bg-[rgba(77,115,88,0.10)] text-[#4D7358]"
                           : check.status === "degraded"
-                            ? "bg-amber-500/10 text-amber-600"
+                            ? "bg-[rgba(176,142,97,0.10)] text-[#8C724C]"
                             : check.status === "unhealthy"
-                              ? "bg-red-500/10 text-red-600"
+                              ? "bg-[rgba(182,69,60,0.10)] text-[#B6453C]"
                               : "bg-gray-500/10 text-gray-600"
                       )}
                     >
@@ -209,7 +209,7 @@ export function HealthStatus({
 
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center justify-between">
-                        <p className="font-medium text-foreground capitalize">{name}</p>
+                        <p className="font-medium text-foreground">{name.replace(/_/g, " ")}</p>
                         {getStatusBadge(check.status)}
                       </div>
 

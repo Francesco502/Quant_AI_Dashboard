@@ -10,9 +10,12 @@
 """
 
 from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.encoders import jsonable_encoder
 from typing import List, Dict, Optional, Any
 from pydantic import BaseModel, Field
 import logging
+import threading
+from datetime import datetime
 
 from core.trading_service import TradingService, TradingError, InsufficientFundsError, InsufficientSharesError
 from core.account_manager import AccountManager
@@ -22,11 +25,24 @@ from core.interfaces.broker_adapter import BrokerAdapter
 from core.brokers.paper_broker import PaperBrokerAdapter
 from core.database import get_database
 
-from api.auth import get_current_active_user, UserInDB
+from api.auth import get_current_active_user, require_admin, UserInDB
 from core.order_types import OrderSide, OrderType, OrderStatus
+from core.auto_paper_trading import (
+    AUTO_TRADING_UNIVERSE_LABELS,
+    UNIVERSE_MODE_ASSET_POOL,
+    UNIVERSE_MODE_CN_A_SHARE,
+    UNIVERSE_MODE_MANUAL,
+    run_auto_trading_cycle,
+)
+from core.asset_metadata import get_asset_pool_tickers
+from core.daemon import load_config as load_daemon_config, load_status as load_daemon_status, save_config as save_daemon_config, save_status as save_daemon_status
+from core.strategy_catalog import list_backtestable_strategies
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["trading"])
+_AUTO_TRADING_RUN_LOCK = threading.Lock()
+LEGACY_AUTO_ACCOUNT_NAME = "Auto Paper Trading"
+DEFAULT_AUTO_ACCOUNT_NAME = "全市场自动模拟交易"
 
 
 # ==================== Request Models ====================
@@ -56,6 +72,213 @@ class CreateAccountRequest(BaseModel):
 
 
 # ==================== 订单管理 ====================
+
+class ResetAccountRequest(BaseModel):
+    """重置账户请求"""
+    initial_balance: float = Field(default=100000.0, gt=0, description="重置后的初始资金")
+    account_name: Optional[str] = Field(default=None, description="可选的新账户名称")
+
+
+class AutoTradingConfigUpdateRequest(BaseModel):
+    enabled: Optional[bool] = None
+    interval_minutes: Optional[int] = Field(default=None, ge=5, le=1440)
+    username: Optional[str] = None
+    account_name: Optional[str] = None
+    initial_capital: Optional[float] = Field(default=None, gt=0)
+    strategy_ids: Optional[List[str]] = None
+    universe_mode: Optional[str] = None
+    universe: Optional[List[str]] = None
+    universe_limit: Optional[int] = Field(default=None, ge=0, le=6000)
+    max_positions: Optional[int] = Field(default=None, ge=1, le=20)
+    evaluation_days: Optional[int] = Field(default=None, ge=30, le=720)
+    min_total_return: Optional[float] = None
+    min_sharpe_ratio: Optional[float] = None
+    max_drawdown: Optional[float] = Field(default=None, ge=0, le=1)
+    top_n_strategies: Optional[int] = Field(default=None, ge=1, le=10)
+
+
+class AutoTradingRunRequest(BaseModel):
+    reset_account: bool = False
+    initial_balance: Optional[float] = Field(default=None, gt=0)
+
+
+def _get_user_id_by_username(username: str) -> Optional[int]:
+    cursor = get_database().conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return int(row["id"] if hasattr(row, "keys") else row[0])
+
+
+def _normalize_symbol_list(items: Optional[List[str]], uppercase: bool = True) -> Optional[List[str]]:
+    if items is None:
+        return None
+    normalized = []
+    for item in items:
+        symbol = str(item or "").strip()
+        symbol = symbol.upper() if uppercase else symbol
+        if symbol and symbol not in normalized:
+            normalized.append(symbol)
+    return normalized
+
+
+def _serialize_order(order: Any) -> Dict[str, Any]:
+    return {
+        "order_id": order.order_id,
+        "symbol": order.symbol,
+        "side": order.side.value,
+        "order_type": order.order_type.value,
+        "quantity": order.quantity,
+        "status": order.status.value,
+        "filled_quantity": order.filled_quantity,
+        "avg_fill_price": order.avg_fill_price,
+        "created_at": order.created_time.isoformat() if getattr(order, "created_time", None) else None,
+    }
+
+
+def _normalize_account_name(name: Optional[str]) -> str:
+    normalized = str(name or "").strip()
+    if not normalized or normalized == LEGACY_AUTO_ACCOUNT_NAME:
+        return DEFAULT_AUTO_ACCOUNT_NAME
+    return normalized
+
+
+def _build_universe_summary(trading_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    mode = str(trading_cfg.get("universe_mode") or "").strip().lower()
+    if mode not in AUTO_TRADING_UNIVERSE_LABELS:
+        mode = UNIVERSE_MODE_MANUAL if trading_cfg.get("universe") else UNIVERSE_MODE_ASSET_POOL
+
+    if mode == UNIVERSE_MODE_MANUAL:
+        tickers = _normalize_symbol_list(trading_cfg.get("universe") or []) or []
+        return {
+            "mode": mode,
+            "label": AUTO_TRADING_UNIVERSE_LABELS[mode],
+            "ticker_count": len(tickers),
+            "preview": tickers[:12],
+        }
+
+    if mode == UNIVERSE_MODE_ASSET_POOL:
+        limit = int(trading_cfg.get("universe_limit", 0) or 0)
+        tickers = get_asset_pool_tickers(limit=limit or None)
+        return {
+            "mode": mode,
+            "label": AUTO_TRADING_UNIVERSE_LABELS[mode],
+            "ticker_count": len(tickers),
+            "preview": tickers[:12],
+        }
+
+    configured_limit = int(trading_cfg.get("universe_limit", 0) or 0)
+    return {
+        "mode": UNIVERSE_MODE_CN_A_SHARE,
+        "label": AUTO_TRADING_UNIVERSE_LABELS[UNIVERSE_MODE_CN_A_SHARE],
+        "ticker_count": configured_limit if configured_limit > 0 else None,
+        "preview": [],
+    }
+
+
+def _build_auto_trading_payload(service: TradingService, trading_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    username = str(trading_cfg.get("username", "admin")).strip() or "admin"
+    account_name = _normalize_account_name(trading_cfg.get("account_name"))
+    user_id = _get_user_id_by_username(username)
+    available_strategies = list_backtestable_strategies()
+    config_snapshot = dict(trading_cfg)
+    config_snapshot["account_name"] = account_name
+    universe_summary = _build_universe_summary(config_snapshot)
+    config_snapshot.setdefault("universe_mode", universe_summary["mode"])
+    config_snapshot.setdefault("universe_limit", int(config_snapshot.get("universe_limit", 0) or 0))
+
+    payload: Dict[str, Any] = {
+        "config": config_snapshot,
+        "daemon": load_daemon_status(),
+        "available_strategies": available_strategies,
+        "account": None,
+        "universe_summary": universe_summary,
+    }
+
+    if user_id is None:
+        payload["account"] = {"username": username, "account_name": account_name, "found": False}
+        return payload
+
+    account = service.account_mgr.get_account_by_name(user_id, account_name)
+    if not account:
+        payload["account"] = {
+            "username": username,
+            "user_id": user_id,
+            "account_name": account_name,
+            "found": False,
+        }
+        return payload
+
+    payload["account"] = {
+        "username": username,
+        "user_id": user_id,
+        "account_id": account.id,
+        "account_name": _normalize_account_name(account.account_name),
+        "balance": account.balance,
+        "initial_capital": account.initial_capital,
+        "portfolio": service.get_portfolio(user_id, account.id),
+        "positions": service.get_positions(user_id, account.id),
+        "recent_trades": service.account_mgr.get_trade_history(account.id, limit=12),
+        "recent_orders": [_serialize_order(order) for order in service.get_orders_by_account(user_id, account.id)[:12]],
+        "found": True,
+    }
+    return payload
+
+
+def _run_auto_trading_cycle_in_background(
+    config: Dict[str, Any],
+    *,
+    reset_account: bool = False,
+    initial_balance: Optional[float] = None,
+) -> None:
+    try:
+        service = get_trading_service()
+        trading_cfg = dict(config.get("trading", {}))
+
+        username = str(trading_cfg.get("username", "admin")).strip() or "admin"
+        user_id = _get_user_id_by_username(username)
+        if user_id is None:
+            raise ValueError(f"自动交易用户不存在: {username}")
+
+        account_name = _normalize_account_name(trading_cfg.get("account_name"))
+        account = service.account_mgr.get_or_create_account(
+            user_id=user_id,
+            name=account_name,
+            initial_balance=float(trading_cfg.get("initial_capital", 100000.0)),
+        )
+
+        if reset_account:
+            service.reset_account(
+                user_id=user_id,
+                account_id=account.id,
+                initial_balance=float(initial_balance or trading_cfg.get("initial_capital", 100000.0)),
+                account_name=account_name,
+            )
+
+        result = run_auto_trading_cycle(config, service)
+        save_daemon_status(
+            {
+                "trading_run_state": "idle",
+                "last_trading_run": result.get("timestamp"),
+                "last_trading_result": result,
+                "last_trading_error": None,
+                "last_manual_test": "completed",
+            }
+        )
+    except Exception as exc:
+        logger.error("立即执行自动交易失败: %s", exc, exc_info=True)
+        save_daemon_status(
+            {
+                "trading_run_state": "failed",
+                "last_trading_error": str(exc),
+                "last_manual_test": "failed",
+            }
+        )
+    finally:
+        if _AUTO_TRADING_RUN_LOCK.locked():
+            _AUTO_TRADING_RUN_LOCK.release()
+
 
 @router.post("/orders")
 async def submit_order(
@@ -287,7 +510,7 @@ async def get_account_detail(
 
         return {
             "account_id": account_id,
-            "account_name": account.account_name if account else "",
+            "account_name": _normalize_account_name(account.account_name if account else ""),
             "portfolio": portfolio,
             "positions": positions,
             "trade_history": trade_history,
@@ -297,6 +520,183 @@ async def get_account_detail(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询账户详情失败: {str(e)}")
+
+
+@router.post("/accounts/{account_id}/reset")
+async def reset_account(
+    account_id: int,
+    request: ResetAccountRequest,
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """重置模拟账户为初始现金状态。"""
+    try:
+        service = get_trading_service()
+
+        if not service.account_mgr.account_exists(account_id, current_user.id):
+            raise HTTPException(status_code=404, detail="账户不存在或无权访问")
+
+        return service.reset_account(
+            user_id=current_user.id,
+            account_id=account_id,
+            initial_balance=request.initial_balance,
+            account_name=request.account_name,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"重置账户失败: {str(e)}")
+
+
+@router.get("/auto/status")
+async def get_auto_trading_status(current_user: UserInDB = Depends(require_admin)):
+    """获取自动模拟交易配置、状态与当前账户快照。"""
+    del current_user
+    try:
+        config = load_daemon_config()
+        trading_cfg = dict(config.get("trading", {}))
+        service = get_trading_service()
+        return _build_auto_trading_payload(service, trading_cfg)
+    except Exception as e:
+        logger.error(f"读取自动交易状态失败: {e}")
+        raise HTTPException(status_code=500, detail=f"读取自动交易状态失败: {str(e)}")
+
+
+@router.put("/auto/config")
+async def update_auto_trading_config(
+    request: AutoTradingConfigUpdateRequest,
+    current_user: UserInDB = Depends(require_admin),
+):
+    """更新自动模拟交易配置。"""
+    del current_user
+    try:
+        config = load_daemon_config()
+        trading_cfg = dict(config.get("trading", {}))
+
+        available_ids = {item["id"] for item in list_backtestable_strategies()}
+        available_universe_modes = {
+            UNIVERSE_MODE_MANUAL,
+            UNIVERSE_MODE_ASSET_POOL,
+            UNIVERSE_MODE_CN_A_SHARE,
+        }
+        patch = request.model_dump(exclude_none=True)
+
+        if "strategy_ids" in patch:
+            strategy_ids = _normalize_symbol_list(patch["strategy_ids"], uppercase=False)
+            if not strategy_ids:
+                raise HTTPException(status_code=400, detail="至少保留一个自动交易策略")
+            invalid_ids = sorted(set(strategy_ids) - available_ids)
+            if invalid_ids:
+                raise HTTPException(status_code=400, detail=f"未知策略: {', '.join(invalid_ids)}")
+            patch["strategy_ids"] = strategy_ids
+
+        if "universe_mode" in patch:
+            universe_mode = str(patch["universe_mode"] or "").strip().lower()
+            if universe_mode not in available_universe_modes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"未知标的范围模式: {universe_mode or 'empty'}",
+                )
+            patch["universe_mode"] = universe_mode
+
+        if "universe" in patch:
+            universe = _normalize_symbol_list(patch["universe"])
+            effective_mode = str(
+                patch.get("universe_mode")
+                or trading_cfg.get("universe_mode")
+                or UNIVERSE_MODE_MANUAL
+            ).strip().lower()
+            if effective_mode == UNIVERSE_MODE_MANUAL and not universe:
+                raise HTTPException(status_code=400, detail="至少保留一个交易标的")
+            patch["universe"] = universe
+
+        effective_mode = str(
+            patch.get("universe_mode")
+            or trading_cfg.get("universe_mode")
+            or UNIVERSE_MODE_MANUAL
+        ).strip().lower()
+        if effective_mode == UNIVERSE_MODE_MANUAL and not (
+            patch.get("universe") or trading_cfg.get("universe")
+        ):
+            raise HTTPException(status_code=400, detail="手动标的池模式至少保留一个交易标的")
+
+        for key, value in patch.items():
+            trading_cfg[key] = value
+
+        config["trading"] = trading_cfg
+        save_daemon_config(config)
+        save_daemon_status(
+            {
+                "config_trading_enabled": bool(trading_cfg.get("enabled", False)),
+                "config_trading_interval_minutes": int(trading_cfg.get("interval_minutes", 0) or 0),
+            }
+        )
+
+        service = get_trading_service()
+        return _build_auto_trading_payload(service, trading_cfg)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新自动交易配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"更新自动交易配置失败: {str(e)}")
+
+
+@router.post("/auto/run-now")
+async def run_auto_trading_now(
+    request: AutoTradingRunRequest,
+    current_user: UserInDB = Depends(require_admin),
+):
+    """立即执行一次自动模拟交易。"""
+    del current_user
+    try:
+        config = load_daemon_config()
+        trading_cfg = dict(config.get("trading", {}))
+        service = get_trading_service()
+        if not _AUTO_TRADING_RUN_LOCK.acquire(blocking=False):
+            response = _build_auto_trading_payload(service, trading_cfg)
+            response["run_request_status"] = "already_running"
+            response["message"] = "已有一轮自动交易正在后台执行，请稍后刷新结果。"
+            return jsonable_encoder(response)
+
+        requested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_daemon_status(
+            {
+                "trading_run_state": "running",
+                "last_trading_requested_at": requested_at,
+                "last_trading_error": None,
+                "last_manual_test": "running",
+            }
+        )
+
+        worker = threading.Thread(
+            target=_run_auto_trading_cycle_in_background,
+            kwargs={
+                "config": config,
+                "reset_account": request.reset_account,
+                "initial_balance": request.initial_balance,
+            },
+            name="auto-trading-run-now",
+            daemon=True,
+        )
+        worker.start()
+
+        response = _build_auto_trading_payload(service, trading_cfg)
+        response["run_request_status"] = "started"
+        response["message"] = (
+            "已受理重置并执行自动交易任务，结果将在后台生成。"
+            if request.reset_account
+            else "已受理自动交易任务，结果将在后台生成。"
+        )
+        return jsonable_encoder(response)
+    except HTTPException:
+        raise
+    except Exception as e:
+        if _AUTO_TRADING_RUN_LOCK.locked():
+            _AUTO_TRADING_RUN_LOCK.release()
+        logger.error(f"立即执行自动交易失败: {e}", exc_info=True)
+        save_daemon_status({"last_trading_error": str(e)})
+        raise HTTPException(status_code=500, detail=f"立即执行自动交易失败: {str(e)}")
 
 
 @router.delete("/accounts/{account_id}")
@@ -544,12 +944,10 @@ async def get_account_performance(
         if not account:
             raise HTTPException(status_code=404, detail="账户不存在")
 
-        # 获取持仓（带最新价格）
-        positions = service.get_positions(current_user.id, account_id)
-
-        # 计算当前总市值
-        total_market_value = sum(p.market_value for p in positions)
-        total_assets = account.balance + total_market_value
+        # 获取最新投资组合快照
+        portfolio = service.get_portfolio(current_user.id, account_id)
+        total_market_value = float(portfolio.get("position_value", 0.0) or 0.0)
+        total_assets = float(portfolio.get("total_assets", account.balance) or 0.0)
 
         # 计算总收益率
         initial_capital = account.initial_capital
@@ -619,7 +1017,7 @@ async def get_account_performance(
             "account_id": account_id,
             "initial_capital": initial_capital,
             "total_assets": total_assets,
-            "cash": account.balance,
+            "cash": float(portfolio.get("cash", account.balance) or 0.0),
             "market_value": total_market_value,
             "total_return_pct": round(total_return_pct, 2),
             "annual_return_pct": round(annual_return_pct, 2),
@@ -666,8 +1064,8 @@ async def get_equity_curve(
         if not equity_history:
             account = service.account_mgr.get_account(account_id, current_user.id)
             positions = service.get_positions(current_user.id, account_id)
-            total_market_value = sum(p.market_value for p in positions)
-            current_equity = account.balance + total_market_value
+            total_market_value = sum(float(p.get("market_value", 0.0) or 0.0) for p in positions)
+            current_equity = account.balance + account.frozen + total_market_value
 
             # 返回单点数据
             from datetime import datetime

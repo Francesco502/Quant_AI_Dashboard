@@ -1,112 +1,18 @@
-# 文档索引
+# Documentation Index
 
-> 本文档提供所有文档的索引和导航
+## Current
 
-**最后更新**: 2026-02-11
+- [`current/README.md`](./current/README.md): active documentation index
+- [`current/quickstart.md`](./current/quickstart.md): local startup and first-run workflow
+- [`current/deployment.md`](./current/deployment.md): canonical deployment path
+- [`current/development.md`](./current/development.md): repository layout and maintenance guidance
 
----
+## Releases
 
-## 🚀 快速开始
+- [`releases/`](./releases/): release notes, release status, upgrade guides, rollback notes, and code change summaries
 
-详细步骤请参考 [快速启动指南](快速启动指南.md)。
+## Archive
 
-简要步骤：
-
-1. **环境准备**: Python 3.10+, Node.js 18+
-2. **安装依赖**:
-   ```bash
-   pip install -r requirements.txt
-   cd web && npm install
-   ```
-3. **启动服务**:
-   - 后端: `python -m uvicorn api.main:app --reload`
-   - 前端: `cd web && npm run dev`
-   - 后台: `python run_daemon.py`
-
-## 📚 文档分类
-
-### 🏗️ 架构与设计
-
-- [架构设计](架构设计.md) - 系统架构、数据流、模块关系、技术栈
-
-### 👨‍💻 开发相关
-
-- [开发指南](开发指南.md) - 环境搭建、代码规范、开发流程、提交规范
-- [API文档](../api/README.md) - RESTful API接口说明
-- [测试指南](../tests/README.md) - 测试体系和使用说明
-
-### 🚀 部署与运维
-
-- [运维手册](运维手册.md) - 部署、监控、日志、备份、故障排查
-- [镜像构建与推送](镜像构建与推送.md) - Docker镜像构建和推送
-- [服务器端更新步骤](服务器端更新步骤.md) - 服务器端部署更新
-
-### 📦 功能模块
-
-- [模型训练与部署](模型训练与部署.md) - AI模型离线训练和在线部署
-- [核心模块使用说明](核心模块使用说明.md) - 风险管理、交易执行、监控系统
-
-### ⚙️ 配置与数据
-
-- [数据目录结构](DATA_LAYOUT.md) - 数据存储结构说明
-- [数据源对比](数据源对比文档.md) - 各数据源对比和选择建议
-
-### 📈 优化与改进
-
-- [优化建议](优化建议.md) - 生产级优化建议和实施路线图
-
----
-
-## 🗺️ 文档导航
-
-### 新手入门
-
-1. 阅读 [README.md](../README.md) 了解项目概览
-2. 查看 [快速启动指南](快速启动指南.md) 快速上手
-3. 查看 [架构设计](架构设计.md) 了解系统结构
-4. 按照 [开发指南](开发指南.md) 搭建开发环境
-
-### 开发人员
-
-- [开发指南](开发指南.md) - 开发环境、代码规范、开发流程
-- [架构设计](架构设计.md) - 系统架构和设计原则
-- [API文档](../api/README.md) - API接口说明
-- [测试指南](../tests/README.md) - 测试编写和运行
-
-### 运维人员
-
-- [运维手册](运维手册.md) - 部署、监控、故障排查
-- [镜像构建与推送](镜像构建与推送.md) - Docker镜像构建
-- [服务器端更新步骤](服务器端更新步骤.md) - 服务器端更新
-
-### 功能使用
-
-- [模型训练与部署](模型训练与部署.md) - 模型训练和部署
-- [核心模块使用说明](核心模块使用说明.md) - 各模块使用方法
-- [数据目录结构](DATA_LAYOUT.md) - 数据存储说明
-
----
-
-## 📝 文档更新记录
-
-| 日期 | 文档 | 更新内容 |
-|------|------|---------|
-| 2025-01-XX | 架构设计 | 创建文档 |
-| 2025-01-XX | 开发指南 | 创建文档 |
-| 2025-01-XX | 运维手册 | 创建文档 |
-| 2025-01-XX | 模型训练与部署 | 整合文档 |
-| 2025-01-XX | 核心模块使用说明 | 整合文档 |
-
----
-
-## 🔗 快速链接
-
-- [项目主页](../README.md)
-- [API文档](../api/README.md)
-- [测试文档](../tests/README.md)
-- [优化建议](优化建议.md)
-
----
-
-**提示**: 如果找不到需要的文档，请查看项目根目录的 [README.md](../README.md) 获取完整文档列表。
-
+- [`archive/legacy-guides/`](./archive/legacy-guides/): superseded guides and one-off analysis documents
+- [`archive/plans/`](./archive/plans/): historical implementation plans
+- [`archive/superpowers/`](./archive/superpowers/): archived design and hardening notes

@@ -1,47 +1,67 @@
-# Quant-AI Dashboard API (v2.0.0)
+# Quant-AI Dashboard API
 
-FastAPI backend for the personal research and paper-trading workflow.
+FastAPI backend for the Quant-AI Dashboard `v2.1.0` workspace.
+
+## Responsibilities
+
+- authentication and user session APIs
+- asset pool and personal asset management
+- market review, prediction, and LLM decision APIs
+- backtesting, paper trading, and automatic paper-trading control
+- monitoring, health, and system status endpoints
 
 ## Local Run
+
 ```bash
 python -m uvicorn api.main:app --host 0.0.0.0 --port 8685 --reload
 ```
 
 ## Local URLs
+
 - Swagger: [http://localhost:8685/docs](http://localhost:8685/docs)
 - ReDoc: [http://localhost:8685/redoc](http://localhost:8685/redoc)
 - Health: [http://localhost:8685/api/health](http://localhost:8685/api/health)
 
-## Auth
-Most `/api/*` endpoints are protected by bearer token middleware.
+## Authentication
 
-### Get token
+Most `/api/*` endpoints require a bearer token.
+
+### Get a token
+
 ```bash
 curl -X POST http://localhost:8685/api/auth/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=admin&password=<your-configured-password>"
 ```
 
-### Call protected endpoint
+### Call a protected endpoint
+
 ```bash
 curl http://localhost:8685/api/backtest/strategies \
   -H "Authorization: Bearer <TOKEN>"
 ```
 
 ## Main Route Groups
-- `/api/auth/*` authentication
-- `/api/backtest/*` strategy backtest/optimization
-- `/api/trading/*` paper trading and execution
-- `/api/portfolio/*` portfolio analysis and decision payloads
-- `/api/user/*` user watchlist/preferences/strategy config
-- `/api/monitoring/*` health and metrics
-- `/api/stz/*` market scan and selector runs
 
-## Frontend Port Alignment
-- Frontend dev server runs on `http://localhost:8686` (`web/package.json`).
-- Set `NEXT_PUBLIC_API_URL=http://127.0.0.1:8685/api` for local development.
+- `/api/auth/*`: authentication and user management
+- `/api/backtest/*`: strategy backtest and optimization
+- `/api/trading/*`: paper trading and automatic trading control
+- `/api/portfolio/*`: portfolio analysis and decision payloads
+- `/api/user/*`: user preferences, assets, and settings
+- `/api/monitoring/*`: health and monitoring
+- `/api/stz/*`: market scan, selector runs, and asset pool
+- `/api/llm-analysis/*`: LLM dashboard analysis
+- `/api/agent/*`: agent workflows
 
-## Versioned Release Docs
-- `../docs/RELEASE_NOTES_v2.0.0.md`
-- `../docs/RELEASE_STATUS_v2.0.0.md`
-- `../docs/UPGRADE_TO_v2.0.0.md`
+## Frontend Alignment
+
+- local frontend default: `http://localhost:8686`
+- local API base: `http://127.0.0.1:8685/api`
+- production single-image deployment proxies the frontend and API through one container entrypoint
+
+## Canonical Docs
+
+- project index: [../README.md](../README.md)
+- current docs: [../docs/current/README.md](../docs/current/README.md)
+- deployment: [../docs/current/deployment.md](../docs/current/deployment.md)
+- releases: [../docs/releases/](../docs/releases/)

@@ -76,7 +76,7 @@ class BaseStrategy:
 
     def description(self) -> str:
         """返回策略描述"""
-        return "策略描述未实现"
+        return "该策略基于价格、趋势或因子信号生成选股评分，请结合教学说明理解其适用场景。"
 
     def get_learning_info(self) -> dict:
         """

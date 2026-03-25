@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -79,22 +79,88 @@ class EmailNotifier(AlertChannel):
 
 
 class SMSNotifier(AlertChannel):
-    """短信通知器（占位实现）"""
-    
-    def __init__(self, api_key: str = None, api_secret: str = None):
+    """短信通知器（Twilio REST API）"""
+
+    def __init__(
+        self,
+        api_key: str = None,
+        api_secret: str = None,
+        provider: str = "twilio",
+        from_number: str = None,
+        to_numbers: Optional[List[str] | str] = None,
+        api_base_url: str = None,
+        timeout: int = 5,
+    ):
         self.api_key = api_key
         self.api_secret = api_secret
-        self.enabled = bool(api_key and api_secret)
-    
+        self.provider = (provider or "twilio").strip().lower()
+        self.from_number = (from_number or "").strip()
+        self.to_numbers = self._normalize_recipients(to_numbers)
+        self.api_base_url = (api_base_url or "https://api.twilio.com").rstrip("/")
+        self.timeout = timeout
+        self.enabled = bool(
+            self.provider == "twilio"
+            and self.api_key
+            and self.api_secret
+            and self.from_number
+            and self.to_numbers
+        )
+
+    @staticmethod
+    def _normalize_recipients(to_numbers: Optional[List[str] | str]) -> List[str]:
+        if isinstance(to_numbers, str):
+            items = to_numbers.split(",")
+        else:
+            items = to_numbers or []
+        return [item.strip() for item in items if item and item.strip()]
+
+    def _build_message(self, event: RiskEvent) -> str:
+        symbol = f" {event.symbol}" if event.symbol else ""
+        return (
+            f"[{event.severity.value.upper()}] {event.event_type}{symbol}: "
+            f"{event.message}"
+        )
+
     def send(self, event: RiskEvent) -> bool:
         """发送短信告警"""
         if not self.enabled:
             logger.debug("短信通知未配置，跳过发送")
             return False
-        
-        # TODO: 实现短信发送逻辑（如使用阿里云、腾讯云等SMS服务）
-        logger.info(f"短信告警（模拟）: {event.event_type} - {event.message}")
-        return True
+
+        if self.provider != "twilio":
+            logger.error("不支持的短信提供商: %s", self.provider)
+            return False
+
+        try:
+            import requests
+
+            message = self._build_message(event)
+            endpoint = f"{self.api_base_url}/2010-04-01/Accounts/{self.api_key}/Messages.json"
+            success_count = 0
+
+            for recipient in self.to_numbers:
+                response = requests.post(
+                    endpoint,
+                    data={
+                        "From": self.from_number,
+                        "To": recipient,
+                        "Body": message,
+                    },
+                    auth=(self.api_key, self.api_secret),
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                success_count += 1
+
+            logger.info(
+                "短信告警已发送: %s, recipients=%s",
+                event.event_type,
+                ",".join(self.to_numbers),
+            )
+            return success_count == len(self.to_numbers)
+        except Exception as e:
+            logger.error(f"发送短信告警失败: {e}")
+            return False
 
 
 class WebhookNotifier(AlertChannel):
@@ -188,7 +254,7 @@ class RiskAlerting:
 
         Args:
             email_config: 邮件配置 {'smtp_server', 'smtp_port', 'username', 'password'}
-            sms_config: 短信配置 {'api_key', 'api_secret'}
+            sms_config: 短信配置 {'api_key', 'api_secret', 'provider', 'from_number', 'to_numbers'}
             webhook_url: Webhook URL
             log_file: 告警日志文件路径
         """
@@ -392,4 +458,3 @@ class RiskAlerting:
         self.last_alert_times.clear()
         self.alert_stats.clear()
         logger.info("告警历史已清空")
-

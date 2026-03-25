@@ -1,4 +1,4 @@
-"""Agent 研究相关 API 路由"""
+"""Agent research API routes."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from core import llm_client
 from core.agent import run_agent
 
 
@@ -14,23 +15,25 @@ router = APIRouter()
 
 
 class ResearchRequest(BaseModel):
-    """Agent 深度研究请求"""
+    """Agent deep research request."""
 
-    query: str = Field(..., description="自然语言研究问题，如：比较 600519 和 000858 的估值与风险点")
+    query: str = Field(..., description="Natural-language research question.")
     model: Optional[str] = Field(
         None,
-        description="可选，本次请求使用的 LLM 模型名；留空使用服务端默认配置",
+        description="Optional per-request LLM model override.",
     )
 
 
 @router.post("/research")
 async def research(req: ResearchRequest) -> Dict[str, Any]:
-    """使用 Agent 执行一次深度研究任务"""
+    """Execute one agent research task."""
     if not req.query.strip():
-        raise HTTPException(status_code=400, detail="query 不能为空")
+        raise HTTPException(status_code=400, detail="query cannot be empty")
+    if not llm_client.is_available():
+        status = llm_client.get_status()
+        detail = status.get("error") or "Agent research requires a configured LLM provider."
+        raise HTTPException(status_code=503, detail=str(detail))
     try:
-        result = run_agent(query=req.query, model=req.model)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent 研究执行失败: {e}") from e
-
+        return run_agent(query=req.query, model=req.model)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Agent research failed: {exc}") from exc

@@ -1,335 +1,334 @@
 "use client"
-import { useState, useEffect, useCallback } from "react"
-import { useSettings } from "@/lib/settings-context"
-import { api } from "@/lib/api"
-import { GlassCard, CardTitle, CardDescription } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Wallet, Server, ArrowUp, ArrowDown, X, Plus } from "lucide-react"
-import { HelpTooltip } from "@/components/ui/tooltip"
-import { GLOSSARY } from "@/lib/glossary"
-import { formatCurrency } from "@/lib/utils"
-import { API_BASE_URL } from "@/lib/api"
 
-interface AccountData {
-  total_assets: number;
-  cash: number;
-  market_value: number;
+import { useCallback, useEffect, useState } from "react"
+import { KeyRound, RefreshCw, Server, ShieldCheck, Wallet } from "lucide-react"
+
+import { api, getEffectiveApiBaseUrl, type AutoTradingStatusResponse } from "@/lib/api"
+import { useSettings } from "@/lib/settings-context"
+import { Button } from "@/components/ui/button"
+import { GlassCard, CardDescription, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { HelpTooltip } from "@/components/ui/tooltip"
+import { formatCurrency } from "@/lib/utils"
+
+type AccountSummary = {
+  totalAssets: number
+  cash: number
+  marketValue: number
+  initialCapital: number
 }
 
-interface HealthStatus {
-  api: boolean;
-  apiLatency: number;
+type HealthSummary = {
+  online: boolean
+  latencyMs: number
+  securityReady: boolean
+  securityIssues: string[]
+  errorHint?: string
+}
+
+type DaemonSummary = {
+  running: boolean
+  enabled: boolean
+  lastStartedAt?: string
+  lastTradingRun?: string
+  lastError?: string | null
+}
+
+const EMPTY_HEALTH: HealthSummary = {
+  online: false,
+  latencyMs: 0,
+  securityReady: false,
+  securityIssues: [],
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "暂无"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString("zh-CN", { hour12: false })
 }
 
 export default function SettingsPage() {
-  const { dataSources, setDataSources, apiKeys, setApiKeys, isLoading } = useSettings()
-  const [localKeys, setLocalKeys] = useState<Record<string, string>>({})
-  const [accountData, setAccountData] = useState<AccountData | null>(null)
+  const { dataSources, apiKeyStatus, configurationMode, isLoading } = useSettings()
+  const [accountData, setAccountData] = useState<AccountSummary | null>(null)
   const [accountLoading, setAccountLoading] = useState(true)
-  const [healthStatus, setHealthStatus] = useState<HealthStatus>({ api: false, apiLatency: 0 })
+  const [healthStatus, setHealthStatus] = useState<HealthSummary>(EMPTY_HEALTH)
   const [healthLoading, setHealthLoading] = useState(true)
+  const [daemonStatus, setDaemonStatus] = useState<DaemonSummary>({ running: false, enabled: false })
 
-  // 加载模拟账户数据
   const loadAccountData = useCallback(async () => {
     setAccountLoading(true)
     try {
-      const res = await api.trading.paper.getAccount()
-      if (res && res.status === "success" && res.portfolio) {
-        setAccountData({
-          total_assets: res.portfolio.total_assets,
-          cash: res.portfolio.cash,
-          market_value: res.portfolio.market_value,
-        })
+      const paperAccount = await api.trading.paper.getAccount()
+      const autoStatus = await api.trading.auto.getStatus().catch(() => null as AutoTradingStatusResponse | null)
+
+      const portfolio = paperAccount?.portfolio
+      if (!portfolio) {
+        setAccountData(null)
+        return
       }
+
+      setAccountData({
+        totalAssets: Number(portfolio.total_assets || 0),
+        cash: Number(portfolio.cash || 0),
+        marketValue: Number(portfolio.market_value || 0),
+        initialCapital: Number(
+          autoStatus?.account?.initial_capital ??
+            autoStatus?.config?.initial_capital ??
+            0,
+        ),
+      })
     } catch {
-      // 账户可能不存在
       setAccountData(null)
     } finally {
       setAccountLoading(false)
     }
   }, [])
 
-  // 检查服务健康状态
   const checkHealth = useCallback(async () => {
     setHealthLoading(true)
     try {
+      const base = getEffectiveApiBaseUrl()
       const start = performance.now()
-      const res = await fetch(`${API_BASE_URL}/health`)
-      const latency = Math.round(performance.now() - start)
+      const response = await fetch(`${base}/health`)
+      const latencyMs = Math.round(performance.now() - start)
+      const payload = (await response.json()) as {
+        security?: { ready?: boolean; issues?: string[] }
+      }
+
       setHealthStatus({
-        api: res.ok,
-        apiLatency: latency,
+        online: response.ok,
+        latencyMs,
+        securityReady: Boolean(payload.security?.ready),
+        securityIssues: payload.security?.issues || [],
       })
-    } catch {
-      setHealthStatus({ api: false, apiLatency: 0 })
+    } catch (error) {
+      setHealthStatus({
+        online: false,
+        latencyMs: 0,
+        securityReady: false,
+        securityIssues: [],
+        errorHint: error instanceof Error ? error.message : "网络错误",
+      })
     } finally {
       setHealthLoading(false)
     }
   }, [])
 
+  const loadDaemonStatus = useCallback(async () => {
+    try {
+      const response = await api.trading.auto.getStatus()
+      setDaemonStatus({
+        running: Boolean(response.daemon?.daemon_running),
+        enabled: Boolean(response.config?.enabled),
+        lastStartedAt: response.daemon?.last_started_at,
+        lastTradingRun: response.daemon?.last_trading_run,
+        lastError: response.daemon?.last_trading_error ?? null,
+      })
+    } catch {
+      setDaemonStatus({ running: false, enabled: false })
+    }
+  }, [])
+
   useEffect(() => {
-    if (Object.keys(apiKeys).length > 0) {
-        setLocalKeys(prev => ({ ...prev, ...apiKeys }))
-    }
-  }, [apiKeys])
-
-  useEffect(() => {
-    loadAccountData()
-    checkHealth()
-  }, [loadAccountData, checkHealth])
-
-  const addSource = (source: string) => {
-    if (!dataSources.includes(source)) {
-      setDataSources([...dataSources, source])
-    }
-  }
-
-  const removeSource = (source: string) => {
-    setDataSources(dataSources.filter(s => s !== source))
-  }
-
-  const moveSource = (index: number, direction: number) => {
-    const newSources = [...dataSources]
-    const targetIndex = index + direction
-    if (targetIndex >= 0 && targetIndex < newSources.length) {
-      [newSources[index], newSources[targetIndex]] = [newSources[targetIndex], newSources[index]]
-      setDataSources(newSources)
-    }
-  }
+    void loadAccountData()
+    void checkHealth()
+    void loadDaemonStatus()
+  }, [checkHealth, loadAccountData, loadDaemonStatus])
 
   if (isLoading) {
-      return <div className="p-10 flex justify-center text-muted-foreground">Loading settings...</div>
+    return <div className="p-10 text-center text-sm text-muted-foreground">正在读取设置…</div>
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-2">
+      <div className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground/90">系统设置</h1>
-        <p className="text-muted-foreground">
-          管理数据源、模拟账户和服务状态。
+        <p className="text-sm text-muted-foreground">
+          查看模拟账户概览、后端运行状态以及由服务器统一管理的数据源配置。
         </p>
       </div>
 
       <Tabs defaultValue="account" className="space-y-6">
         <TabsList>
           <TabsTrigger value="account" className="gap-2">
-            <Wallet className="h-4 w-4" /> 模拟账户 (Paper Account)
+            <Wallet className="h-4 w-4" />
+            模拟账户
           </TabsTrigger>
           <TabsTrigger value="daemon" className="gap-2">
-            <Server className="h-4 w-4" /> 服务状态 (Daemon)
+            <Server className="h-4 w-4" />
+            后台任务
           </TabsTrigger>
           <TabsTrigger value="data" className="gap-2">
-            <Server className="h-4 w-4" /> 数据源 (Data Sources)
+            <KeyRound className="h-4 w-4" />
+            数据源
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="account">
-          <GlassCard>
-            <CardTitle className="flex items-center">
-               {GLOSSARY.PaperAccount.term}
-               <HelpTooltip content={GLOSSARY.PaperAccount.definition} />
-            </CardTitle>
-            <CardDescription>使用虚拟资金模拟真实交易。</CardDescription>
-            
+          <GlassCard className="space-y-6">
+            <div className="space-y-2">
+              <CardTitle className="flex items-center gap-2">
+                模拟账户概览
+                <HelpTooltip content="这里显示当前主模拟账户的总资产、持仓市值、可用现金与初始资金，用于快速确认账户状态。" />
+              </CardTitle>
+              <CardDescription>用于练习、验证策略与观察自动交易结果的虚拟账户。</CardDescription>
+            </div>
+
             {accountLoading ? (
-              <div className="mt-8 text-center text-muted-foreground">加载中...</div>
+              <div className="py-10 text-center text-sm text-muted-foreground">正在读取账户数据…</div>
             ) : accountData ? (
               <>
-                <div className="mt-8 grid gap-6 md:grid-cols-3">
-                  <div className="p-5 bg-black/[0.02] dark:bg-white/[0.04] rounded-xl">
-                    <div className="text-sm text-muted-foreground mb-1">总资产 (Total Assets)</div>
-                    <div className="text-2xl font-bold">{formatCurrency(accountData.total_assets)}</div>
+                <div className="grid gap-4 md:grid-cols-4">
+                  <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-5">
+                    <div className="text-sm text-muted-foreground">总资产</div>
+                    <div className="mt-2 text-2xl font-semibold">{formatCurrency(accountData.totalAssets)}</div>
                   </div>
-                  <div className="p-5 bg-black/[0.02] dark:bg-white/[0.04] rounded-xl">
-                    <div className="text-sm text-muted-foreground mb-1">持仓市值 (Market Value)</div>
-                    <div className="text-2xl font-bold text-blue-500">{formatCurrency(accountData.market_value)}</div>
+                  <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-5">
+                    <div className="text-sm text-muted-foreground">持仓市值</div>
+                    <div className="mt-2 text-2xl font-semibold text-[#6F7C8E]">
+                      {formatCurrency(accountData.marketValue)}
+                    </div>
                   </div>
-                  <div className="p-5 bg-black/[0.02] dark:bg-white/[0.04] rounded-xl">
-                    <div className="text-sm text-muted-foreground mb-1">可用现金 (Available Cash)</div>
-                    <div className="text-2xl font-bold">{formatCurrency(accountData.cash)}</div>
+                  <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-5">
+                    <div className="text-sm text-muted-foreground">可用现金</div>
+                    <div className="mt-2 text-2xl font-semibold">{formatCurrency(accountData.cash)}</div>
+                  </div>
+                  <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-5">
+                    <div className="text-sm text-muted-foreground">初始资金</div>
+                    <div className="mt-2 text-2xl font-semibold">{formatCurrency(accountData.initialCapital)}</div>
                   </div>
                 </div>
-                <div className="mt-8 flex justify-end gap-4">
-                  <Button variant="outline" onClick={loadAccountData}>刷新 (Refresh)</Button>
+                <div className="flex justify-end">
+                  <Button variant="outline" onClick={() => void loadAccountData()}>
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    刷新账户数据
+                  </Button>
                 </div>
               </>
             ) : (
-              <div className="mt-8 text-center text-muted-foreground">
-                <p>暂无模拟账户，请在交易页面创建。</p>
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                当前没有可用的模拟账户，请先前往模拟交易页面创建或恢复账户。
               </div>
             )}
           </GlassCard>
         </TabsContent>
 
         <TabsContent value="daemon">
-          <GlassCard>
-            <CardTitle className="mb-6 flex items-center justify-between">
-              <span>系统健康 (System Health)</span>
-              <Button variant="outline" size="sm" onClick={checkHealth} disabled={healthLoading}>
-                {healthLoading ? "检测中..." : "刷新状态"}
-              </Button>
-            </CardTitle>
-            <div className="space-y-4">
-              {/* API Server Status - from real health check */}
-              <div className={`flex items-center justify-between p-4 rounded-xl border ${
-                healthStatus.api 
-                  ? "bg-emerald-500/10 border-emerald-500/20" 
-                  : "bg-red-500/10 border-red-500/20"
-              }`}>
-                <div className="flex items-center gap-3">
-                  <div className={`h-2.5 w-2.5 rounded-full ${
-                    healthStatus.api ? "bg-emerald-500 animate-pulse" : "bg-red-500"
-                  }`} />
-                  <span className="font-medium">API 服务 (API Server)</span>
-                </div>
-                <span className={`text-sm font-mono ${
-                  healthStatus.api ? "text-emerald-600" : "text-red-500"
-                }`}>
-                  {healthLoading ? "检测中..." : healthStatus.api ? `运行中 (${healthStatus.apiLatency}ms)` : "离线 (Offline)"}
-                </span>
+          <GlassCard className="space-y-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-2">
+                <CardTitle className="flex items-center gap-2">
+                  运行状态
+                  <HelpTooltip content="这里聚合显示 API 可达性、发布安全就绪状态以及后台守护进程的最近执行信息。" />
+                </CardTitle>
+                <CardDescription>用于确认发布环境是否在线、是否安全就绪，以及自动交易是否正在调度。</CardDescription>
               </div>
-              
-              {/* Data Feeder - depends on API being online */}
-              <div className={`flex items-center justify-between p-4 rounded-xl border ${
-                healthStatus.api 
-                  ? "bg-emerald-500/10 border-emerald-500/20" 
-                  : "bg-gray-100 dark:bg-gray-800 border-border"
-              }`}>
+              <Button variant="outline" size="sm" onClick={() => { void checkHealth(); void loadDaemonStatus() }} disabled={healthLoading}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                {healthLoading ? "检测中…" : "刷新状态"}
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              <div className={`flex items-center justify-between rounded-2xl border p-4 ${healthStatus.online ? "border-[#4D7358]/20 bg-[#4D7358]/8" : "border-[#B6453C]/20 bg-[#B6453C]/8"}`}>
                 <div className="flex items-center gap-3">
-                  <div className={`h-2.5 w-2.5 rounded-full ${
-                    healthStatus.api ? "bg-emerald-500 animate-pulse" : "bg-gray-400"
-                  }`} />
-                  <span className={`font-medium ${!healthStatus.api ? "text-muted-foreground" : ""}`}>
-                    数据馈送 (Data Feeder)
-                  </span>
+                  <div className={`h-2.5 w-2.5 rounded-full ${healthStatus.online ? "bg-[#4D7358]" : "bg-[#B6453C]"}`} />
+                  <span className="font-medium">API 服务</span>
                 </div>
-                <span className={`text-sm font-mono ${
-                  healthStatus.api ? "text-emerald-600" : "text-muted-foreground"
-                }`}>
-                  {healthStatus.api ? "已连接 (Connected)" : "未连接"}
+                <span className="text-sm">
+                  {healthLoading ? "检测中…" : healthStatus.online ? `运行中（${healthStatus.latencyMs}ms）` : "离线"}
                 </span>
               </div>
 
-              <div className="flex items-center justify-between p-4 bg-gray-100 dark:bg-gray-800 rounded-xl">
+              <div className={`flex items-center justify-between rounded-2xl border p-4 ${healthStatus.securityReady ? "border-[#4D7358]/20 bg-[#4D7358]/8" : "border-[#B6453C]/20 bg-[#B6453C]/8"}`}>
                 <div className="flex items-center gap-3">
-                  <div className="h-2.5 w-2.5 rounded-full bg-gray-400" />
-                  <span className="font-medium text-muted-foreground">信号引擎 (Signal Engine)</span>
+                  <ShieldCheck className="h-4 w-4" />
+                  <span className="font-medium">发布安全</span>
                 </div>
-                <span className="text-sm text-muted-foreground font-mono">空闲 (Idle)</span>
+                <span className="text-sm">{healthStatus.securityReady ? "已就绪" : "未就绪"}</span>
+              </div>
+
+              {healthStatus.securityIssues.length > 0 ? (
+                <div className="rounded-2xl border border-[#B6453C]/15 bg-[#B6453C]/6 px-4 py-3 text-sm text-[#B6453C]">
+                  {healthStatus.securityIssues.join("；")}
+                </div>
+              ) : null}
+
+              {healthStatus.errorHint ? (
+                <div className="rounded-2xl border border-[#B6453C]/15 bg-[#B6453C]/6 px-4 py-3 text-sm text-[#B6453C]">
+                  健康检查失败：{healthStatus.errorHint}
+                </div>
+              ) : null}
+
+              <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-4 text-sm text-muted-foreground">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-foreground/85">守护进程</span>
+                  <span>{daemonStatus.running ? "运行中" : daemonStatus.enabled ? "待调度" : "未启用"}</span>
+                </div>
+                <div className="mt-3 space-y-1">
+                  <div>最近启动：{formatDateTime(daemonStatus.lastStartedAt)}</div>
+                  <div>最近自动交易：{formatDateTime(daemonStatus.lastTradingRun)}</div>
+                  {daemonStatus.lastError ? <div className="text-[#B6453C]">最近错误：{daemonStatus.lastError}</div> : null}
+                </div>
               </div>
             </div>
           </GlassCard>
         </TabsContent>
 
         <TabsContent value="data">
-            <GlassCard>
-              <CardTitle className="mb-4 flex items-center">
-                {GLOSSARY.DataSources.term}
-                <HelpTooltip content={GLOSSARY.DataSources.definition} />
+          <GlassCard className="space-y-6">
+            <div className="space-y-2">
+              <CardTitle className="flex items-center gap-2">
+                服务器统一数据源
+                <HelpTooltip content="数据源优先级与 API Key 只从服务器环境变量读取，所有账户共享同一套配置，前端不再允许用户覆盖。" />
               </CardTitle>
-              <CardDescription className="mb-6">
-                配置并排序数据源优先级。系统将按顺序尝试获取数据。
-              </CardDescription>
+              <CardDescription>当前项目统一使用服务器端 `.env` 中配置好的数据源与密钥。</CardDescription>
+            </div>
 
-              <div className="space-y-6">
-                {/* Active Sources */}
-                <div className="space-y-3">
-                  <h3 className="text-sm font-medium text-muted-foreground">已启用 (Active & Sorted)</h3>
-                  {dataSources.map((source, index) => (
-                    <div key={source} className="flex items-center justify-between p-3 bg-secondary/50 rounded-xl border border-border">
-                      <span className="font-medium flex items-center gap-2">
-                        <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary text-xs">
-                          {index + 1}
-                        </span>
-                        {source}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => moveSource(index, -1)}
-                          disabled={index === 0}
-                        >
-                          <ArrowUp className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => moveSource(index, 1)}
-                          disabled={index === dataSources.length - 1}
-                        >
-                          <ArrowDown className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                          onClick={() => removeSource(source)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                  {dataSources.length === 0 && (
-                      <div className="text-sm text-muted-foreground p-4 text-center border border-dashed rounded-xl">
-                          暂无已启用数据源，请从下方添加。
-                      </div>
-                  )}
-                </div>
-
-                {/* Available Sources */}
-                <div className="space-y-3">
-                  <h3 className="text-sm font-medium text-muted-foreground">可添加 (Available)</h3>
-                  <div className="grid gap-2 grid-cols-2 sm:grid-cols-3">
-                    {["AkShare", "Binance", "AlphaVantage", "Tushare", "yfinance"]
-                      .filter(s => !dataSources.includes(s))
-                      .map(source => (
-                      <Button
-                        key={source}
-                        variant="outline"
-                        className="justify-start gap-2"
-                        onClick={() => addSource(source)}
-                      >
-                        <Plus className="h-4 w-4" />
-                        {source}
-                      </Button>
-                    ))}
+            <div className="space-y-3">
+              {dataSources.map((source, index) => (
+                <div key={source} className="flex items-center justify-between rounded-2xl border border-black/[0.06] bg-black/[0.02] px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/5 text-xs font-medium text-foreground/70">
+                      {index + 1}
+                    </span>
+                    <span className="font-medium">{source}</span>
                   </div>
+                  <span className="text-xs text-muted-foreground">服务器锁定</span>
                 </div>
+              ))}
+            </div>
 
-                {/* API Configuration */}
-                <div className="space-y-3 pt-4 border-t border-border/50">
-                  <h3 className="text-sm font-medium text-muted-foreground">API 配置 (API Configuration)</h3>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Tushare Token</label>
-                      <Input 
-                        value={localKeys["Tushare"] || ""} 
-                        onChange={(e) => setLocalKeys({ ...localKeys, "Tushare": e.target.value })}
-                        onBlur={() => setApiKeys(localKeys)}
-                        placeholder="输入 Tushare Token"
-                        type="password"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Alpha Vantage Key</label>
-                      <Input 
-                        value={localKeys["AlphaVantage"] || ""} 
-                        onChange={(e) => setLocalKeys({ ...localKeys, "AlphaVantage": e.target.value })}
-                        onBlur={() => setApiKeys(localKeys)}
-                        placeholder="输入 Alpha Vantage API Key"
-                        type="password"
-                      />
-                    </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-4">
+                <div className="text-sm font-medium text-foreground/85">配置模式</div>
+                <div className="mt-2 text-sm text-muted-foreground">
+                  {configurationMode === "env_locked" ? "环境变量锁定模式" : "未知模式"}
+                </div>
+                <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                  如需变更优先级或密钥，请修改服务器端 `.env` 并重启后端服务。
+                </p>
+              </div>
+              <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-4">
+                <div className="text-sm font-medium text-foreground/85">密钥状态</div>
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>Tushare Token</span>
+                    <span className={apiKeyStatus.Tushare ? "text-[#4D7358]" : "text-[#B6453C]"}>
+                      {apiKeyStatus.Tushare ? "已配置" : "未配置"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Alpha Vantage Key</span>
+                    <span className={apiKeyStatus.AlphaVantage ? "text-[#4D7358]" : "text-[#B6453C]"}>
+                      {apiKeyStatus.AlphaVantage ? "已配置" : "未配置"}
+                    </span>
                   </div>
                 </div>
               </div>
-            </GlassCard>
+            </div>
+          </GlassCard>
         </TabsContent>
       </Tabs>
     </div>

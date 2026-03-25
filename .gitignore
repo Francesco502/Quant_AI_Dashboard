@@ -4,17 +4,17 @@ __pycache__/
 *$py.class
 *.so
 .Python
-*.egg-info/
-dist/
 build/
+dist/
+*.egg-info/
 
-# 虚拟环境
+# Virtual environments
 .venv/
 venv/
 ENV/
 env/
 
-# IDE
+# Editor and local assistant metadata
 .vscode/
 .idea/
 .trae/
@@ -25,67 +25,55 @@ env/
 CLAUDE.md
 *prompt.txt
 
-# 数据文件
+# Environment and local runtime configuration
+.env
+daemon_config.json
+daemon_status.json
+
+# Runtime data and caches
 data/
 *.parquet
 *.csv
 *.db
 *.sqlite
-
-# Scratchpad / API 缓存（Dexter 借鉴）
-data/scratchpad/
 data/api_cache/
+data/scratchpad/
+data/logs/
 
-# Evals 报告
+# Logs and reports
+logs/
+output/
+*.log
+htmlcov/
+.benchmarks/
+.pytest_cache/
+.coverage
+coverage.xml
 evals/reports/
 
-# 日志
-logs/
-*.log
+# Frontend build outputs
+web/.next/
+web/out/
 
-# 配置文件（包含敏感信息）
-.env
-daemon_config.json
-daemon_status.json
-
-# 系统文件
-.DS_Store
-Thumbs.db
-
-# 临时文件
-*.tmp
-*.bak
-*.cache
-warning.txt
-
-# 模型文件
+# Model artifacts
 models/*.pkl
 models/*.h5
 models/*.pt
 models/*.pth
 models/*.joblib
 
-# 运行与测试产物
-output/
-htmlcov/
-benchmarks/
-.pytest_cache/
-.coverage
-coverage.xml
-
-# 前端构建产物
-web/.next/
-web/out/
-
-# 外部参考仓库/迁移材料（不纳入正式发布包）
-daily_stock_analysis-main/
-dexter-main/
-
-# 规划与临时文档
-docs/plans/
-docs/superpowers/
-
-# 异常或临时文件
+# OS junk
+.DS_Store
+Thumbs.db
 nul
 web/nul
 
+# Temporary files
+*.tmp
+*.bak
+*.cache
+warning.txt
+
+# External reference repos
+daily_stock_analysis-main/
+dexter-main/

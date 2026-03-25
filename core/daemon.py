@@ -22,6 +22,7 @@ from typing import Any, Dict, List
 from .data_updater import update_local_history_for_tickers
 from .scheduler import (
     setup_data_update_job,
+    setup_trading_job,
     setup_training_job,
     setup_daily_analysis_job,
     run_forever,
@@ -29,11 +30,114 @@ from .scheduler import (
 from .training_pipeline import TrainingPipeline
 from .feature_store import get_feature_store
 from .data_store import load_local_price_history
+from .auto_paper_trading import run_auto_trading_cycle
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "daemon_config.json")
 STATUS_PATH = os.path.join(BASE_DIR, "daemon_status.json")
+
+LEGACY_RELEASE_TRADING_CONFIG = {
+    "account_name": "Auto Paper Trading",
+    "strategy_ids": ["ema_crossover"],
+    "universe_mode": "manual",
+    "universe": ["510500", "159915"],
+    "universe_limit": 0,
+    "max_positions": 3,
+    "evaluation_days": 180,
+    "min_total_return": 0.03,
+    "min_sharpe_ratio": 0.3,
+    "max_drawdown": 0.2,
+    "top_n_strategies": 3,
+}
+
+
+def _default_config() -> Dict[str, Any]:
+    return {
+        "universe": ["013281", "002611", "160615", "016858", "159755", "006810"],
+        "days": 365,
+        "data_sources": ["AkShare", "Tushare"],
+        "alpha_vantage_key": "",
+        "tushare_token": "",
+        "data_update": {
+            "enabled": True,
+            "interval_minutes": 120,
+        },
+        "trading": {
+            "enabled": True,
+            "interval_minutes": 60,
+            "max_positions": 3,
+            "initial_capital": 100_000.0,
+            "username": "admin",
+            "account_name": "全市场自动模拟交易",
+            "strategy_ids": [
+                "sma_crossover",
+                "ema_crossover",
+                "mean_reversion",
+                "rsi_reversion",
+                "macd_trend",
+                "breakout_momentum",
+                "donchian_breakout",
+                "momentum_rotation",
+            ],
+            "evaluation_days": 180,
+            "min_total_return": 0.0,
+            "min_sharpe_ratio": 0.0,
+            "max_drawdown": 0.35,
+            "top_n_strategies": 3,
+            "universe_mode": "cn_a_share",
+            "universe": [],
+            "universe_limit": 0,
+            "evaluation_limit": 120,
+        },
+        "training": {
+            "enabled": True,
+            "time": "02:00",
+            "model_type": "xgboost",
+            "auto_promote": True,
+            "generate_signals": True,
+            "min_train_days": 60,
+            "retrain_interval_days": 7,
+            "min_improvement_threshold": 0.02,
+        },
+        "features": {
+            "use_enhanced": True,
+        },
+        "daily_analysis": {
+            "enabled": False,
+            "time": "18:00",
+        },
+    }
+
+
+def _matches_legacy_release_trading_config(trading_cfg: Dict[str, Any]) -> bool:
+    return all(trading_cfg.get(key) == value for key, value in LEGACY_RELEASE_TRADING_CONFIG.items())
+
+
+def _normalize_config(config: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
+    default = _default_config()
+    normalized = dict(config or {})
+    changed = False
+
+    for key, value in default.items():
+        if key not in normalized:
+            normalized[key] = value
+            changed = True
+
+    trading_cfg = dict(normalized.get("trading", {}) or {})
+    default_trading = dict(default["trading"])
+
+    for key, value in default_trading.items():
+        if key not in trading_cfg:
+            trading_cfg[key] = value
+            changed = True
+
+    if _matches_legacy_release_trading_config(trading_cfg):
+        trading_cfg = dict(default_trading)
+        changed = True
+
+    normalized["trading"] = trading_cfg
+    return normalized, changed
 # ACCOUNT_PATH 宸插純鐢紝鐜板湪浣跨敤鏁版嵁搴撳瓨鍌?
 
 def _ensure_dirs() -> None:
@@ -55,10 +159,31 @@ def load_config() -> Dict[str, Any]:
                 "interval_minutes": 120,  # 浣庨厤浼樺寲锛氭瘡2灏忔椂鏇存柊
             },
             "trading": {
-                "enabled": False,
+                "enabled": True,
                 "interval_minutes": 60,
                 "max_positions": 5,
-                "initial_capital": 1_000_000.0,
+                "initial_capital": 100_000.0,
+                "username": "admin",
+                "account_name": "全市场自动模拟交易",
+                "strategy_ids": [
+                    "sma_crossover",
+                    "ema_crossover",
+                    "mean_reversion",
+                    "rsi_reversion",
+                    "macd_trend",
+                    "breakout_momentum",
+                    "donchian_breakout",
+                    "momentum_rotation",
+                ],
+                "evaluation_days": 180,
+                "min_total_return": 0.0,
+                "min_sharpe_ratio": 0.0,
+                "max_drawdown": 0.35,
+                "top_n_strategies": 3,
+                "universe_mode": "cn_a_share",
+                "universe": [],
+                "universe_limit": 0,
+                "evaluation_limit": 120,
             },
             "training": {
                 "enabled": True,
@@ -84,17 +209,45 @@ def load_config() -> Dict[str, Any]:
         return json.load(f)
 
 
+def load_config() -> Dict[str, Any]:
+    """Load daemon configuration with release-default normalization."""
+    if not os.path.exists(CONFIG_PATH):
+        default = _default_config()
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(default, f, ensure_ascii=False, indent=2)
+        return default
+
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        loaded = json.load(f)
+
+    normalized, changed = _normalize_config(loaded)
+    if changed:
+        save_config(normalized)
+    return normalized
+
+
+def save_config(config: Dict[str, Any]) -> None:
+    """Persist daemon configuration to disk."""
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+
+def load_status() -> Dict[str, Any]:
+    """Read daemon runtime status from disk."""
+    if not os.path.exists(STATUS_PATH):
+        return {}
+
+    try:
+        with open(STATUS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def save_status(patch: Dict[str, Any]) -> None:
     """Write daemon runtime status with incremental patch updates."""
-    status: Dict[str, Any]
-    if os.path.exists(STATUS_PATH):
-        try:
-            with open(STATUS_PATH, "r", encoding="utf-8") as f:
-                status = json.load(f)
-        except Exception:
-            status = {}
-    else:
-        status = {}
+    status = load_status()
 
     status.update(patch)
     status["last_updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -350,10 +503,32 @@ def training_job(cfg: Dict[str, Any]) -> None:
 
 def trading_job(cfg: Dict[str, Any]) -> None:
     """Run a single paper-trading rebalance task."""
-    logging.warning(
-        "daemon: automatic trading task is disabled by product policy (manual execution only)."
-    )
-    save_status({"last_trading_run": "disabled-by-policy"})
+    if not _memory_guard():
+        return
+
+    try:
+        from api.routers.trading import get_trading_service
+
+        result = run_auto_trading_cycle(cfg, get_trading_service())
+        save_status(
+            {
+                "last_trading_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_trading_result": result,
+            }
+        )
+        logging.info(
+            "daemon: auto trading completed, validated=%d, orders=%d",
+            len(result.get("validated_strategies", [])),
+            len(result.get("executed_orders", [])),
+        )
+    except Exception as e:
+        logging.error("daemon: auto trading failed: %s", e, exc_info=True)
+        save_status(
+            {
+                "last_trading_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_trading_error": str(e),
+            }
+        )
 
 
 def main() -> None:
@@ -409,12 +584,19 @@ def main() -> None:
     cfg = load_config()
     logging.info("daemon: configuration loaded.")
     logging.info("daemon: process PID = %s", os.getpid())
+    save_status(
+        {
+            "daemon_running": True,
+            "daemon_pid": os.getpid(),
+            "last_started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "config_trading_enabled": bool(cfg.get("trading", {}).get("enabled", False)),
+            "config_trading_interval_minutes": int(cfg.get("trading", {}).get("interval_minutes", 0) or 0),
+        }
+    )
 
     # Register scheduled jobs.
     setup_data_update_job(cfg.get("data_update", {}), lambda: data_update_job(cfg))
-    logging.warning(
-        "daemon: trading scheduler registration skipped by policy (manual/no auto-trading)."
-    )
+    setup_trading_job(cfg.get("trading", {}), lambda: trading_job(cfg))
     setup_training_job(cfg.get("training", {}), lambda: training_job(cfg))
     setup_daily_analysis_job(cfg.get("daily_analysis", {}), lambda: daily_analysis_job(cfg))
 
@@ -447,6 +629,22 @@ def main() -> None:
 
         schedule.every().day.at("15:30").do(_daily_settlement_job)
         logging.info("daemon: registered daily settlement job at 15:30")
+
+        def _daily_user_asset_sync_job():
+            """Run personal asset DCA reconciliation and snapshot sync."""
+            try:
+                from .user_assets import get_user_asset_service
+
+                result = get_user_asset_service().run_daily_sync_for_all_users()
+                logging.info(
+                    "daemon: user asset sync completed, users=%s",
+                    result.get("users_synced", 0),
+                )
+            except Exception as e:
+                logging.error("daemon: daily user asset sync job error: %s", e)
+
+        schedule.every().day.at("18:10").do(_daily_user_asset_sync_job)
+        logging.info("daemon: registered daily user asset sync job at 18:10")
     except Exception as e:
         logging.warning("daemon: failed to register daily settlement job: %s", e)
 
@@ -457,6 +655,12 @@ def main() -> None:
     except KeyboardInterrupt:
         logging.info("daemon: interrupt received, shutting down.")
     finally:
+        save_status(
+            {
+                "daemon_running": False,
+                "last_stopped_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
         # Cleanup pid file.
         try:
             if os.path.exists(pid_file):

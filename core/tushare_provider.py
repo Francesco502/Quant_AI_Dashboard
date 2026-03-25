@@ -141,6 +141,89 @@ def get_cn_security_name(ticker: str) -> Optional[str]:
     return None
 
 
+@lru_cache(maxsize=512)
+def get_cn_security_profile(ticker: str) -> Dict[str, Any]:
+    """Resolve a minimal profile plus latest valuation fields for A-share symbols."""
+    pro = _get_configured_pro_api()
+    ts_code = normalize_cn_ticker(ticker)
+    if pro is None or ts_code is None:
+        return {}
+
+    profile: Dict[str, Any] = {"ticker": ticker, "ts_code": ts_code}
+
+    stock_basic = getattr(pro, "stock_basic", None)
+    if stock_basic is not None:
+        try:
+            df = stock_basic(
+                ts_code=ts_code,
+                fields="ts_code,name,industry,market,area,list_date",
+            )
+            if df is not None and not df.empty:
+                row = df.iloc[0]
+                profile.update(
+                    {
+                        "asset_type": "stock",
+                        "name": row.get("name"),
+                        "industry": row.get("industry"),
+                        "market": row.get("market"),
+                        "area": row.get("area"),
+                        "list_date": row.get("list_date"),
+                    }
+                )
+        except Exception as exc:
+            logger.debug("Tushare stock_basic lookup failed for %s: %s", ts_code, exc)
+
+    if "asset_type" not in profile:
+        fund_basic = getattr(pro, "fund_basic", None)
+        if fund_basic is not None:
+            try:
+                df = fund_basic(market="E")
+                if df is not None and not df.empty and "ts_code" in df.columns:
+                    rows = df[df["ts_code"].astype(str).str.upper() == ts_code]
+                    if not rows.empty:
+                        row = rows.iloc[0]
+                        profile.update(
+                            {
+                                "asset_type": "fund",
+                                "name": row.get("name"),
+                                "management": row.get("management"),
+                                "fund_type": row.get("fund_type"),
+                                "list_date": row.get("list_date"),
+                                "market": row.get("market"),
+                            }
+                        )
+            except Exception as exc:
+                logger.debug("Tushare fund_basic lookup failed for %s: %s", ts_code, exc)
+
+    daily_basic = getattr(pro, "daily_basic", None)
+    if daily_basic is not None:
+        start_date = _date_str(dt.date.today() - dt.timedelta(days=10))
+        end_date = _date_str(dt.date.today())
+        try:
+            df = daily_basic(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+                fields="ts_code,trade_date,pe_ttm,pb,total_mv,circ_mv,turnover_rate,volume_ratio",
+            )
+            if df is not None and not df.empty:
+                df = df.sort_values("trade_date", ascending=False).reset_index(drop=True)
+                row = df.iloc[0]
+                profile["valuation"] = {
+                    "trade_date": row.get("trade_date"),
+                    "pe_ttm": _safe_float(row.get("pe_ttm")),
+                    "pb": _safe_float(row.get("pb")),
+                    "total_mv": _safe_float(row.get("total_mv")),
+                    "circ_mv": _safe_float(row.get("circ_mv")),
+                    "turnover_rate": _safe_float(row.get("turnover_rate")),
+                    "volume_ratio": _safe_float(row.get("volume_ratio")),
+                }
+        except Exception as exc:
+            logger.debug("Tushare daily_basic lookup failed for %s: %s", ts_code, exc)
+
+    return profile
+
+
 def is_a_share_trading_day(date: Optional[dt.date] = None) -> Optional[bool]:
     """Check A-share trading day using Tushare trade_cal."""
     pro = _get_configured_pro_api()
@@ -315,3 +398,54 @@ def _get_cn_market_context_cached(today_iso: str) -> Dict[str, Any]:
 def get_cn_market_context(date: Optional[dt.date] = None) -> Dict[str, Any]:
     """Return a small structured market context for analysis and agent tools."""
     return _get_cn_market_context_cached(_coerce_date(date).isoformat())
+
+
+@lru_cache(maxsize=4)
+def list_active_a_share_tickers(limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Return active A-share tickers with basic metadata, preferring Tushare."""
+    pro = _get_configured_pro_api()
+    if pro is None:
+        return []
+
+    stock_basic = getattr(pro, "stock_basic", None)
+    if stock_basic is None:
+        return []
+
+    try:
+        df = stock_basic(
+            exchange="",
+            list_status="L",
+            fields="ts_code,symbol,name,market,list_date",
+        )
+    except Exception as exc:
+        logger.debug("Tushare stock universe lookup failed: %s", exc)
+        return []
+
+    if df is None or df.empty:
+        return []
+
+    rows: List[Dict[str, Any]] = []
+    for _, row in df.iterrows():
+        symbol = str(row.get("symbol") or "").strip().upper()
+        name = str(row.get("name") or "").strip()
+        if len(symbol) != 6 or not symbol.isdigit() or not name:
+            continue
+
+        upper_name = name.upper()
+        if upper_name.startswith(("ST", "*ST", "S*ST", "SST")) or "退" in name:
+            continue
+
+        rows.append(
+            {
+                "ticker": symbol,
+                "name": name,
+                "market": row.get("market") or "A股",
+                "list_date": row.get("list_date"),
+                "source": "Tushare",
+            }
+        )
+
+    rows.sort(key=lambda item: item["ticker"])
+    if limit and limit > 0:
+        return rows[: int(limit)]
+    return rows

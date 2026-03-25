@@ -26,7 +26,7 @@ const TableHeader = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <thead
     ref={ref}
-    className={cn("[&_tr]:border-b [&_tr]:border-black/[0.05] dark:[&_tr]:border-white/[0.06]", className)}
+    className={cn("[&_tr]:border-b [&_tr]:border-black/[0.03] dark:[&_tr]:border-white/[0.03]", className)}
     {...props}
   />
 ))
@@ -51,7 +51,7 @@ const TableFooter = React.forwardRef<
   <tfoot
     ref={ref}
     className={cn(
-      "border-t border-black/[0.05] dark:border-white/[0.06] bg-black/[0.02] dark:bg-white/[0.02] font-medium [&>tr]:last:border-b-0",
+      "border-t border-black/[0.03] dark:border-white/[0.03] bg-black/[0.01] dark:bg-white/[0.01] font-medium [&>tr]:last:border-b-0",
       className
     )}
     {...props}
@@ -66,10 +66,10 @@ const TableRow = React.forwardRef<
   <tr
     ref={ref}
     className={cn(
-      "border-b border-black/[0.04] dark:border-white/[0.04]",
-      "transition-colors duration-150",
-      "hover:bg-black/[0.02] dark:hover:bg-white/[0.02]",
-      "data-[state=selected]:bg-black/[0.03] dark:data-[state=selected]:bg-white/[0.04]",
+      "border-b border-black/[0.03] dark:border-white/[0.03]",
+      "transition-colors duration-200",
+      "hover:bg-black/[0.015] dark:hover:bg-white/[0.015]",
+      "data-[state=selected]:bg-black/[0.02] dark:data-[state=selected]:bg-white/[0.02]",
       className
     )}
     {...props}
@@ -84,7 +84,7 @@ const TableHead = React.forwardRef<
   <th
     ref={ref}
     className={cn(
-      "h-10 px-3 text-left align-middle text-[12px] font-medium text-foreground/40 uppercase tracking-wider",
+      "h-12 px-4 text-left align-middle text-[13px] font-serif font-medium text-foreground/50 tracking-wide",
       "[&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
       className
     )}
@@ -100,7 +100,7 @@ const TableCell = React.forwardRef<
   <td
     ref={ref}
     className={cn(
-      "px-3 py-2.5 align-middle text-foreground/80",
+      "px-4 py-4 align-middle text-foreground/80 tracking-wide",
       "[&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
       className
     )}

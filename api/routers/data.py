@@ -9,6 +9,7 @@ from core.rbac import Permission
 from core.audit_log import AuditAction
 from typing import List, Optional
 from pydantic import BaseModel
+import math
 import pandas as pd
 
 from core.data_service import load_price_data, load_ohlcv_data
@@ -23,6 +24,19 @@ class DataRequest(BaseModel):
     data_sources: Optional[List[str]] = None
     alpha_vantage_key: Optional[str] = None
     tushare_token: Optional[str] = None
+
+
+def _serialize_price_points(series: pd.Series) -> List[dict]:
+    points: List[dict] = []
+    for date, price in series.items():
+        try:
+            numeric_price = float(price)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(numeric_price):
+            continue
+        points.append({"date": str(date), "price": numeric_price})
+    return points
 
 
 @router.post("/prices")
@@ -46,10 +60,7 @@ async def get_prices(
         # 转换为字典格式
         result = {}
         for ticker in price_data.columns:
-            result[ticker] = [
-                {"date": str(date), "price": float(price)}
-                for date, price in price_data[ticker].items()
-            ]
+            result[ticker] = _serialize_price_points(price_data[ticker])
 
         return {
             "data": result,
@@ -87,10 +98,7 @@ async def get_prices_get(
 
         result = {}
         for ticker in price_data.columns:
-            result[ticker] = [
-                {"date": str(date), "price": float(price)}
-                for date, price in price_data[ticker].items()
-            ]
+            result[ticker] = _serialize_price_points(price_data[ticker])
 
         return {
             "data": result,
@@ -137,4 +145,3 @@ async def get_ohlcv(request: DataRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取OHLCV数据失败: {str(e)}")
-

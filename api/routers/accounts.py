@@ -8,10 +8,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import UserInDB, get_current_active_user
+from core.account_manager import AccountManager
 from core.database import get_database
 
 
 router = APIRouter()
+LEGACY_AUTO_ACCOUNT_NAME = "Auto Paper Trading"
+DEFAULT_AUTO_ACCOUNT_NAME = "全市场自动模拟交易"
 
 
 def _resolve_user_id(cursor, current_user: UserInDB) -> int:
@@ -45,12 +48,23 @@ def _get_active_account_id(cursor, user_id: int) -> Optional[int]:
     return int(row["id"]) if row else None
 
 
+def _normalize_account_name(name: Optional[str]) -> Optional[str]:
+    if name is None:
+        return None
+    normalized = str(name).strip()
+    if not normalized or normalized == LEGACY_AUTO_ACCOUNT_NAME:
+        return DEFAULT_AUTO_ACCOUNT_NAME
+    return normalized
+
+
 @router.get("/paper")
 async def get_paper_account(current_user: UserInDB = Depends(get_current_active_user)):
     try:
         db = get_database()
         cursor = db.conn.cursor()
         user_id = _resolve_user_id(cursor, current_user)
+        account_mgr = AccountManager(db)
+        account_mgr = AccountManager(db)
 
         cursor.execute(
             """
@@ -79,32 +93,25 @@ async def get_paper_account(current_user: UserInDB = Depends(get_current_active_
             }
 
         account_id = int(row["id"])
-
-        cursor.execute(
-            """
-            SELECT ticker, shares, avg_cost
-            FROM positions
-            WHERE account_id = ?
-            """,
-            (account_id,),
-        )
-
+        positions_list = account_mgr.get_positions(account_id, refresh_prices=True)
         positions = {}
-        for pos_row in cursor.fetchall():
-            positions[pos_row["ticker"]] = {
-                "shares": pos_row["shares"],
-                "avg_cost": pos_row["avg_cost"],
-                "market_value": 0.0,
-                "unrealized_pnl": 0.0,
+        total_position_value = 0.0
+        for position in positions_list:
+            total_position_value += float(position.market_value or 0.0)
+            positions[position.ticker] = {
+                "shares": position.shares,
+                "avg_cost": position.avg_cost,
+                "market_value": float(position.market_value or 0.0),
+                "unrealized_pnl": float(position.unrealized_pnl or 0.0),
             }
 
         return {
             "user_id": user_id,
             "account_id": account_id,
-            "account_name": row["account_name"],
+            "account_name": _normalize_account_name(row["account_name"]),
             "balance": row["balance"],
             "frozen": row["frozen"],
-            "total_assets": row["total_assets"],
+            "total_assets": float(row["balance"] or 0.0) + float(row["frozen"] or 0.0) + total_position_value,
             "initial_capital": row["initial_capital"],
             "positions": positions,
         }
@@ -163,26 +170,18 @@ async def get_positions(current_user: UserInDB = Depends(get_current_active_user
         cursor = db.conn.cursor()
         user_id = _resolve_user_id(cursor, current_user)
         account_id = _get_active_account_id(cursor, user_id)
+        account_mgr = AccountManager(db)
 
         if account_id is None:
             return {"positions": {}}
 
-        cursor.execute(
-            """
-            SELECT ticker, shares, avg_cost
-            FROM positions
-            WHERE account_id = ?
-            """,
-            (account_id,),
-        )
-
         positions = {}
-        for pos_row in cursor.fetchall():
-            positions[pos_row["ticker"]] = {
-                "shares": pos_row["shares"],
-                "avg_cost": pos_row["avg_cost"],
-                "market_value": 0.0,
-                "unrealized_pnl": 0.0,
+        for position in account_mgr.get_positions(account_id, refresh_prices=True):
+            positions[position.ticker] = {
+                "shares": position.shares,
+                "avg_cost": position.avg_cost,
+                "market_value": float(position.market_value or 0.0),
+                "unrealized_pnl": float(position.unrealized_pnl or 0.0),
             }
 
         return {"positions": positions}
@@ -260,13 +259,16 @@ async def list_user_accounts(current_user: UserInDB = Depends(get_current_active
 
         accounts = []
         for row in cursor.fetchall():
+            account_id = int(row["id"])
+            positions = account_mgr.get_positions(account_id, refresh_prices=True)
+            total_position_value = sum(float(position.market_value or 0.0) for position in positions)
             accounts.append(
                 {
-                    "id": row["id"],
-                    "name": row["account_name"],
+                    "id": account_id,
+                    "name": _normalize_account_name(row["account_name"]),
                     "balance": row["balance"],
                     "frozen": row["frozen"],
-                    "total_assets": row["balance"] + row["frozen"],
+                    "total_assets": float(row["balance"] or 0.0) + float(row["frozen"] or 0.0) + total_position_value,
                     "initial_capital": row["initial_capital"],
                     "status": row["status"],
                     "created_at": row["created_at"],

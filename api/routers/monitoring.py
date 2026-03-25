@@ -1,115 +1,149 @@
-"""监控和告警API路由
+"""Monitoring and alert management routes."""
 
-提供系统监控和告警管理的RESTful API接口
-"""
+from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from typing import Dict, List, Optional
 from datetime import datetime
 import logging
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from core.monitoring import (
-    get_system_monitor,
-    get_monitoring_config,
+    Alert,
+    AlertChannel,
     AlertManager,
     AlertSeverity,
     ComparisonOperator,
     DashboardChannel,
-    EmailChannel,
-    WebhookChannel,
-    TelegramChannel,
     DingTalkChannel,
+    EmailChannel,
     FeishuChannel,
+    TelegramChannel,
+    WebhookChannel,
     WeComChannel,
+    get_monitoring_config,
+    get_system_monitor,
+    restart_system_monitor,
 )
 
-logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/monitoring", tags=["系统监控"])
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/monitoring", tags=["system-monitoring"])
+
+_alert_manager: Optional[AlertManager] = None
+
+
+class AlertChannelTestRequest(BaseModel):
+    channel_type: str = Field(..., description="email/webhook/telegram/dingtalk/feishu/wecom")
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _comparison_from_config(value: str) -> ComparisonOperator:
+    mapping = {
+        "gt": ComparisonOperator.GT,
+        "lt": ComparisonOperator.LT,
+        "gte": ComparisonOperator.GTE,
+        "lte": ComparisonOperator.LTE,
+        ">": ComparisonOperator.GT,
+        "<": ComparisonOperator.LT,
+        ">=": ComparisonOperator.GTE,
+        "<=": ComparisonOperator.LTE,
+        "==": ComparisonOperator.EQ,
+        "eq": ComparisonOperator.EQ,
+        "!=": ComparisonOperator.NE,
+        "ne": ComparisonOperator.NE,
+    }
+    return mapping.get((value or "").strip().lower(), ComparisonOperator.GT)
+
+
+def _build_channel(channel_type: str, config: Dict[str, Any]) -> AlertChannel:
+    kind = (channel_type or "").strip().lower()
+    if kind == "email":
+        return EmailChannel(
+            smtp_server=config.get("smtp_server"),
+            smtp_port=int(config.get("smtp_port", 587)),
+            username=config.get("username"),
+            password=config.get("password"),
+            to_email=config.get("to_email"),
+        )
+    if kind == "webhook":
+        return WebhookChannel(webhook_url=config.get("webhook_url"))
+    if kind == "telegram":
+        return TelegramChannel(
+            bot_token=config.get("bot_token"),
+            chat_id=config.get("chat_id"),
+        )
+    if kind == "dingtalk":
+        return DingTalkChannel(
+            webhook_url=config.get("webhook_url"),
+            secret=config.get("secret"),
+        )
+    if kind == "feishu":
+        return FeishuChannel(
+            webhook_url=config.get("webhook_url"),
+            secret=config.get("secret"),
+        )
+    if kind == "wecom":
+        return WeComChannel(webhook_url=config.get("webhook_url"))
+    raise HTTPException(status_code=400, detail=f"Unknown alert channel type: {channel_type}")
+
+
+def _get_alert_manager() -> AlertManager:
+    global _alert_manager
+    if _alert_manager is not None:
+        return _alert_manager
+
+    config = get_monitoring_config()
+    manager = AlertManager(max_history=config.max_alert_history)
+    manager.set_alert_frequency_limit(config.max_alerts_per_hour)
+
+    for rule in config.alert_rules:
+        manager.add_alert_rule(
+            name=rule.name,
+            metric_name=rule.metric_name,
+            threshold=rule.threshold,
+            comparison=_comparison_from_config(rule.comparison),
+            severity=rule.severity,
+            cooldown_minutes=rule.cooldown_minutes,
+            channels=rule.channels,
+        )
+
+    _alert_manager = manager
+    return manager
 
 
 @router.get("/health")
-async def get_health_status():
-    """
-    获取健康检查状态
-
-    Returns:
-        健康状态和各项检查结果
-    """
+async def get_health_status() -> Dict[str, Any]:
     try:
-        monitor = get_system_monitor()
-        health_status = monitor.check_health()
-
-        return {
-            "status": "success",
-            "data": health_status,
-        }
-    except Exception as e:
-        logger.error(f"获取健康状态失败: {e}")
-        raise HTTPException(status_code=500, detail=f"健康检查失败: {str(e)}")
+        return {"status": "success", "data": get_system_monitor().check_health()}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get monitoring health: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Health check failed: {exc}") from exc
 
 
 @router.get("/metrics")
-async def get_system_metrics():
-    """
-    获取系统指标
-
-    Returns:
-        系统指标数据
-    """
+async def get_system_metrics() -> Dict[str, Any]:
     try:
-        monitor = get_system_monitor()
-        metrics = monitor.collect_metrics()
-
-        return {
-            "status": "success",
-            "data": metrics,
-        }
-    except Exception as e:
-        logger.error(f"获取系统指标失败: {e}")
-        raise HTTPException(status_code=500, detail=f"指标收集失败: {str(e)}")
+        return {"status": "success", "data": get_system_monitor().collect_metrics()}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to collect system metrics: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Metrics collection failed: {exc}") from exc
 
 
 @router.get("/metrics/detailed")
-async def get_detailed_metrics():
-    """
-    获取详细系统指标（用于监控页面）
-
-    Returns:
-        详细系统指标数据
-    """
+async def get_detailed_metrics() -> Dict[str, Any]:
     try:
-        monitor = get_system_monitor()
-        metrics = monitor.collect_detailed_metrics()
-
-        return {
-            "status": "success",
-            "data": metrics,
-        }
-    except Exception as e:
-        logger.error(f"获取详细系统指标失败: {e}")
-        raise HTTPException(status_code=500, detail=f"详细指标收集失败: {str(e)}")
+        return {"status": "success", "data": get_system_monitor().collect_detailed_metrics()}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to collect detailed system metrics: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Detailed metrics collection failed: {exc}") from exc
 
 
 @router.get("/metrics/history")
-async def get_metrics_history(
-    metric_name: str,
-    minutes: int = 60,
-):
-    """
-    获取指标历史数据
-
-    Args:
-        metric_name: 指标名称 (cpu_usage, memory_usage, disk_usage等)
-        minutes: 时间范围（分钟）
-
-    Returns:
-        指标历史数据
-    """
+async def get_metrics_history(metric_name: str, minutes: int = 60) -> Dict[str, Any]:
     try:
-        monitor = get_system_monitor()
-        history = monitor.get_metrics_history(metric_name, minutes)
-
+        history = get_system_monitor().get_metrics_history(metric_name, minutes)
         return {
             "status": "success",
             "data": {
@@ -118,101 +152,58 @@ async def get_metrics_history(
                 "history": history,
             },
         }
-    except Exception as e:
-        logger.error(f"获取指标历史失败: {e}")
-        raise HTTPException(status_code=500, detail=f"历史数据获取失败: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get metrics history for %s: %s", metric_name, exc)
+        raise HTTPException(status_code=500, detail=f"Metrics history retrieval failed: {exc}") from exc
 
 
 @router.get("/metrics/statistics")
-async def get_metric_statistics(
-    window_minutes: int = 60,
-):
-    """
-    获取指标统计信息
-
-    Args:
-        window_minutes: 时间窗口（分钟）
-
-    Returns:
-        指标统计信息
-    """
+async def get_metric_statistics(window_minutes: int = 60) -> Dict[str, Any]:
     try:
-        monitor = get_system_monitor()
-        stats = monitor.get_all_metric_statistics(window_minutes)
-
-        return {
-            "status": "success",
-            "data": stats,
-        }
-    except Exception as e:
-        logger.error(f"获取指标统计失败: {e}")
-        raise HTTPException(status_code=500, detail=f"统计信息获取失败: {str(e)}")
+        stats = get_system_monitor().get_all_metric_statistics(window_minutes)
+        return {"status": "success", "data": stats}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get metric statistics: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Metric statistics retrieval failed: {exc}") from exc
 
 
 @router.get("/summary")
-async def get_system_summary():
-    """
-    获取系统汇总信息
-
-    Returns:
-        系统汇总数据
-    """
+async def get_system_summary() -> Dict[str, Any]:
     try:
-        monitor = get_system_monitor()
-        summary = monitor.get_system_summary()
-
-        return {
-            "status": "success",
-            "data": summary,
-        }
-    except Exception as e:
-        logger.error(f"获取系统汇总失败: {e}")
-        raise HTTPException(status_code=500, detail=f"汇总信息获取失败: {str(e)}")
+        return {"status": "success", "data": get_system_monitor().get_system_summary()}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get monitoring summary: %s", exc)
+        raise HTTPException(status_code=500, detail=f"System summary retrieval failed: {exc}") from exc
 
 
 @router.get("/status")
-async def get_monitoring_status():
-    """
-    获取监控状态
-
-    Returns:
-        监控运行状态
-    """
+async def get_monitoring_status() -> Dict[str, Any]:
     try:
-        monitor = get_system_monitor()
-        status = monitor.get_monitoring_status()
-
+        status = get_system_monitor().get_monitoring_status()
         return {
             "status": "success",
             "data": {
                 "is_monitoring": status.is_monitoring,
                 "uptime_seconds": status.uptime_seconds,
                 "metrics_collected": status.metrics_collected,
-                "health_checks": status.health_checks,
+                "health_checks": status.health_checks_performed,
                 "last_metric_time": status.last_metric_time.isoformat() if status.last_metric_time else None,
+                "last_health_check_time": (
+                    status.last_health_check_time.isoformat() if status.last_health_check_time else None
+                ),
             },
         }
-    except Exception as e:
-        logger.error(f"获取监控状态失败: {e}")
-        raise HTTPException(status_code=500, detail=f"监控状态获取失败: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get monitoring status: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Monitoring status retrieval failed: {exc}") from exc
 
-
-# 告警配置和管理相关API
 
 @router.get("/alert/rules")
-async def get_alert_rules():
-    """
-    获取告警规则列表
-
-    Returns:
-        告警规则列表
-    """
+async def get_alert_rules() -> Dict[str, Any]:
     try:
         config = get_monitoring_config()
-        rules = []
-
-        for rule in config.alert_rules:
-            rules.append({
+        rules = [
+            {
                 "name": rule.name,
                 "metric_name": rule.metric_name,
                 "severity": rule.severity.value,
@@ -221,237 +212,123 @@ async def get_alert_rules():
                 "cooldown_minutes": rule.cooldown_minutes,
                 "enabled": rule.enabled,
                 "channels": rule.channels,
-            })
-
-        return {
-            "status": "success",
-            "data": rules,
-        }
-    except Exception as e:
-        logger.error(f"获取告警规则失败: {e}")
-        raise HTTPException(status_code=500, detail=f"告警规则获取失败: {str(e)}")
+            }
+            for rule in config.alert_rules
+        ]
+        return {"status": "success", "data": rules}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get alert rules: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Alert rules retrieval failed: {exc}") from exc
 
 
 @router.get("/alert/channels")
-async def get_alert_channels():
-    """
-    获取告警渠道配置
-
-    Returns:
-        告警渠道配置列表
-    """
+async def get_alert_channels() -> Dict[str, Any]:
     try:
         config = get_monitoring_config()
-        channels = []
-
-        for name, channel in config.alert_channels.items():
-            channels.append({
+        channels = [
+            {
                 "name": channel.name,
                 "enabled": channel.enabled,
                 "type": channel.type,
-                # 不返回敏感信息
                 "smtp_server": channel.smtp_server if channel.type == "email" else None,
-                "webhook_url": channel.webhook_url if channel.type in ["webhook", "dingtalk", "feishu", "wecom"] else None,
-            })
-
-        return {
-            "status": "success",
-            "data": channels,
-        }
-    except Exception as e:
-        logger.error(f"获取告警渠道失败: {e}")
-        raise HTTPException(status_code=500, detail=f"告警渠道获取失败: {str(e)}")
+                "webhook_url": (
+                    channel.webhook_url
+                    if channel.type in {"webhook", "dingtalk", "feishu", "wecom"}
+                    else None
+                ),
+            }
+            for channel in config.alert_channels.values()
+        ]
+        return {"status": "success", "data": channels}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get alert channels: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Alert channels retrieval failed: {exc}") from exc
 
 
 @router.post("/alert/test")
-async def test_alert_channel(
-    channel_type: str,
-    config: Dict,
-):
-    """
-    测试告警渠道配置
-
-    Args:
-        channel_type: 渠道类型 (email, webhook, telegram, dingtalk, feishu, wecom)
-        config: 渠道配置
-
-    Returns:
-        测试结果
-    """
+async def test_alert_channel(payload: AlertChannelTestRequest) -> Dict[str, Any]:
     try:
-        channel: Optional[AlertChannel] = None
+        channel = _build_channel(payload.channel_type, payload.config)
+        if not getattr(channel, "enabled", True):
+            raise HTTPException(status_code=400, detail="Alert channel is not enabled")
 
-        if channel_type == "email":
-            channel = EmailChannel(
-                smtp_server=config.get("smtp_server"),
-                smtp_port=config.get("smtp_port", 587),
-                username=config.get("username"),
-                password=config.get("password"),
-                to_email=config.get("to_email"),
-            )
-        elif channel_type == "webhook":
-            channel = WebhookChannel(webhook_url=config.get("webhook_url"))
-        elif channel_type == "telegram":
-            channel = TelegramChannel(
-                bot_token=config.get("bot_token"),
-                chat_id=config.get("chat_id"),
-            )
-        elif channel_type == "dingtalk":
-            channel = DingTalkChannel(
-                webhook_url=config.get("webhook_url"),
-                secret=config.get("secret"),
-            )
-        elif channel_type == "feishu":
-            channel = FeishuChannel(
-                webhook_url=config.get("webhook_url"),
-                secret=config.get("secret"),
-            )
-        elif channel_type == "wecom":
-            channel = WeComChannel(webhook_url=config.get("webhook_url"))
-        else:
-            raise HTTPException(status_code=400, detail=f"未知的告警渠道类型: {channel_type}")
-
-        if not channel.enabled:
-            raise HTTPException(status_code=400, detail="告警渠道未启用")
-
-        # 创建测试告警
-        from core.monitoring import Alert, AlertSeverity
         test_alert = Alert(
             alert_id="TEST_ALERT",
             rule_id="TEST_RULE",
-            rule_name="测试告警",
+            rule_name="Test Alert",
             severity=AlertSeverity.INFO,
-            message="这是一条测试告警消息。如果您收到此消息，说明告警渠道配置正确。",
+            message="This is a monitoring test alert.",
             metric_name="test_metric",
             metric_value=100.0,
             threshold=50.0,
             timestamp=datetime.now(),
-            channels=[channel_type],
+            channels=[payload.channel_type],
         )
 
-        success = channel.send(test_alert)
+        if not channel.send(test_alert):
+            raise HTTPException(status_code=500, detail="Failed to send test alert")
 
-        if success:
-            return {
-                "status": "success",
-                "message": "测试告警发送成功，请检查您的接收端",
-                "data": {"success": True},
-            }
-        else:
-            raise HTTPException(status_code=500, detail="测试告警发送失败，请检查配置")
-
+        return {
+            "status": "success",
+            "message": "Test alert sent successfully.",
+            "data": {"success": True},
+        }
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"测试告警渠道失败: {e}")
-        raise HTTPException(status_code=500, detail=f"测试失败: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to send test alert: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Test alert failed: {exc}") from exc
 
 
 @router.get("/alert/history")
-async def get_alert_history(
-    limit: int = 100,
-    severity: Optional[str] = None,
-):
-    """
-    获取告警历史
-
-    Args:
-        limit: 返回数量限制
-        severity: 严重程度过滤 (info, warning, error, critical)
-
-    Returns:
-        告警历史数据
-    """
+async def get_alert_history(limit: int = 100, severity: Optional[str] = None) -> Dict[str, Any]:
     try:
-        from core.monitoring import get_monitoring_config
-
-        config = get_monitoring_config()
-        alert_manager = AlertManager()
-
-        # 模拟告警管理器获取历史
         severity_enum = None
         if severity:
             try:
-                severity_enum = AlertSeverity(severity)
+                severity_enum = AlertSeverity(severity.lower())
             except ValueError:
-                pass
+                raise HTTPException(status_code=400, detail=f"Unknown severity: {severity}") from None
 
-        history = alert_manager.get_alert_history(
-            limit=limit,
-            severity=severity_enum,
-        )
-
-        return {
-            "status": "success",
-            "data": history,
-        }
-    except Exception as e:
-        logger.error(f"获取告警历史失败: {e}")
-        raise HTTPException(status_code=500, detail=f"告警历史获取失败: {str(e)}")
+        history = _get_alert_manager().get_alert_history(limit=limit, severity=severity_enum)
+        return {"status": "success", "data": history}
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get alert history: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Alert history retrieval failed: {exc}") from exc
 
 
 @router.get("/alert/statistics")
-async def get_alert_statistics():
-    """
-    获取告警统计信息
-
-    Returns:
-        告警统计信息
-    """
+async def get_alert_statistics() -> Dict[str, Any]:
     try:
-        from core.monitoring import get_monitoring_config
-
-        config = get_monitoring_config()
-        alert_manager = AlertManager()
-
-        stats = alert_manager.get_alert_statistics()
-
-        return {
-            "status": "success",
-            "data": stats,
-        }
-    except Exception as e:
-        logger.error(f"获取告警统计失败: {e}")
-        raise HTTPException(status_code=500, detail=f"告警统计获取失败: {str(e)}")
+        return {"status": "success", "data": _get_alert_manager().get_alert_statistics()}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get alert statistics: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Alert statistics retrieval failed: {exc}") from exc
 
 
 @router.post("/restart")
-async def restart_monitoring():
-    """
-    重启监控系统
-
-    Returns:
-        重启结果
-    """
+async def restart_monitoring() -> Dict[str, Any]:
     try:
-        from core.monitoring import restart_system_monitor
-
         monitor = restart_system_monitor()
-
         return {
             "status": "success",
-            "message": "监控系统已重启",
+            "message": "Monitoring restarted successfully.",
             "data": {
                 "is_monitoring": monitor.is_monitoring,
                 "uptime_seconds": 0,
             },
         }
-    except Exception as e:
-        logger.error(f"重启监控系统失败: {e}")
-        raise HTTPException(status_code=500, detail=f"重启失败: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to restart monitoring: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Monitoring restart failed: {exc}") from exc
 
 
 @router.get("/config")
-async def get_monitoring_config_api():
-    """
-    获取监控配置
-
-    Returns:
-        监控配置
-    """
+async def get_monitoring_config_api() -> Dict[str, Any]:
     try:
         config = get_monitoring_config()
-
         return {
             "status": "success",
             "data": {
@@ -466,6 +343,6 @@ async def get_monitoring_config_api():
                 "max_alerts_per_hour": config.max_alerts_per_hour,
             },
         }
-    except Exception as e:
-        logger.error(f"获取监控配置失败: {e}")
-        raise HTTPException(status_code=500, detail=f"配置获取失败: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get monitoring config: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Monitoring config retrieval failed: {exc}") from exc

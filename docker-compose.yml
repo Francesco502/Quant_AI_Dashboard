@@ -1,46 +1,29 @@
-# ============================================================
-# Quant-AI Dashboard v2.0.0 — 单容器部署（2核2GB 专用）
-#
-# 架构：1 个容器内用 Supervisor 管理 Nginx + Uvicorn + Daemon
-#   - Nginx    : 托管前端静态文件 + 反向代理 API/WS（端口 80）
-#   - Uvicorn  : FastAPI 单 worker（端口 8685，内部）
-#   - Daemon   : 定时数据更新 / 模型训练（可选，ENABLE_DAEMON 控制）
-#
-# 使用：
-#   docker-compose up -d            # 启动
-#   docker-compose logs -f          # 查看日志
-#   docker-compose down             # 停止
-# ============================================================
-
 services:
   quant-app:
-    image: francescoli/quant_app:v2.0.0
+    image: francescoli/quant_app:v2.1.0
     build:
       context: .
       dockerfile: Dockerfile.optimized
     container_name: quant-app
     ports:
-      - "8686:80"     # 统一入口（Nginx）
-      - "8685:8685"   # 后端 API（可选，调试用）
+      - "8686:80"
+      - "8685:8685"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./strategies:/app/strategies
       - ./models:/app/models
     environment:
-      - PYTHONUNBUFFERED=1
-      # ---- 低配优化 ----
-      - DISABLE_HEAVY_MODELS=true
-      - ENABLE_DAEMON=true
-      # ---- 认证 ----
-      - SECRET_KEY=${SECRET_KEY:-quant-ai-dashboard-secret-key-change-me}
-      - APP_LOGIN_PASSWORD=${APP_LOGIN_PASSWORD:-}
-      - APP_LOGIN_PASSWORD_HASH=${APP_LOGIN_PASSWORD_HASH:-}
-      # ---- 数据源 ----
-      - ALPHA_VANTAGE_KEY=${ALPHA_VANTAGE_KEY:-}
-      - TUSHARE_TOKEN=${TUSHARE_TOKEN:-}
-      # ---- CORS ----
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8686}
+      PYTHONUNBUFFERED: "1"
+      DISABLE_HEAVY_MODELS: "true"
+      ENABLE_DAEMON: "${ENABLE_DAEMON:-true}"
+      API_EXPECT_SAME_ORIGIN: "${API_EXPECT_SAME_ORIGIN:-true}"
+      SECRET_KEY: "${SECRET_KEY:-quant-ai-dashboard-secret-key-change-me}"
+      APP_LOGIN_PASSWORD: "${APP_LOGIN_PASSWORD:-}"
+      APP_LOGIN_PASSWORD_HASH: "${APP_LOGIN_PASSWORD_HASH:-}"
+      ALPHA_VANTAGE_KEY: "${ALPHA_VANTAGE_KEY:-}"
+      TUSHARE_TOKEN: "${TUSHARE_TOKEN:-}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:8686}"
     deploy:
       resources:
         limits:

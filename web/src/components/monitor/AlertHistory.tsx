@@ -18,11 +18,11 @@ interface AlertHistoryProps {
 type Severity = "critical" | "error" | "warning" | "info" | "unknown"
 
 const severityMeta: Record<Severity, { label: string; textClass: string; bgClass: string; icon: typeof Bell }> = {
-  critical: { label: "Critical", textClass: "text-red-600", bgClass: "bg-red-500", icon: XCircle },
-  error: { label: "Error", textClass: "text-red-500", bgClass: "bg-red-400", icon: AlertCircle },
-  warning: { label: "Warning", textClass: "text-amber-600", bgClass: "bg-amber-500", icon: AlertTriangle },
-  info: { label: "Info", textClass: "text-blue-600", bgClass: "bg-blue-500", icon: CheckCircle2 },
-  unknown: { label: "Unknown", textClass: "text-gray-600", bgClass: "bg-gray-500", icon: Bell },
+  critical: { label: "严重", textClass: "text-[#B6453C]", bgClass: "bg-[#B6453C]", icon: XCircle },
+  error: { label: "错误", textClass: "text-[#A54E47]", bgClass: "bg-[#A54E47]", icon: AlertCircle },
+  warning: { label: "预警", textClass: "text-[#8C724C]", bgClass: "bg-[#B08E61]", icon: AlertTriangle },
+  info: { label: "提示", textClass: "text-[#6F7C8E]", bgClass: "bg-[#6F7C8E]", icon: CheckCircle2 },
+  unknown: { label: "未知", textClass: "text-gray-600", bgClass: "bg-gray-500", icon: Bell },
 }
 
 function toSeverity(value?: string): Severity {
@@ -120,23 +120,23 @@ export function AlertHistory({
         <div className="space-y-1">
           <h2 className="flex items-center gap-2 text-xl font-semibold tracking-[-0.02em] text-foreground/90">
             <Bell className="h-5 w-5" />
-            Alert History
+            告警历史
           </h2>
-          <p className="text-[13px] text-foreground/40">System alert records and severity distribution.</p>
+          <p className="text-[13px] text-foreground/40">查看系统告警记录、严重度分布与最近趋势。</p>
         </div>
 
         {showStats && stats && (
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-foreground/40">Total</span>
+              <span className="text-foreground/40">累计</span>
               <span className="font-semibold text-foreground">{stats.total_alerts}</span>
             </div>
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-foreground/40">24h</span>
+              <span className="text-foreground/40">24 小时</span>
               <span className="font-semibold text-foreground">{stats.recent_alerts_24h}</span>
             </div>
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-foreground/40">Rules</span>
+              <span className="text-foreground/40">规则数</span>
               <span className="font-semibold text-foreground">{stats.active_rules}</span>
             </div>
           </div>
@@ -148,15 +148,15 @@ export function AlertHistory({
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-foreground/40" />
-              <span className="text-sm font-medium text-foreground/70">Severity</span>
+              <span className="text-sm font-medium text-foreground/70">严重度</span>
             </div>
             <div className="flex items-center gap-2">
               {[
-                { value: "all", label: "All" },
-                { value: "critical", label: "Critical" },
-                { value: "error", label: "Error" },
-                { value: "warning", label: "Warning" },
-                { value: "info", label: "Info" },
+                { value: "all", label: "全部" },
+                { value: "critical", label: "严重" },
+                { value: "error", label: "错误" },
+                { value: "warning", label: "预警" },
+                { value: "info", label: "提示" },
               ].map((option) => (
                 <button
                   key={option.value}
@@ -184,9 +184,9 @@ export function AlertHistory({
         ) : alerts.length === 0 ? (
           <GlassCard className="flex flex-col items-center justify-center p-12 text-center">
             <CheckCircle2 className="mb-4 h-12 w-12 text-emerald-500/20" />
-            <p className="text-lg font-medium text-foreground">No Alerts</p>
+            <p className="text-lg font-medium text-foreground">暂无告警</p>
             <p className="mt-2 text-sm text-foreground/40">
-              {filterSeverity === "all" ? "System is running normally." : `No ${filterSeverity} alerts found.`}
+              {filterSeverity === "all" ? "当前系统运行平稳。" : `当前没有“${severityMeta[toSeverity(filterSeverity)].label}”级别的告警。`}
             </p>
           </GlassCard>
         ) : (
@@ -238,19 +238,19 @@ export function AlertHistory({
 
                         <div className="grid grid-cols-2 gap-2 border-t border-black/5 pt-3 text-xs dark:border-white/5 md:grid-cols-4">
                           <div className="flex items-center justify-between">
-                            <span className="text-foreground/40">Metric</span>
+                            <span className="text-foreground/40">指标</span>
                             <span className="max-w-[100px] truncate font-mono text-foreground/70">{alert.metric_name}</span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-foreground/40">Current</span>
+                            <span className="text-foreground/40">当前值</span>
                             <span className="font-mono text-foreground/70">{alert.metric_value.toFixed(2)}</span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-foreground/40">Threshold</span>
+                            <span className="text-foreground/40">阈值</span>
                             <span className="font-mono text-foreground/70">{alert.threshold.toFixed(2)}</span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-foreground/40">Channels</span>
+                            <span className="text-foreground/40">通道数</span>
                             <span className="font-medium text-foreground/80">{alert.channels?.length ?? 0}</span>
                           </div>
                         </div>
@@ -269,7 +269,7 @@ export function AlertHistory({
                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-foreground/60 transition-colors hover:text-foreground"
               >
                 <RefreshCw className="h-4 w-4" />
-                Load More
+                加载更多
               </button>
             </div>
           </>

@@ -34,7 +34,7 @@ statsmodels>=0.14.0
 # darts>=0.27.0
 
 # Optional data providers
-# tushare>=1.2.0
+tushare>=1.2.0
 # ccxt>=4.0.0
 
 # Security and auth

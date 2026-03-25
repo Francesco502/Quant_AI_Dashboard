@@ -22,6 +22,7 @@ import os
 from typing import List, Dict, Optional
 import logging
 import datetime
+from urllib.parse import urlparse
 
 from .routers import (
     strategies,
@@ -39,6 +40,7 @@ from .routers import (
     portfolio,
     scanner,
     user_config,
+    user_assets,
     monitoring,
     external,
     strategy_templates,
@@ -48,8 +50,11 @@ from .auth import (
     router as auth_router,
     AuthenticationMiddleware as AuthMiddleware,
     bootstrap_admin_from_env,
+    get_user_by_username,
+    validate_auth_security,
 )
 from .middleware import RateLimitMiddleware, PerformanceMiddleware
+from core.user_assets import DEFAULT_ADMIN_ASSET_SEED, get_user_asset_service
 from core.version import VERSION
 from core.memory_monitor import get_memory_monitor
 from core.trading_calendar import get_trading_calendar
@@ -59,15 +64,95 @@ logger = logging.getLogger(__name__)
 # WebSocket 管理器
 ws_manager = WebSocketManager()
 
+DEFAULT_DEV_CORS_ORIGINS = [
+    "http://localhost:8686",
+    "http://127.0.0.1:8686",
+    "http://localhost:8685",
+    "http://127.0.0.1:8685",
+    "http://localhost:8687",
+    "http://127.0.0.1:8687",
+]
+STRICT_TRUE_VALUES = {"1", "true", "yes", "on"}
+PRODUCTION_ENV_VALUES = {"prod", "production"}
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in STRICT_TRUE_VALUES
+
+
+def _is_production_security_mode() -> bool:
+    app_env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
+    return app_env in PRODUCTION_ENV_VALUES or _env_flag("STRICT_SECURITY_VALIDATION")
+
+
+def _parse_cors_origins(value: str) -> List[str]:
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+
+def _load_cors_origins() -> List[str]:
+    configured = os.getenv("CORS_ORIGINS", "").strip()
+    if configured:
+        return _parse_cors_origins(configured)
+    return DEFAULT_DEV_CORS_ORIGINS.copy()
+
+
+def _is_loopback_origin(origin: str) -> bool:
+    hostname = (urlparse(origin).hostname or "").strip().lower()
+    return hostname in {"localhost", "127.0.0.1"}
+
+
+def get_security_readiness_issues(cors_origins: Optional[List[str]] = None) -> List[str]:
+    issues = validate_auth_security(strict=False)
+    effective_origins = cors_origins if cors_origins is not None else _cors_origins
+
+    if _env_flag("API_EXPECT_SAME_ORIGIN"):
+        return issues
+
+    if not os.getenv("CORS_ORIGINS", "").strip():
+        issues.append(
+            "CORS_ORIGINS is not explicitly configured. Set CORS_ORIGINS or API_EXPECT_SAME_ORIGIN=1 for release deployments."
+        )
+    elif not effective_origins or all(_is_loopback_origin(origin) for origin in effective_origins):
+        issues.append("CORS_ORIGINS only contains localhost origins.")
+
+    return issues
+
+
+def validate_runtime_security(strict: Optional[bool] = None) -> List[str]:
+    should_fail = _is_production_security_mode() if strict is None else strict
+    issues = get_security_readiness_issues()
+
+    for issue in issues:
+        logger.warning("Security readiness issue: %s", issue)
+
+    if should_fail and issues:
+        raise RuntimeError("Runtime security validation failed: " + "; ".join(issues))
+
+    return issues
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
     logger.info("API 服务启动中...")
+    validate_runtime_security()
     logger.info("初始化认证与授权系统...")
     try:
         bootstrap_admin_from_env()
+        admin_username = (os.getenv("APP_ADMIN_USERNAME") or "admin").strip() or "admin"
+        admin_user = get_user_by_username(admin_username)
+        if admin_user and admin_user.id is not None:
+            seed_result = get_user_asset_service().seed_assets_if_empty(
+                int(admin_user.id),
+                DEFAULT_ADMIN_ASSET_SEED,
+            )
+            if seed_result.get("seeded"):
+                logger.info(
+                    "Seeded %s personal assets for %s",
+                    seed_result.get("count", 0),
+                    admin_username,
+                )
         from core.rbac import get_rbac
         rbac = get_rbac()
         logger.info(f"RBAC系统初始化完成，支持 {len(rbac.get_available_roles())} 个角色")
@@ -106,8 +191,7 @@ app = FastAPI(
 # ====================中间件配置====================
 
 # CORS 配置（从环境变量读取允许的前端域名）
-_cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:8686,http://127.0.0.1:8686,http://localhost:8685,http://127.0.0.1:8685,http://localhost:8687,http://127.0.0.1:8687")
-_cors_origins = [o.strip() for o in _cors_origins_str.split(",") if o.strip()]
+_cors_origins = _load_cors_origins()
 
 app.add_middleware(
     CORSMiddleware,
@@ -161,6 +245,7 @@ app.include_router(agent.router, prefix="/api/agent", tags=["Agent研究"])
 app.include_router(portfolio.router, prefix="/api/portfolio", tags=["持仓分析"])
 app.include_router(scanner.router, prefix="/api/scanner", tags=["选股扫描"])
 app.include_router(user_config.router, prefix="/api/user", tags=["用户配置"])
+app.include_router(user_assets.router, prefix="/api/user", tags=["个人资产"])
 app.include_router(monitoring.router, prefix="/api", tags=["系统监控"])
 app.include_router(external.router, prefix="/api/external", tags=["外部数据源"])
 app.include_router(strategy_templates.router, prefix="/api", tags=["策略模板"])
@@ -252,6 +337,8 @@ async def health_check():
         if not is_healthy:
             status = "critical" if memory_status.is_critical else "warning"
 
+        security_issues = get_security_readiness_issues()
+
         return {
             "status": status,
             "service": "quant-ai-api",
@@ -268,6 +355,11 @@ async def health_check():
             },
             "trading_day": is_trading_day,
             "memory_message": memory_msg,
+            "security": {
+                "ready": not security_issues,
+                "strict_mode": _is_production_security_mode(),
+                "issues": security_issues,
+            },
         }
     except Exception as e:
         logger.error(f"健康检查出错: {e}")
@@ -276,6 +368,11 @@ async def health_check():
             "service": "quant-ai-api",
             "version": VERSION,
             "error": str(e),
+            "security": {
+                "ready": False,
+                "strict_mode": _is_production_security_mode(),
+                "issues": [str(e)],
+            },
         }
 
 

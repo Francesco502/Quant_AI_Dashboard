@@ -1,4 +1,58 @@
-﻿export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8685/api";
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8685/api"
+
+function normalizeBaseUrl(base: string): string {
+  // Remove trailing slashes to avoid `.../api//path`.
+  return base.replace(/\/+$/, "")
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1"
+}
+
+function harmonizeLocalDevBaseUrl(base: string): string {
+  if (typeof window === "undefined") return base
+
+  try {
+    const parsed = new URL(base)
+    const currentHost = window.location.hostname
+    if (isLoopbackHost(parsed.hostname) && isLoopbackHost(currentHost) && parsed.hostname !== currentHost) {
+      parsed.hostname = currentHost
+      return normalizeBaseUrl(parsed.toString())
+    }
+  } catch {
+    return base
+  }
+
+  return base
+}
+
+function normalizeEndpoint(endpoint: string): string {
+  if (!endpoint) return "/"
+  return endpoint.startsWith("/") ? endpoint : `/${endpoint}`
+}
+
+/**
+ * 配置驱动的 API 基址解析（唯一权威）。
+ *
+ * - `NEXT_PUBLIC_API_URL` 为绝对 URL：原样使用（例如本地 `http://127.0.0.1:8685/api`）
+ * - `NEXT_PUBLIC_API_URL` 为相对路径（以 `/` 开头）：浏览器端拼接到同源（例如线上 `/api`）
+ *
+ * 注意：当前项目约束为“仅在客户端调用 API”；如需 SSR 调用，需引入 `SITE_ORIGIN` 并扩展该函数。
+ */
+export function resolveApiBaseUrl(): string {
+  const configured = API_BASE_URL
+  if (typeof window === "undefined") {
+    return normalizeBaseUrl(configured)
+  }
+  const normalized = configured.trim()
+  if (normalized.startsWith("/")) {
+    return normalizeBaseUrl(`${window.location.origin}${normalized}`)
+  }
+  return harmonizeLocalDevBaseUrl(normalizeBaseUrl(normalized))
+}
+
+// Backward compatible export (avoid touching too many call sites).
+export const getEffectiveApiBaseUrl = resolveApiBaseUrl
 
 export interface ApiResponse<T> {
   status?: string;
@@ -203,7 +257,9 @@ export interface TradeOrderRequest {
     ticker: string;
     action: "BUY" | "SELL";
     shares: number;
+    order_type?: "MARKET" | "LIMIT" | "STOP" | "STOP_LIMIT";
     price?: number;
+    stop_price?: number;
 }
 
 export interface CreateAccountRequest {
@@ -240,6 +296,99 @@ export interface EquityCurve {
     days: number;
     data: EquityPoint[];
     count: number;
+}
+
+export interface AutoTradingConfig {
+    enabled: boolean;
+    interval_minutes: number;
+    username: string;
+    account_name: string;
+    initial_capital: number;
+    strategy_ids: string[];
+    universe_mode: "manual" | "asset_pool" | "cn_a_share";
+    universe: string[];
+    universe_limit: number;
+    max_positions: number;
+    evaluation_days: number;
+    min_total_return: number;
+    min_sharpe_ratio: number;
+    max_drawdown: number;
+    top_n_strategies: number;
+}
+
+export interface AutoTradingStrategySummary {
+    id: string;
+    name: string;
+    description: string;
+    category?: string;
+    default_params?: Record<string, unknown>;
+}
+
+export interface AutoTradingDaemonStatus {
+    daemon_running?: boolean;
+    daemon_pid?: number;
+    last_started_at?: string;
+    last_stopped_at?: string;
+    last_trading_run?: string;
+    last_trading_requested_at?: string;
+    last_trading_result?: UnknownRecord;
+    last_trading_error?: string | null;
+    trading_run_state?: "idle" | "running" | "failed" | string;
+    config_trading_enabled?: boolean;
+    config_trading_interval_minutes?: number;
+}
+
+export interface AutoTradingAccountSnapshot {
+    found: boolean;
+    username: string;
+    user_id?: number;
+    account_id?: number;
+    account_name: string;
+    balance?: number;
+    initial_capital?: number;
+    portfolio?: {
+        total_assets: number;
+        cash: number;
+        market_value: number;
+        positions: Position[];
+    };
+    positions?: Position[];
+    recent_trades?: TradeHistoryRecord[];
+    recent_orders?: UnknownRecord[];
+}
+
+export interface AutoTradingStatusResponse {
+    config: AutoTradingConfig;
+    daemon: AutoTradingDaemonStatus;
+    available_strategies: AutoTradingStrategySummary[];
+    account: AutoTradingAccountSnapshot | null;
+    run_request_status?: "started" | "already_running" | string;
+    message?: string;
+    universe_summary?: {
+      mode: "manual" | "asset_pool" | "cn_a_share" | string;
+      label: string;
+      ticker_count: number;
+      preview: string[];
+    };
+    run_result?: UnknownRecord;
+}
+
+export interface AutoTradingConfigUpdateRequest {
+    enabled?: boolean;
+    interval_minutes?: number;
+    username?: string;
+    account_name?: string;
+    initial_capital?: number;
+    strategy_ids?: string[];
+    universe_mode?: "manual" | "asset_pool" | "cn_a_share";
+    universe?: string[];
+    universe_limit?: number;
+    max_positions?: number;
+    evaluation_days?: number;
+    min_total_return?: number;
+    min_sharpe_ratio?: number;
+    max_drawdown?: number;
+    top_n_strategies?: number;
 }
 
 export interface DecisionDashboardResult {
@@ -362,7 +511,8 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+  const base = resolveApiBaseUrl()
+  const url = `${base}${normalizeEndpoint(endpoint)}`
   
   const headers = {
     ...getAuthHeaders(),
@@ -376,6 +526,9 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
       headers,
     });
   } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
     const message =
       error instanceof Error && error.message
         ? error.message
@@ -439,7 +592,7 @@ function normalizePaperAccount(payload: PaperAccountBackendResponse): PaperAccou
   return {
     status: "success",
     account_id: toNumber(accountId, 0),
-    account_name: payload?.account_name || "Paper Account",
+    account_name: payload?.account_name || "模拟账户",
     currency: "CNY",
     portfolio: {
       total_assets: totalAssets,
@@ -452,7 +605,19 @@ function normalizePaperAccount(payload: PaperAccountBackendResponse): PaperAccou
 
 export interface DataSourceResponse {
   sources: string[];
-  api_keys: Record<string, string>;
+  api_key_status: {
+    Tushare: boolean;
+    AlphaVantage: boolean;
+  };
+  configuration_mode: "env_locked";
+}
+
+export type LlmInterfaceType = "openai_compat" | "anthropic";
+
+export interface LlmRuntimeOptions {
+  provider_type?: LlmInterfaceType;
+  base_url?: string;
+  model?: string;
 }
 
 export interface Asset {
@@ -460,6 +625,103 @@ export interface Asset {
   name?: string;
   alias?: string;
   last_price?: number;
+  asset_type?: string | null;
+  last_price_date?: string | null;
+  price_source?: string | null;
+}
+
+export interface AssetSearchResult {
+  ticker: string;
+  name: string;
+  asset_type: string;
+  market?: string;
+  source?: string;
+  category?: string | null;
+  score?: number;
+}
+
+export interface UserAssetDcaRule {
+  enabled: boolean;
+  frequency: "weekly" | "monthly";
+  weekday?: number | null;
+  monthday?: number | null;
+  amount: number;
+  start_date?: string | null;
+  end_date?: string | null;
+  shift_to_next_trading_day?: boolean;
+  last_run_date?: string | null;
+}
+
+export interface UserAssetRow {
+  ticker: string;
+  asset_name?: string | null;
+  asset_category?: string | null;
+  asset_style?: string | null;
+  asset_type?: string | null;
+  notes?: string | null;
+  units: number;
+  avg_cost: number;
+  invested_amount: number;
+  current_price: number;
+  last_price_date?: string | null;
+  market_value: number;
+  total_return: number;
+  total_return_pct: number;
+  day_change: number;
+  week_change: number;
+  month_change: number;
+  year_change: number;
+  day_change_pct?: number;
+  week_change_pct?: number;
+  month_change_pct?: number;
+  year_change_pct?: number;
+  dca_rule?: UserAssetDcaRule | null;
+  updated_at?: string | null;
+}
+
+export interface UserAssetSummary {
+  asset_count: number;
+  total_market_value: number;
+  total_invested_amount: number;
+  total_return: number;
+  total_return_pct: number;
+  day_change: number;
+  week_change: number;
+  month_change: number;
+  year_change: number;
+  updated_at?: string;
+}
+
+export interface UserAssetOverview {
+  summary: UserAssetSummary;
+  assets: UserAssetRow[];
+}
+
+export interface UserAssetTransaction {
+  id: number;
+  ticker: string;
+  transaction_type: string;
+  trade_date: string;
+  quantity: number;
+  price: number;
+  amount?: number | null;
+  fee?: number;
+  source?: string;
+  note?: string | null;
+  created_at?: string;
+}
+
+export interface UserAssetUpsertRequest {
+  ticker: string;
+  asset_name?: string;
+  asset_category?: string;
+  asset_style?: string;
+  asset_type?: string;
+  units: number;
+  avg_cost: number;
+  trade_date?: string;
+  notes?: string;
+  dca_rule?: UserAssetDcaRule | null;
 }
 
 // API Methods
@@ -483,14 +745,17 @@ export const api = {
         method: "POST",
         body: JSON.stringify(params),
     }),
-    getAssetPool: () => fetchApi<Asset[]>("/stz/asset-pool"),
+    getAssetPool: (forceRefresh: boolean = false) =>
+      fetchApi<Asset[]>(`/stz/asset-pool${forceRefresh ? "?force_refresh=true" : ""}`),
+    searchAssets: (query: string, limit: number = 12, options: RequestInit = {}) =>
+      fetchApi<AssetSearchResult[]>(`/stz/asset-search?q=${encodeURIComponent(query)}&limit=${limit}`, options),
     updateAssetPool: (tickers: Asset[]) => fetchApi<{ tickers: Asset[] }>("/stz/asset-pool", {
         method: "POST",
         body: JSON.stringify({ tickers }),
     }),
-    addAsset: (ticker: string, alias?: string) => fetchApi<{ status: string; message: string; pool: Asset[] }>("/stz/asset-pool/add", {
+    addAsset: (data: { ticker: string; asset_name?: string; asset_type?: string; alias?: string }) => fetchApi<{ status: string; message: string; pool: Asset[] }>("/stz/asset-pool/add", {
         method: "POST",
-        body: JSON.stringify({ ticker, alias }),
+        body: JSON.stringify(data),
     }),
     deleteAsset: (ticker: string) => fetchApi<{ status: string; message: string; pool: Asset[] }>("/stz/asset-pool/delete", {
         method: "POST",
@@ -501,10 +766,6 @@ export const api = {
         body: JSON.stringify({ ticker, alias }),
     }),
     getDataSources: () => fetchApi<DataSourceResponse>("/stz/data-sources"),
-    updateDataSources: (sources: string[], api_keys?: Record<string, string>) => fetchApi<{ sources: string[] }>("/stz/data-sources", {
-        method: "POST",
-        body: JSON.stringify({ sources, api_keys }),
-    }),
     getHistory: () => fetchApi<HistoryRecord[]>("/stz/history"),
     getHistoryDetail: (date: string) => fetchApi<unknown[]>("/stz/history/" + date),
   },
@@ -535,6 +796,19 @@ export const api = {
         method: "POST",
         body: JSON.stringify(payload),
       }),
+    auto: {
+        getStatus: () => fetchApi<AutoTradingStatusResponse>("/trading/auto/status"),
+        updateConfig: (data: AutoTradingConfigUpdateRequest) =>
+            fetchApi<AutoTradingStatusResponse>("/trading/auto/config", {
+                method: "PUT",
+                body: JSON.stringify(data),
+            }),
+        runNow: (data: { reset_account?: boolean; initial_balance?: number } = {}) =>
+            fetchApi<AutoTradingStatusResponse>("/trading/auto/run-now", {
+                method: "POST",
+                body: JSON.stringify(data),
+            }),
+    },
     // Paper Trading Endpoints
     paper: {
         createAccount: (data: CreateAccountRequest) =>
@@ -581,7 +855,7 @@ export const api = {
                 return {
                     status: "success",
                     account_id: toNumber(detail.account_id, accountId),
-                    account_name: detail.account_name || "Paper Account",
+                    account_name: detail.account_name || "模拟账户",
                     currency: "CNY",
                     portfolio: {
                         total_assets: toNumber(detail.portfolio?.total_assets, 0),
@@ -604,7 +878,7 @@ export const api = {
                 const account = await fetchApi<PaperAccountBackendResponse>("/accounts/paper");
                 const normalized = normalizePaperAccount(account);
                 if (!normalized?.account_id) {
-                    throw new Error("No active paper account found.");
+                    throw new Error("当前没有可用的模拟账户。");
                 }
                 accountId = normalized.account_id;
             }
@@ -615,20 +889,38 @@ export const api = {
                     account_id: accountId,
                     symbol: data.ticker,
                     side: data.action,
-                    order_type: "MARKET",
+                    order_type: data.order_type || "MARKET",
                     quantity: data.shares,
                     price: data.price,
+                    stop_price: data.stop_price,
                 }),
             });
         },
+        resetAccount: (accountId: number, data: { initial_balance: number; account_name?: string }) =>
+            fetchApi<{
+                success: boolean;
+                account_id: number;
+                account_name: string;
+                balance: number;
+                initial_capital: number;
+                message: string;
+            }>(`/trading/accounts/${accountId}/reset`, {
+                method: "POST",
+                body: JSON.stringify(data),
+            }),
         getHistory: async (_accountId?: number, limit: number = 50) => {
             const result = await fetchApi<{ trades: TradeHistoryRecord[]; count: number }>(
                 `/accounts/paper/trades?limit=${limit}`
             );
             return result.trades ?? [];
         },
-        runSettlement: async () => {
-            throw new Error("Paper settlement endpoint is not available in current backend.");
+        runSettlement: async (accountId?: number) => {
+            const account = await api.trading.paper.getAccount(accountId);
+            return {
+                status: "success",
+                message: "模拟账户会按需更新，无需单独执行结算接口。",
+                account,
+            };
         },
         getEquityHistory: (_accountId?: number, days: number = 90) =>
             fetchApi<{ equity_history: { date: string; equity: number; cash: number; position_value: number }[] }>(
@@ -710,13 +1002,32 @@ export const api = {
     },
   },
   llmAnalysis: {
-    getConfig: () =>
-      fetchApi<{ provider: string | null; model: string | null; message?: string }>("/llm-analysis/config"),
-    dashboard: (data: { tickers: string[]; market?: string; include_market_review?: boolean; model?: string }) =>
-      fetchApi<{ results: LlmDecisionResult[]; summary?: LlmDashboardSummary; market_review?: MarketReviewResponse; market_review_error?: string }>("/llm-analysis/dashboard", {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      getConfig: () =>
+        fetchApi<{
+          configured: boolean;
+          available: boolean;
+          provider: string | null;
+          model: string | null;
+          base_url?: string;
+          error?: string;
+          message?: string;
+          selection_mode?: string;
+        }>("/llm-analysis/config"),
+      healthCheck: (options: LlmRuntimeOptions = {}) => {
+        const query = new URLSearchParams()
+        if (options.model) query.set("model", options.model)
+        if (options.provider_type) query.set("provider_type", options.provider_type)
+        if (options.base_url) query.set("base_url", options.base_url)
+        const suffix = query.toString() ? `?${query.toString()}` : ""
+        return fetchApi<{ status: string; provider: string; model?: string | null; base_url?: string | null; response_preview: string }>(
+          `/llm-analysis/health-check${suffix}`
+        )
+      },
+      dashboard: (data: { tickers: string[]; market?: string; include_market_review?: boolean } & LlmRuntimeOptions) =>
+        fetchApi<{ results: LlmDecisionResult[]; summary?: LlmDashboardSummary; market_review?: MarketReviewResponse; market_review_error?: string }>("/llm-analysis/dashboard", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
     runDaily: (tickers?: string[]) =>
       fetchApi<UnknownRecord>("/llm-analysis/run-daily", {
         method: "POST",
@@ -775,6 +1086,52 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ config }),
       }),
+    assets: {
+      getOverview: (syncDca: boolean = true, options?: RequestInit) =>
+        fetchApi<UserAssetOverview>(`/user/assets?sync_dca=${syncDca ? "true" : "false"}`, options),
+      upsert: (data: UserAssetUpsertRequest) =>
+        fetchApi<UserAssetOverview>("/user/assets", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+      update: (ticker: string, data: UserAssetUpsertRequest) =>
+        fetchApi<UserAssetOverview>(`/user/assets/${encodeURIComponent(ticker)}`, {
+          method: "PUT",
+          body: JSON.stringify(data),
+        }),
+      remove: (ticker: string) =>
+        fetchApi<{ success: boolean; ticker: string }>(`/user/assets/${encodeURIComponent(ticker)}`, {
+          method: "DELETE",
+        }),
+      getTransactions: (ticker?: string, options?: RequestInit) =>
+        fetchApi<{ transactions: UserAssetTransaction[]; count: number }>(
+          `/user/assets/transactions${ticker ? `?ticker=${encodeURIComponent(ticker)}` : ""}`,
+          options
+        ),
+      addTransaction: (
+        ticker: string,
+        data: {
+          transaction_type: "BUY" | "SELL" | "ADJUSTMENT_IN" | "ADJUSTMENT_OUT";
+          quantity: number;
+          price?: number;
+          amount?: number;
+          fee?: number;
+          trade_date?: string;
+          note?: string;
+        }
+      ) =>
+        fetchApi<UserAssetOverview>(`/user/assets/${encodeURIComponent(ticker)}/transactions`, {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+      reconcile: () =>
+        fetchApi<UserAssetOverview & { reconcile: { created: number; rules_checked: number; as_of: string } }>(
+          "/user/assets/reconcile",
+          {
+            method: "POST",
+          }
+        ),
+    },
   },
   // --- System Monitoring ---
   monitoring: {
@@ -801,7 +1158,7 @@ export const api = {
         `/monitoring/alert/history?limit=${limit}${severity ? `&severity=${severity}` : ""}`
       ),
     getAlertStatistics: () => fetchApi<{ status: string; data: AlertStatistics }>("/monitoring/alert/statistics"),
-    restartMonitoring: () => fetchApi<{ status: string; message: string; data: UnknownRecord }>("/monitoring/restart"),
+    restartMonitoring: () => fetchApi<{ status: string; message: string; data: UnknownRecord }>("/monitoring/restart", { method: "POST" }),
     getConfig: () => fetchApi<{ status: string; data: UnknownRecord }>("/monitoring/config"),
   },
 };
@@ -824,7 +1181,9 @@ export interface LlmDecisionItem {
     buy_price?: number | null;
     stop_loss?: number | null;
     target_price?: number | null;
-    checklist?: { item: string; status: string }[];
+    latest_price?: number;
+    latest_rsi?: number;
+    checklist?: { item?: string; condition?: string; status: string; value?: string }[];
     highlights?: string[];
     risks?: string[];
   };

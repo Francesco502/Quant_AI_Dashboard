@@ -26,7 +26,8 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 # JWT配置
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+DEFAULT_SECRET_KEY = "your-secret-key-change-in-production"
+SECRET_KEY = os.getenv("SECRET_KEY", DEFAULT_SECRET_KEY)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 默认24小时
 
@@ -65,6 +66,25 @@ from core.rbac import get_rbac, get_user_role_manager, Role, Permission
 
 # 数据库实例
 db = Database()
+
+
+def get_auth_security_issues(secret_key: Optional[str] = None) -> List[str]:
+    """Return authentication security issues that should block production release."""
+    issues: List[str] = []
+    effective_secret = (secret_key if secret_key is not None else SECRET_KEY).strip()
+
+    if not effective_secret or effective_secret == DEFAULT_SECRET_KEY:
+        issues.append("SECRET_KEY is using the insecure default value.")
+
+    return issues
+
+
+def validate_auth_security(strict: bool = False, secret_key: Optional[str] = None) -> List[str]:
+    """Validate authentication security configuration."""
+    issues = get_auth_security_issues(secret_key=secret_key)
+    if strict and issues:
+        raise RuntimeError("Authentication security validation failed: " + "; ".join(issues))
+    return issues
 
 
 def get_user_by_username(username: str) -> Optional[UserInDB]:
@@ -159,15 +179,52 @@ def _get_bootstrap_admin_password_hash() -> Optional[str]:
     return None
 
 
+def _sync_existing_bootstrap_admin(username: str) -> bool:
+    """Keep the configured bootstrap admin credentials aligned with the current environment."""
+    user = get_user_by_username(username)
+    if not user:
+        return False
+
+    configured_hash = (os.getenv("APP_LOGIN_PASSWORD_HASH") or "").strip()
+    configured_password = (os.getenv("APP_LOGIN_PASSWORD") or "").strip()
+    next_hash: Optional[str] = None
+
+    if configured_hash and configured_hash != user.hashed_password:
+        next_hash = configured_hash
+    elif configured_password and not verify_password(configured_password, user.hashed_password):
+        next_hash = get_password_hash(configured_password)
+
+    updated = False
+    if next_hash:
+        cursor = db.conn.cursor()
+        cursor.execute(
+            "UPDATE users SET password_hash = ? WHERE username = ?",
+            (next_hash, username),
+        )
+        db.conn.commit()
+        updated = True
+        logger.info("已同步管理员账号密码: %s", username)
+
+    role_manager = get_user_role_manager()
+    current_role = role_manager.get_user_role(username)
+    if current_role != Role.ADMIN.value:
+        role_manager.set_user_role(username, Role.ADMIN.value, assigned_by="system")
+        updated = True
+
+    return updated
+
+
 def bootstrap_admin_from_env() -> bool:
     """Create the bootstrap admin only when credentials are explicitly configured."""
     username = _get_bootstrap_admin_username()
 
     try:
-        if get_user_by_username(username):
-            return False
-
         hashed_password = _get_bootstrap_admin_password_hash()
+        if get_user_by_username(username):
+            if not hashed_password:
+                return False
+            return _sync_existing_bootstrap_admin(username)
+
         if not hashed_password:
             logger.warning(
                 "未创建默认管理员：请通过 APP_LOGIN_PASSWORD 或 APP_LOGIN_PASSWORD_HASH 显式配置首个管理员账号"
@@ -598,4 +655,150 @@ async def check_role(
         "current_role": current_user.role,
         "requested_role": request.role,
         "has_role": has_role,
+    }
+
+
+class UserRoleUpdateRequest(BaseModel):
+    role: str
+
+
+def _ensure_user_exists(username: str) -> UserInDB:
+    user = get_user_by_username(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+def _build_user_list() -> List[Dict[str, Any]]:
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT id, username, created_at FROM users ORDER BY username COLLATE NOCASE ASC"
+    )
+    rows = cursor.fetchall()
+    role_manager = get_user_role_manager()
+    stored_roles = role_manager.list_roles()
+
+    users: List[Dict[str, Any]] = []
+    for row in rows:
+        username = row["username"]
+        role_entry = stored_roles.get(username)
+        role = role_entry.role if role_entry else None
+        if not role:
+            role = Role.ADMIN.value if username.lower() == "admin" else Role.VIEWER.value
+            role_manager.set_user_role(username, role, assigned_by="system")
+            stored_roles = role_manager.list_roles()
+            role_entry = stored_roles.get(username)
+
+        users.append(
+            {
+                "id": row["id"],
+                "username": username,
+                "role": role or Role.VIEWER.value,
+                "assigned_at": (
+                    role_entry.assigned_at
+                    if role_entry and role_entry.assigned_at
+                    else str(row["created_at"] or "")
+                ),
+                "assigned_by": role_entry.assigned_by if role_entry else "system",
+            }
+        )
+
+    return users
+
+
+def _delete_user_data(username: str) -> None:
+    cursor = db.conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+    row = cursor.fetchone()
+    if not row or row["id"] is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user_id = int(row["id"])
+    cursor.execute("SELECT id FROM accounts WHERE user_id = ?", (user_id,))
+    account_ids = [int(item["id"]) for item in cursor.fetchall()]
+
+    for account_id in account_ids:
+        cursor.execute("DELETE FROM fills WHERE account_id = ?", (account_id,))
+        cursor.execute("DELETE FROM orders WHERE account_id = ?", (account_id,))
+        cursor.execute("DELETE FROM equity_history WHERE account_id = ?", (account_id,))
+        cursor.execute("DELETE FROM trade_history WHERE account_id = ?", (account_id,))
+        cursor.execute("DELETE FROM positions WHERE account_id = ?", (account_id,))
+
+    cursor.execute("DELETE FROM accounts WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM user_assets WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM user_strategies WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    db.conn.commit()
+
+
+@router.get("/users")
+async def list_users(current_user: UserInDB = Depends(require_admin)):
+    del current_user
+    users = _build_user_list()
+    return {
+        "status": "success",
+        "count": len(users),
+        "users": users,
+    }
+
+
+@router.put("/users/{username}/role")
+async def update_user_role(
+    username: str,
+    request: UserRoleUpdateRequest,
+    current_user: UserInDB = Depends(require_admin),
+):
+    normalized_role = request.role.strip().lower()
+    try:
+        Role(normalized_role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid role: {request.role}") from exc
+
+    _ensure_user_exists(username)
+
+    if username == current_user.username and normalized_role != Role.ADMIN.value:
+        raise HTTPException(status_code=400, detail="You cannot remove your own admin role")
+
+    success = get_user_role_manager().set_user_role(
+        username,
+        normalized_role,
+        assigned_by=current_user.username,
+    )
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update user role")
+
+    return {
+        "status": "success",
+        "message": f"Role for {username} updated to {normalized_role}",
+        "username": username,
+        "new_role": normalized_role,
+    }
+
+
+@router.delete("/users/{username}")
+async def delete_user(
+    username: str,
+    current_user: UserInDB = Depends(require_admin),
+):
+    bootstrap_admin = _get_bootstrap_admin_username().lower()
+    if username.lower() == bootstrap_admin:
+        raise HTTPException(status_code=400, detail="Bootstrap admin cannot be deleted")
+    if username == current_user.username:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+
+    _ensure_user_exists(username)
+
+    try:
+        _delete_user_data(username)
+        get_user_role_manager().remove_user_role(username)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to delete user %s: %s", username, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete user: {exc}") from exc
+
+    return {
+        "status": "success",
+        "message": f"User {username} deleted",
+        "username": username,
     }

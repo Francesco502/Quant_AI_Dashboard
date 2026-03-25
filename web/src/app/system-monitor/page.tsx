@@ -8,6 +8,7 @@ import { AlertHistory } from "@/components/monitor/AlertHistory"
 import { GlassCard } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/lib/api"
+import { SONG_COLORS } from "@/lib/chart-theme"
 import { cn } from "@/lib/utils"
 import {
   LayoutDashboard,
@@ -75,21 +76,21 @@ export default function SystemMonitorPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground/90 flex items-center gap-2">
             <LayoutDashboard className="w-6 h-6" />
-            System Monitor
+            系统监控
           </h1>
-          <p className="text-[13px] text-foreground/40">24/7 runtime health and alert monitoring.</p>
+          <p className="text-[13px] text-foreground/40">查看运行健康、指标状态与告警记录，便于日常教学与维护。</p>
         </div>
 
         <div className="flex items-center gap-3">
-          <StatusBadge label="Uptime" value={formatUptime(uptime)} icon={Clock} color="blue" />
-          <StatusBadge label="Metrics" value={metricsCount.toString()} icon={Activity} color="purple" />
-          <StatusBadge label="Checks" value={healthChecksCount.toString()} icon={Database} color="emerald" />
+          <StatusBadge label="运行时长" value={formatUptime(uptime)} icon={Clock} color="ink" />
+          <StatusBadge label="指标数" value={metricsCount.toString()} icon={Activity} color="plum" />
+          <StatusBadge label="检查项" value={healthChecksCount.toString()} icon={Database} color="celadon" />
           <button
             onClick={loadStatus}
             className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-foreground/70 hover:text-foreground transition-colors bg-foreground/5 hover:bg-foreground/10 rounded-lg"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            Refresh
+            刷新
           </button>
         </div>
       </div>
@@ -98,10 +99,10 @@ export default function SystemMonitorPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium text-foreground/90 flex items-center gap-2">
             <Activity className="w-4 h-4 text-foreground/40" />
-            System Metrics
+            系统指标
           </h2>
           <Badge variant="outline" className="text-[11px]">
-            Realtime
+            实时
           </Badge>
         </div>
 
@@ -112,10 +113,10 @@ export default function SystemMonitorPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium text-foreground/90 flex items-center gap-2">
             <Database className="w-4 h-4 text-foreground/40" />
-            Health Checks
+            健康检查
           </h2>
           <Badge variant="outline" className="text-[11px]">
-            {new Date().toLocaleTimeString("en-US", {
+            {new Date().toLocaleTimeString("zh-CN", {
               hour: "2-digit",
               minute: "2-digit",
               second: "2-digit",
@@ -130,10 +131,10 @@ export default function SystemMonitorPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium text-foreground/90 flex items-center gap-2">
             <Bell className="w-4 h-4 text-foreground/40" />
-            Alert History
+            告警历史
           </h2>
           <Badge variant="outline" className="text-[11px]">
-            Recent
+            最近
           </Badge>
         </div>
 
@@ -141,15 +142,15 @@ export default function SystemMonitorPage() {
       </section>
 
       <div className="pt-4">
-        <GlassCard className="p-4 bg-blue-500/5 dark:bg-blue-900/10 border-blue-500/10">
+        <GlassCard className="p-4 border-[#6F7C8E]/12 bg-[rgba(111,124,142,0.06)]">
           <div className="flex items-start gap-3">
             <div className="mt-1">
-              <Settings className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <Settings className="w-4 h-4" style={{ color: SONG_COLORS.indigo }} />
             </div>
             <div className="space-y-1 flex-1">
-              <p className="text-sm font-medium text-foreground/80">Alert Channel Configuration</p>
+              <p className="text-sm font-medium text-foreground/80">告警通道配置</p>
               <p className="text-xs text-foreground/60">
-                Configure alert routing with env vars:
+                可通过环境变量配置邮件、Telegram 与飞书告警通道：
                 <code className="mx-1 bg-foreground/5 px-1 py-0.5 rounded text-[10px]">ALERT_EMAIL_SMTP_SERVER</code>
                 <code className="mx-1 bg-foreground/5 px-1 py-0.5 rounded text-[10px]">ALERT_TELEGRAM_BOT_TOKEN</code>
                 <code className="mx-1 bg-foreground/5 px-1 py-0.5 rounded text-[10px]">ALERT_FEISHU_WEBHOOK_URL</code>
@@ -166,16 +167,16 @@ interface StatusBadgeProps {
   label: string
   value: string
   icon: ComponentType<{ className?: string }>
-  color: "blue" | "purple" | "emerald" | "amber" | "red"
+  color: "ink" | "plum" | "celadon" | "ochre" | "cinnabar"
 }
 
 function StatusBadge({ label, value, icon: Icon, color }: StatusBadgeProps) {
   const colorClasses = {
-    blue: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
-    purple: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
-    emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-    amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
-    red: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20",
+    ink: "border-[#4D4742]/16 bg-[rgba(77,71,66,0.08)] text-[#4D4742]",
+    plum: "border-[#7A6973]/18 bg-[rgba(122,105,115,0.10)] text-[#7A6973]",
+    celadon: "border-[#4D7358]/18 bg-[rgba(77,115,88,0.10)] text-[#4D7358]",
+    ochre: "border-[#B08E61]/18 bg-[rgba(176,142,97,0.10)] text-[#8C724C]",
+    cinnabar: "border-[#B6453C]/18 bg-[rgba(182,69,60,0.10)] text-[#B6453C]",
   }
 
   return (

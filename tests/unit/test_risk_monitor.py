@@ -85,6 +85,38 @@ class TestRiskMonitorAdvanced:
         assert result.action == RiskAction.REJECT
         assert result.risk_level == RiskLevel.HIGH
 
+    def test_check_order_risk_market_order_uses_market_price_when_missing(self, monitor, portfolio, prices):
+        """验证市价单缺失价格时会回退到最新市场价"""
+        order = {
+            "symbol": "600519",
+            "side": "BUY",
+            "quantity": 100,
+            "price": None,
+            "order_type": "MARKET",
+        }
+
+        result = monitor.check_order_risk(order, portfolio, prices)
+
+        assert result.action == RiskAction.ALLOW
+        assert result.metadata["price"] == prices["600519"]
+
+    def test_check_order_risk_sell_reducing_position_is_not_blocked_by_weight(self, monitor, portfolio, prices):
+        """验证卖出减仓不会被单标的权重限制拦截"""
+        portfolio["cash"] = 1000
+        portfolio["positions"] = {"600519": 8000}
+
+        order = {
+            "symbol": "600519",
+            "side": "SELL",
+            "quantity": 1000,
+            "price": 100.0,
+            "order_type": "MARKET",
+        }
+
+        result = monitor.check_order_risk(order, portfolio, prices)
+
+        assert result.action == RiskAction.ALLOW
+
     def test_check_order_risk_extremely_large_quantity(self, monitor, portfolio, prices):
         """验证极大数量订单的风险检查 - 跳过，因core/risk_monitor.py中存在枚举比较Bug"""
         # 当前实现中RiskLevel枚举类型无法直接使用max()比较

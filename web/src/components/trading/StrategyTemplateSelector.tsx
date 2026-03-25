@@ -33,10 +33,26 @@ interface StrategyTemplateSelectorProps {
   onLoadTemplate: (template: { params: Record<string, unknown>; name: string }) => void
 }
 
+const PARAM_LABELS: Record<string, string> = {
+  short_window: "短期均线窗口",
+  long_window: "长期均线窗口",
+  window: "回看窗口",
+  std_dev: "标准差倍数",
+  fast: "快线周期",
+  slow: "慢线周期",
+  signal: "信号线周期",
+  threshold: "触发阈值",
+  holding_days: "持有天数",
+}
+
+function formatParamLabel(key: string) {
+  return PARAM_LABELS[key] ?? key.replace(/_/g, " ")
+}
+
 const PRESET_TEMPLATES: Array<Partial<StrategyTemplate>> = [
   {
     id: -1,
-    template_name: "稳健长期（Conservative Long-Term）",
+    template_name: "稳健长线",
     strategy_id: "sma_crossover",
     strategy_type: "classic",
     description: "适合趋势跟随、换手率较低的参数组合。",
@@ -48,7 +64,7 @@ const PRESET_TEMPLATES: Array<Partial<StrategyTemplate>> = [
   },
   {
     id: -2,
-    template_name: "激进短线（Aggressive Short-Term）",
+    template_name: "激进短线",
     strategy_id: "sma_crossover",
     strategy_type: "classic",
     description: "更敏感地捕捉短期波动。",
@@ -60,7 +76,7 @@ const PRESET_TEMPLATES: Array<Partial<StrategyTemplate>> = [
   },
   {
     id: -3,
-    template_name: "均值回归标准（Mean Reversion）",
+    template_name: "均值回归",
     strategy_id: "mean_reversion",
     strategy_type: "classic",
     description: "基于布林带的均值回归基础参数。",
@@ -135,7 +151,7 @@ export function StrategyTemplateSelector({
 
   const handleDeleteTemplate = useCallback(
     async (id: number) => {
-      if (!window.confirm("Delete this template?")) {
+      if (!window.confirm("确定删除这个模板吗？")) {
         return
       }
 
@@ -207,7 +223,7 @@ export function StrategyTemplateSelector({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <Label className="text-xs font-medium uppercase tracking-wider text-foreground/40">策略模板（Templates）</Label>
+        <Label className="text-xs font-medium tracking-wider text-foreground/50">策略模板</Label>
         <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowSaveDialog(true)}>
           <Save className="mr-1 h-3.5 w-3.5" />
           保存当前参数
@@ -340,7 +356,7 @@ export function StrategyTemplateSelector({
           <div className="flex flex-wrap gap-1">
             {Object.entries(selectedTemplate.params).slice(0, 3).map(([key, value]) => (
               <Badge key={key} variant="secondary" className="text-[10px]">
-                {key}: {String(value).slice(0, 10)}
+                {formatParamLabel(key)}: {String(value).slice(0, 10)}
               </Badge>
             ))}
             {Object.keys(selectedTemplate.params).length > 3 && (
@@ -379,7 +395,7 @@ export function StrategyTemplateSelector({
             </div>
             <div className="rounded bg-muted p-2 text-xs text-muted-foreground">
               <div>策略：{currentStrategyId}</div>
-              <div>类型：{currentStrategyType}</div>
+              <div>类型：{currentStrategyType === "classic" ? "经典策略" : "扫描策略"}</div>
               <div>参数数量：{Object.keys(currentParams).length}</div>
             </div>
           </div>

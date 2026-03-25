@@ -103,13 +103,14 @@ class PositionManager:
             limit = self.position_limits[symbol]
             current_position = portfolio.get("positions", {}).get(symbol, 0)
             new_position = current_position + quantity
+            is_reducing_exposure = abs(new_position) < abs(current_position)
             
             # 检查数量限制
-            if limit.max_position > 0 and abs(new_position) > limit.max_position:
+            if limit.max_position > 0 and not is_reducing_exposure and abs(new_position) > limit.max_position:
                 return False, f"{symbol} 持仓数量超过限制: {abs(new_position)} > {limit.max_position}"
             
             # 检查权重限制
-            if limit.max_weight > 0:
+            if limit.max_weight > 0 and not is_reducing_exposure:
                 position_value = abs(new_position) * current_prices.get(symbol, 0)
                 position_weight = position_value / total_equity if total_equity > 0 else 0
                 if position_weight > limit.max_weight:
@@ -127,8 +128,7 @@ class PositionManager:
                 # 计算新增仓位后的行业权重
                 symbol_price = current_prices.get(symbol, 0)
                 if symbol_price > 0:
-                    new_position = portfolio.get("positions", {}).get(symbol, 0) + quantity
-                    new_sector_weight = sector_weight + (new_position * symbol_price) / total_equity
+                    new_sector_weight = sector_weight + (quantity * symbol_price) / total_equity
                     if new_sector_weight > max_sector_weight:
                         return False, f"行业 {sector} 集中度超过限制: {new_sector_weight:.2%} > {max_sector_weight:.2%}"
 
@@ -144,8 +144,7 @@ class PositionManager:
                 # 计算新增仓位后的市场权重
                 symbol_price = current_prices.get(symbol, 0)
                 if symbol_price > 0:
-                    new_position = portfolio.get("positions", {}).get(symbol, 0) + quantity
-                    new_market_weight = market_weight + (new_position * symbol_price) / total_equity
+                    new_market_weight = market_weight + (quantity * symbol_price) / total_equity
                     if new_market_weight > max_market_weight:
                         return False, f"市场 {market} 集中度超过限制: {new_market_weight:.2%} > {max_market_weight:.2%}"
 
@@ -155,8 +154,7 @@ class PositionManager:
         )
         symbol_price = current_prices.get(symbol, 0)
         if symbol_price > 0:
-            new_position = portfolio.get("positions", {}).get(symbol, 0) + quantity
-            new_total_weight = total_position_weight + (new_position * symbol_price) / total_equity
+            new_total_weight = total_position_weight + (quantity * symbol_price) / total_equity
             if new_total_weight > self.total_position_limit:
                 return False, f"总仓位超过限制: {new_total_weight:.2%} > {self.total_position_limit:.2%}"
 
@@ -306,4 +304,3 @@ class PositionManager:
         summary["total_position_weight"] = summary["total_position_value"] / total_equity if total_equity > 0 else 0.0
         
         return summary
-

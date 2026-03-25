@@ -1,43 +1,40 @@
-#!/bin/bash
-# ============================================================
-# Quant-AI Dashboard v3.0.0 — 单容器入口脚本
-# ============================================================
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-log_info()  { echo -e "${GREEN}[INFO]${NC}  $1"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
+log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 log_info "========================================"
-log_info "Quant-AI Dashboard v3.0.0（单容器模式）"
+log_info "Quant-AI Dashboard v2.1.0 single-image startup"
 log_info "========================================"
 
-# ---------- 环境变量默认值 ----------
-export ENABLE_DAEMON=${ENABLE_DAEMON:-true}
-export DISABLE_HEAVY_MODELS=${DISABLE_HEAVY_MODELS:-true}
+export ENABLE_DAEMON="${ENABLE_DAEMON:-true}"
+export DISABLE_HEAVY_MODELS="${DISABLE_HEAVY_MODELS:-true}"
 
-log_info "ENABLE_DAEMON        = ${ENABLE_DAEMON}"
-log_info "DISABLE_HEAVY_MODELS = ${DISABLE_HEAVY_MODELS}"
+log_info "ENABLE_DAEMON=${ENABLE_DAEMON}"
+log_info "DISABLE_HEAVY_MODELS=${DISABLE_HEAVY_MODELS}"
 
-# ---------- 创建运行时目录 ----------
 mkdir -p /app/data/prices /app/data/models /app/data/accounts /app/data/signals
 mkdir -p /app/logs /app/strategies /app/models
 mkdir -p /var/log/supervisor /var/log/nginx
 
-# ---------- 预检 ----------
-if ! python -c "import fastapi" 2>/dev/null; then
-    log_error "FastAPI 未安装"; exit 1
+if ! python -c "import fastapi" >/dev/null 2>&1; then
+    log_error "FastAPI is not available in the runtime image."
+    exit 1
 fi
-if ! nginx -t 2>/dev/null; then
-    log_error "Nginx 配置检查失败"; exit 1
-fi
-log_info "预检通过"
 
-# ---------- 启动 ----------
-log_info "通过 supervisord 启动 Nginx + Uvicorn + Daemon ..."
+if ! nginx -t >/dev/null 2>&1; then
+    log_error "Nginx configuration validation failed."
+    exit 1
+fi
+
+log_info "Runtime preflight passed."
+log_info "Starting Nginx + Uvicorn + optional daemon under supervisord..."
+
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf

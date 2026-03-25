@@ -1,31 +1,37 @@
-# Quant-AI Dashboard Frontend (v2.0.0)
+# Quant-AI Dashboard Frontend
 
-Frontend application for Quant-AI Dashboard, built with Next.js App Router.
+Next.js frontend for Quant-AI Dashboard `v2.1.0`.
 
 ## Runtime Baseline
-- Framework: Next.js 16
-- React: 19
-- Default dev/start port: `8686`
+
+- Next.js 16
+- React 19
+- default local port: `8686`
 
 ## Local Development
+
 ```bash
 cd web
 npm install
 npm run dev
 ```
 
-Open: [http://localhost:8686](http://localhost:8686)
+Open [http://localhost:8686](http://localhost:8686).
 
-## Backend API Connection
-- Default API base in code: `http://127.0.0.1:8685/api`
-- Local development:
+## Backend Connection
+
+- local API base in development: `http://127.0.0.1:8685/api`
+- recommended local override:
 
 ```bash
 # web/.env.local
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8685/api
 ```
 
+- in the canonical single-image deployment, the frontend talks to `/api` through Nginx in the same container
+
 ## Quality Commands
+
 ```bash
 npm run lint
 npm run build
@@ -33,11 +39,15 @@ npm run preview
 ```
 
 ## Structure
-- `src/app/`: route pages
-- `src/components/`: reusable UI components
-- `src/lib/api.ts`: typed API client and request contracts
 
-## Versioned Release Docs
-- `../docs/RELEASE_NOTES_v2.0.0.md`
-- `../docs/RELEASE_STATUS_v2.0.0.md`
-- `../docs/UPGRADE_TO_v2.0.0.md`
+- `src/app/`: routes
+- `src/components/`: UI and workflow components
+- `src/lib/api.ts`: API client and request contracts
+- `src/lib/workspace-nav.ts`: top-level information architecture
+
+## Canonical Docs
+
+- project index: [../README.md](../README.md)
+- current docs: [../docs/current/README.md](../docs/current/README.md)
+- quickstart: [../docs/current/quickstart.md](../docs/current/quickstart.md)
+- deployment: [../docs/current/deployment.md](../docs/current/deployment.md)

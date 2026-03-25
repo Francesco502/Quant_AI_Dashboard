@@ -49,8 +49,12 @@ def get_default_risk_config() -> Dict[str, Any]:
             },
             "sms": {
                 "enabled": False,
+                "provider": "twilio",
                 "api_key": "",
                 "api_secret": "",
+                "from_number": "",
+                "to_numbers": [],
+                "api_base_url": "https://api.twilio.com",
             },
             "webhook": {
                 "enabled": False,
@@ -191,4 +195,3 @@ def position_limits_to_config(position_limits: Dict[str, PositionLimit]) -> Dict
             "max_value": limit.max_value,
         }
     return result
-

@@ -284,7 +284,7 @@ export function RebalancePlan({
               </div>
               <div className="bg-muted/50 rounded-lg p-3">
                 <div className="text-xs text-muted-foreground">可用现金</div>
-                <div className="text-lg font-bold text-emerald-600">
+                <div className="text-lg font-bold text-market-up">
                   ¥{cash.toLocaleString()}
                 </div>
               </div>
@@ -403,30 +403,30 @@ export function RebalancePlan({
                   className="space-y-4"
                 >
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-green-500" />
+                    <CheckCircle2 className="w-5 h-5 text-market-up" />
                     <h4 className="font-semibold">调仓方案预览</h4>
                   </div>
 
                   {/* 汇总信息 */}
                   {previewSummary && (
                     <div className="grid grid-cols-4 gap-3">
-                      <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-3 border border-red-200 dark:border-red-800">
-                        <div className="text-xs text-red-600">需买入</div>
-                        <div className="font-bold text-red-700">
+                      <div className="rounded-lg border border-market-up-soft bg-market-up-soft p-3">
+                        <div className="text-xs text-market-up">需买入</div>
+                        <div className="font-bold text-market-up">
                           ¥{previewSummary.totalBuyValue.toLocaleString()}
                         </div>
-                        <div className="text-xs text-red-500">{previewSummary.buyCount} 只</div>
+                        <div className="text-xs text-market-up">{previewSummary.buyCount} 只</div>
                       </div>
-                      <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg p-3 border border-emerald-200 dark:border-emerald-800">
-                        <div className="text-xs text-emerald-600">需卖出</div>
-                        <div className="font-bold text-emerald-700">
+                      <div className="rounded-lg border border-market-down-soft bg-market-down-soft p-3">
+                        <div className="text-xs text-market-down">需卖出</div>
+                        <div className="font-bold text-market-down">
                           ¥{previewSummary.totalSellValue.toLocaleString()}
                         </div>
-                        <div className="text-xs text-emerald-500">{previewSummary.sellCount} 只</div>
+                        <div className="text-xs text-market-down">{previewSummary.sellCount} 只</div>
                       </div>
                       <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 border border-blue-200 dark:border-blue-800">
                         <div className="text-xs text-blue-600">净现金流</div>
-                        <div className={`font-bold ${previewSummary.netCashFlow >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        <div className={`font-bold ${previewSummary.netCashFlow >= 0 ? 'text-market-up' : 'text-market-down'}`}>
                           ¥{previewSummary.netCashFlow.toLocaleString()}
                         </div>
                       </div>
@@ -470,12 +470,12 @@ export function RebalancePlan({
                             </TableCell>
                             <TableCell className="text-right">
                               {item.action === "BUY" ? (
-                                <Badge className="bg-red-500 hover:bg-red-600">
+                                <Badge className="bg-market-up hover:opacity-90">
                                   <TrendingUp className="w-3 h-3 mr-1" />
                                   买入
                                 </Badge>
                               ) : item.action === "SELL" ? (
-                                <Badge className="bg-emerald-500 hover:bg-emerald-600">
+                                <Badge className="bg-market-down hover:opacity-90">
                                   <TrendingDown className="w-3 h-3 mr-1" />
                                   卖出
                                 </Badge>
@@ -485,7 +485,7 @@ export function RebalancePlan({
                             </TableCell>
                             <TableCell className="text-right">
                               {item.sharesDiff !== 0 && (
-                                <div className={`font-mono ${item.sharesDiff > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                                <div className={`font-mono ${item.sharesDiff > 0 ? 'text-market-up' : 'text-market-down'}`}>
                                   {item.sharesDiff > 0 ? '+' : ''}{item.sharesDiff} 股
                                 </div>
                               )}

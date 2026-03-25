@@ -397,35 +397,43 @@ def _cn_overview_and_sectors() -> Dict[str, Any]:
         turnover_col = cols[4] if len(cols) > 4 else None  # 换手率
 
         if name_col and pct_col:
-            df_sorted = df.sort_values(pct_col, ascending=False)
-            # 增加涨跌幅数据
+            ranked = df[[name_col, pct_col]].copy()
+            ranked[pct_col] = pd.to_numeric(ranked[pct_col], errors="coerce")
+            ranked = ranked.dropna(subset=[pct_col]).sort_values(pct_col, ascending=False).reset_index(drop=True)
+            gain_rows = ranked[ranked[pct_col] > 0].head(5)
+            loss_rows = ranked[ranked[pct_col] < 0].sort_values(pct_col, ascending=True).head(5)
             sectors["gain"] = [
-                {"name": str(x), "pct_change": float(df_sorted.iloc[i][pct_col]) if pd.notna(df_sorted.iloc[i][pct_col]) else 0.0}
-                for i, x in enumerate(df_sorted[name_col].head(5).tolist())
+                {"name": str(row[name_col]), "pct_change": float(row[pct_col])}
+                for _, row in gain_rows.iterrows()
             ]
             sectors["loss"] = [
-                {"name": str(x), "pct_change": float(df_sorted.iloc[i][pct_col]) if pd.notna(df_sorted.iloc[i][pct_col]) else 0.0}
-                for i, x in enumerate(df_sorted[name_col].tail(5).tolist())
+                {"name": str(row[name_col]), "pct_change": float(row[pct_col])}
+                for _, row in loss_rows.iterrows()
             ]
 
-        if up_count_col and down_count_col:
+        if up_count_col and down_count_col and name_col:
             try:
-                total_up = int(df[up_count_col].sum())
-                total_down = int(df[down_count_col].sum())
-                overview["up"] = total_up
-                overview["down"] = total_down
+                market_rows = df[df[name_col].astype(str).str.contains("A股|沪深|全市场|全部", na=False)]
+                if not market_rows.empty:
+                    market_row = market_rows.iloc[0]
+                    overview["up"] = int(float(market_row[up_count_col]))
+                    overview["down"] = int(float(market_row[down_count_col]))
             except Exception:
                 pass
 
         # 提取振幅和换手率（整体市场）
         if amplitude_col:
             try:
-                overview["amplitude"] = round(float(df[amplitude_col].mean()), 2)
+                amplitude = round(float(pd.to_numeric(df[amplitude_col], errors="coerce").dropna().mean()), 2)
+                if 0 <= amplitude <= 100:
+                    overview["amplitude"] = amplitude
             except Exception:
                 pass
         if turnover_col:
             try:
-                overview["turn_rate"] = round(float(df[turnover_col].mean()), 2)
+                turn_rate = round(float(pd.to_numeric(df[turnover_col], errors="coerce").dropna().mean()), 2)
+                if 0 <= turn_rate <= 100:
+                    overview["turn_rate"] = turn_rate
             except Exception:
                 pass
 

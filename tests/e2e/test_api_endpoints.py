@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from core import llm_client
+
 
 pytestmark = pytest.mark.e2e_inprocess
 
@@ -13,6 +15,30 @@ def test_health_endpoint(auth_client):
     assert response.status_code == 200
     data = response.json()
     assert data.get("status") in {"healthy", "warning", "critical"}
+    assert "security" in data
+
+
+def test_llm_health_check_requires_available_provider(auth_client, monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    llm_client.reset_client_cache()
+
+    try:
+        config_response = auth_client.get("/api/llm-analysis/config")
+        assert config_response.status_code == 200
+        config_payload = config_response.json()
+        assert config_payload["configured"] is False
+        assert config_payload["available"] is False
+
+        response = auth_client.get("/api/llm-analysis/health-check")
+        assert response.status_code == 503
+    finally:
+        llm_client.reset_client_cache()
 
 
 def test_root_endpoint_requires_auth_and_returns_payload(auth_client):

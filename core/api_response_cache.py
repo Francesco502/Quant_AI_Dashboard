@@ -10,7 +10,7 @@ import json
 import os
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -95,6 +95,32 @@ def _is_valid_entry(obj: Any) -> bool:
     )
 
 
+def _make_json_safe(value: Any) -> Any:
+    """递归转换为可 JSON 序列化的结构，避免缓存文件写出半截内容。"""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _make_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_make_json_safe(v) for v in value]
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+
+    # pandas.Timestamp / numpy 标量等常见对象
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    if hasattr(value, "item"):
+        try:
+            return _make_json_safe(value.item())
+        except Exception:
+            pass
+
+    return str(value)
+
+
 def get_cached(endpoint: str, params: dict) -> Optional[dict]:
     """
     若存在且未过期且结构合法，返回 entry["data"]，否则 None。
@@ -142,8 +168,43 @@ def set_cached(endpoint: str, params: dict, data: dict) -> None:
         "url": "",
         "cached_at": datetime.now(timezone.utc).isoformat(),
     }
+    tmp_path = filepath.with_suffix(f"{filepath.suffix}.tmp")
     try:
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(entry, f, ensure_ascii=False, indent=2)
+        safe_entry = _make_json_safe(entry)
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(safe_entry, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, filepath)
     except Exception as e:
+        tmp_path.unlink(missing_ok=True)
         logger.warning("API cache write error %s: %s", filepath, e)
+
+
+def clear_cached(endpoint: Optional[str] = None) -> int:
+    """Clear cached API response files.
+
+    Returns the number of deleted cache files.
+    """
+    cache_root = _cache_dir()
+    if not cache_root.exists():
+        return 0
+
+    deleted = 0
+    if endpoint:
+        target_dir = cache_root / endpoint.replace("/", "_").strip("_")
+        targets = [target_dir] if target_dir.exists() else []
+    else:
+        targets = [item for item in cache_root.iterdir() if item.is_dir()]
+
+    for directory in targets:
+        for path in directory.rglob("*.json"):
+            try:
+                path.unlink(missing_ok=True)
+                deleted += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("API cache delete error %s: %s", path, exc)
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+
+    return deleted

@@ -29,6 +29,18 @@ from .account import compute_equity
 logger = logging.getLogger(__name__)
 
 
+_RISK_LEVEL_PRIORITY = {
+    RiskLevel.LOW: 0,
+    RiskLevel.MEDIUM: 1,
+    RiskLevel.HIGH: 2,
+    RiskLevel.CRITICAL: 3,
+}
+
+
+def _higher_risk_level(left: RiskLevel, right: RiskLevel) -> RiskLevel:
+    return left if _RISK_LEVEL_PRIORITY[left] >= _RISK_LEVEL_PRIORITY[right] else right
+
+
 class RiskMonitor:
     """实时风险监控器"""
 
@@ -101,7 +113,28 @@ class RiskMonitor:
         symbol = order.get("symbol")
         side = order.get("side", "BUY")
         quantity = order.get("quantity", 0)
-        price = order.get("price", current_prices.get(symbol, 0))
+        order_type = str(order.get("order_type", "MARKET")).upper()
+
+        raw_price = order.get("price")
+        raw_price_missing = raw_price is None or (isinstance(raw_price, str) and not raw_price.strip())
+        invalid_price_value = False
+        try:
+            price = float(raw_price) if raw_price is not None else 0.0
+        except (TypeError, ValueError):
+            invalid_price_value = True
+            price = 0.0
+
+        market_price = float(current_prices.get(symbol, 0) or 0)
+        if invalid_price_value or price < 0:
+            return RiskCheckResult(
+                action=RiskAction.REJECT,
+                risk_level=RiskLevel.HIGH,
+                message=f"无效价格: {symbol}",
+                violations=["价格无效"]
+            )
+
+        if (raw_price_missing or price == 0) and order_type in {"MARKET", "STOP"} and market_price > 0:
+            price = market_price
         
         if price <= 0:
             return RiskCheckResult(
@@ -110,34 +143,54 @@ class RiskMonitor:
                 message=f"无效价格: {symbol}",
                 violations=["价格无效"]
             )
-        
+
+        signed_quantity = -abs(quantity) if str(side).upper() == "SELL" else abs(quantity)
+        projected_portfolio = {
+            "cash": float(portfolio.get("cash", 0) or 0),
+            "positions": dict(portfolio.get("positions", {}) or {}),
+            "initial_capital": float(portfolio.get("initial_capital", 0) or 0),
+            "total_assets": float(portfolio.get("total_assets", 0) or 0),
+        }
+        current_position = int(projected_portfolio["positions"].get(symbol, 0) or 0)
+        projected_position = max(current_position + signed_quantity, 0)
+        if projected_position > 0:
+            projected_portfolio["positions"][symbol] = projected_position
+        else:
+            projected_portfolio["positions"].pop(symbol, None)
+
+        notional = abs(quantity) * price
+        if str(side).upper() == "SELL":
+            projected_portfolio["cash"] += notional
+        else:
+            projected_portfolio["cash"] = max(projected_portfolio["cash"] - notional, 0)
+
         # 1. 仓位限制检查
         position_result = self._check_position_risk(
-            symbol, quantity, portfolio, current_prices
+            symbol, signed_quantity, portfolio, current_prices
         )
         if position_result:
             violations.extend(position_result)
             max_risk_level = RiskLevel.HIGH
         
         # 2. 损失限制检查
-        loss_result = self._check_loss_risk(portfolio, current_prices)
+        loss_result = self._check_loss_risk(projected_portfolio, current_prices)
         if loss_result:
             violations.extend(loss_result)
             max_risk_level = RiskLevel.CRITICAL
         
         # 3. 集中度风险检查
         concentration_result = self._check_concentration_risk(
-            portfolio, current_prices
+            projected_portfolio, current_prices
         )
         if concentration_result:
             violations.extend(concentration_result)
-            max_risk_level = max(max_risk_level, RiskLevel.MEDIUM)
+            max_risk_level = _higher_risk_level(max_risk_level, RiskLevel.MEDIUM)
         
         # 4. 流动性风险检查（简化版）
         liquidity_result = self._check_liquidity_risk(symbol, quantity, price)
         if liquidity_result:
             violations.extend(liquidity_result)
-            max_risk_level = max(max_risk_level, RiskLevel.MEDIUM)
+            max_risk_level = _higher_risk_level(max_risk_level, RiskLevel.MEDIUM)
         
         # 根据风险等级决定动作
         if max_risk_level == RiskLevel.CRITICAL:
@@ -197,10 +250,11 @@ class RiskMonitor:
         if total_equity > 0:
             current_position = portfolio.get("positions", {}).get(symbol, 0)
             new_position = current_position + quantity
+            is_reducing_exposure = abs(new_position) < abs(current_position)
             position_value = abs(new_position) * current_prices.get(symbol, 0)
             position_weight = position_value / total_equity
             
-            if position_weight > self.risk_limits.max_single_stock:
+            if not is_reducing_exposure and position_weight > self.risk_limits.max_single_stock:
                 violations.append(
                     f"单标的权重超限: {position_weight:.2%} > {self.risk_limits.max_single_stock:.2%}"
                 )
@@ -568,4 +622,3 @@ class RiskMonitor:
         except Exception as e:
             logger.error(f"获取风险汇总失败: {e}")
         return {}
-

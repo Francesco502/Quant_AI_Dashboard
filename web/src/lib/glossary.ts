@@ -61,7 +61,7 @@ export const GLOSSARY = {
   },
   DataSources: {
     term: "数据源 (Data Sources)",
-    definition: "系统获取市场行情数据的接口服务商（如 AkShare, Yahoo Finance）。建议配置多个数据源以保证数据的稳定性和完整性。"
+    definition: "系统获取市场行情数据的接口服务商。当前项目统一由服务器环境变量控制数据源优先级和密钥，所有账户共享同一套配置。"
   },
   
   // 回测相关

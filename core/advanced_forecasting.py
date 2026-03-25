@@ -854,6 +854,22 @@ def quick_predict(ticker: str, horizon: int = 5, model_type: str = "xgboost", us
         series = series.tail(int(max(lookback_days, 10)))
     if len(series) < 10:
         return None
+    if mt == "auto":
+        regime = detect_market_state(series)
+        if regime == "range" and STATSMODELS_AVAILABLE:
+            mt = "arima"
+        elif regime == "high_volatility" and LIGHTGBM_AVAILABLE:
+            mt = "lightgbm"
+        elif XGBOOST_AVAILABLE:
+            mt = "xgboost"
+        elif SKLEARN_AVAILABLE:
+            mt = "random_forest"
+        elif PROPHET_AVAILABLE:
+            mt = "prophet"
+        elif STATSMODELS_AVAILABLE:
+            mt = "arima"
+        else:
+            return None
     if model is None:
         model_id = manager.train_model(ticker=ticker, price_series=series, model_type=mt, register_model=True, features_version="runtime", lookback=min(60, len(series)))
         if not model_id:

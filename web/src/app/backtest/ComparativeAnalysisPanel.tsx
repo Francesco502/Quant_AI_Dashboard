@@ -38,14 +38,14 @@ import { GLOSSARY } from "@/lib/glossary"
 // Design Constants
 const COLORS = {
   equity: "#3B82F6",
-  drawdown: "#DC2626",
+  drawdown: "#4D7358",
   grid: "rgba(0, 0, 0, 0.04)",
   tooltipBg: "rgba(255, 255, 255, 0.94)",
   strategy1: "#3B82F6",
-  strategy2: "#10B981",
+  strategy2: "#4D7358",
   strategy3: "#8B5CF6",
   strategy4: "#F59E0B",
-  strategy5: "#EF4444"
+  strategy5: "#B6453C"
 }
 
 const getStrategyColor = (index: number, strategyName: string) => {
@@ -208,10 +208,10 @@ export default function ComparativeAnalysisPanel({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <GlassCard className="p-4">
           <div className="flex items-center gap-2 mb-2">
-            <TrendingUp className="w-4 h-4 text-emerald-500" />
+            <TrendingUp className="w-4 h-4 text-market-up" />
             <span className="text-xs font-medium text-muted-foreground">最佳收益</span>
           </div>
-          <div className="text-lg font-bold text-emerald-500">
+          <div className="text-lg font-bold text-market-up">
             {bestPerformer.name}
           </div>
           <div className="text-sm">
@@ -221,10 +221,10 @@ export default function ComparativeAnalysisPanel({
 
         <GlassCard className="p-4">
           <div className="flex items-center gap-2 mb-2">
-            <TrendingDown className="w-4 h-4 text-red-500" />
+            <TrendingDown className="w-4 h-4 text-market-down" />
             <span className="text-xs font-medium text-muted-foreground">最小回撤</span>
           </div>
-          <div className="text-lg font-bold text-red-500">
+          <div className="text-lg font-bold text-market-down">
             {worstPerformer.name}
           </div>
           <div className="text-sm">
@@ -387,7 +387,7 @@ export default function ComparativeAnalysisPanel({
                 </TableHead>
                 <TableHead className="text-right">
                   年化收益
-                  <HelpTooltip content="Annualized Return" />
+                  <HelpTooltip content="把当前区间收益折算到一年后的收益率口径。" />
                 </TableHead>
                 <TableHead className="text-right">
                   夏普比率
@@ -395,7 +395,7 @@ export default function ComparativeAnalysisPanel({
                 </TableHead>
                 <TableHead className="text-right">
                   信息比率
-                  <HelpTooltip content="Information Ratio - 超额收益/跟踪误差" />
+                  <HelpTooltip content="信息比率 = 超额收益 / 跟踪误差，用于比较策略相对基准的稳定性。" />
                 </TableHead>
                 <TableHead className="text-right">
                   最大回撤
@@ -431,7 +431,7 @@ export default function ComparativeAnalysisPanel({
                   <TableCell className="text-right font-mono">
                     {row.weight ? (row.weight * 100).toFixed(1) + "%" : "-"}
                   </TableCell>
-                  <TableCell className={`text-right font-bold ${row.total_return >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                  <TableCell className={`text-right font-bold ${row.total_return >= 0 ? "text-market-up" : "text-market-down"}`}>
                     {formatPercent(row.total_return)}
                   </TableCell>
                   <TableCell className="text-right font-mono">
@@ -439,7 +439,7 @@ export default function ComparativeAnalysisPanel({
                   </TableCell>
                   <TableCell className="text-right font-mono">
                     <span className={cn(
-                      row.sharpe > 1 ? "text-emerald-500" :
+                      row.sharpe > 1 ? "text-market-up" :
                       row.sharpe > 0 ? "text-blue-500" : "text-muted-foreground"
                     )}>
                       {row.sharpe.toFixed(2)}
@@ -448,7 +448,7 @@ export default function ComparativeAnalysisPanel({
                   <TableCell className="text-right font-mono">
                     {row.information_ratio.toFixed(2)}
                   </TableCell>
-                  <TableCell className="text-right font-mono text-red-500">
+                  <TableCell className="text-right font-mono text-market-down">
                     {formatPercent(row.max_drawdown)}
                   </TableCell>
                   <TableCell className="text-right font-mono">
@@ -457,7 +457,7 @@ export default function ComparativeAnalysisPanel({
                   <TableCell className="text-right font-mono">
                     {row.beta.toFixed(2)}
                   </TableCell>
-                  <TableCell className={`text-right font-mono ${row.alpha >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                  <TableCell className={`text-right font-mono ${row.alpha >= 0 ? "text-market-up" : "text-market-down"}`}>
                     {formatPercent(row.alpha)}
                   </TableCell>
                 </TableRow>

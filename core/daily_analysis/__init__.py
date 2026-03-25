@@ -25,7 +25,13 @@ class Decision:
     meta: Dict[str, Any]
 
 
-def _analyze_single(ticker: str, market: str = "cn", model: Optional[str] = None) -> Decision:
+def _analyze_single(
+    ticker: str,
+    market: str = "cn",
+    model: Optional[str] = None,
+    provider_type: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> Decision:
     """单标的分析主流程：构建上下文 → LLM → 解析"""
     ctx = builder.build_analysis_input(ticker=ticker, market=market)
     messages = prompts.build_messages(ctx)
@@ -42,7 +48,12 @@ def _analyze_single(ticker: str, market: str = "cn", model: Optional[str] = None
         )
 
     t0 = time.time()
-    raw = llm_client.chat_completion(messages, model=model)
+    raw = llm_client.chat_completion(
+        messages,
+        model=model,
+        provider_type=provider_type,
+        base_url=base_url,
+    )
     elapsed_ms = int((time.time() - t0) * 1000)
 
     if scratchpad_path is not None:
@@ -78,11 +89,19 @@ def run_daily_analysis(
     market: str = "cn",
     include_market_review: bool = False,
     model: Optional[str] = None,
+    provider_type: Optional[str] = None,
+    base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """运行多标的决策分析，可选附带大盘复盘。model 为空时使用服务端默认（如 .env GEMINI_MODEL）。"""
     results: List[Dict[str, Any]] = []
     for t in tickers:
-        dec = _analyze_single(t, market=market, model=model)
+        dec = _analyze_single(
+            t,
+            market=market,
+            model=model,
+            provider_type=provider_type,
+            base_url=base_url,
+        )
         payload = {
             "ticker": dec.ticker,
             "name": dec.name,
@@ -146,4 +165,3 @@ def run_daily_analysis_from_env(
         except Exception as e:  # pragma: no cover
             result["notification_error"] = str(e)
     return result
-

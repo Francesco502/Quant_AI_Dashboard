@@ -196,7 +196,7 @@ class AccountManager:
                 "balance": account.balance,
                 "frozen": account.frozen,
                 "initial_capital": account.initial_capital,
-                "total_assets": account.total_assets,
+                "total_assets": account.total_assets + total_position_value,
                 "available_balance": account.available_balance,
                 "total_position_value": total_position_value,
                 "positions": positions
@@ -376,7 +376,7 @@ class AccountManager:
 
         try:
             if side == "BUY":
-                cost = quantity * price + commission
+                cost = round(quantity * price + commission, 4)
                 cursor.execute("""
                     UPDATE accounts
                     SET frozen = frozen - ?
@@ -389,7 +389,7 @@ class AccountManager:
                 self.update_position_buy(account_id, symbol, quantity, cost)
 
             else:
-                income = quantity * price - commission
+                income = round(quantity * price - commission, 4)
                 cursor.execute("""
                     UPDATE accounts
                     SET balance = balance + ?
@@ -481,6 +481,93 @@ class AccountManager:
         """, (account_id, user_id))
         self.db.conn.commit()
         return cursor.rowcount > 0
+
+    def get_account_by_name(self, user_id: int, account_name: str) -> Optional[Account]:
+        """Return an active account by name."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM accounts
+            WHERE user_id = ? AND account_name = ? AND status = 'active'
+            ORDER BY id
+            LIMIT 1
+            """,
+            (user_id, account_name),
+        )
+        row = cursor.fetchone()
+        return Account.from_row(row) if row else None
+
+    def get_or_create_account(self, user_id: int, name: str, initial_balance: float) -> Account:
+        """Return a named account or create it when absent."""
+        account = self.get_account_by_name(user_id, name)
+        if account:
+            return account
+
+        account_id = self.create_account(user_id=user_id, name=name, initial_balance=initial_balance)
+        created = self.get_account(account_id, user_id)
+        if not created:
+            raise ValueError(f"Failed to create account {name!r} for user {user_id}")
+        return created
+
+    def reset_account(
+        self,
+        account_id: int,
+        user_id: int,
+        initial_balance: float,
+        account_name: Optional[str] = None,
+    ) -> Account:
+        """Reset the selected account back to clean cash-only state."""
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT 1 FROM accounts
+            WHERE id = ? AND user_id = ? AND status = 'active'
+            """,
+            (account_id, user_id),
+        )
+        if cursor.fetchone() is None:
+            raise ValueError("Account does not exist or access is denied")
+
+        try:
+            self.db.conn.execute("BEGIN")
+            cursor.execute("DELETE FROM fills WHERE account_id = ?", (account_id,))
+            cursor.execute("DELETE FROM orders WHERE account_id = ?", (account_id,))
+            cursor.execute("DELETE FROM positions WHERE account_id = ?", (account_id,))
+            cursor.execute("DELETE FROM trade_history WHERE account_id = ?", (account_id,))
+            cursor.execute("DELETE FROM equity_history WHERE account_id = ?", (account_id,))
+            cursor.execute("DELETE FROM stop_loss_rules WHERE account_id = ?", (account_id,))
+            cursor.execute("DELETE FROM risk_events WHERE account_id = ?", (account_id,))
+
+            set_clauses = [
+                "balance = ?",
+                "frozen = 0.0",
+                "initial_capital = ?",
+                "status = 'active'",
+                "updated_at = CURRENT_TIMESTAMP",
+            ]
+            params: List[object] = [initial_balance, initial_balance]
+            if account_name:
+                set_clauses.insert(0, "account_name = ?")
+                params.insert(0, account_name)
+            params.extend([account_id, user_id])
+
+            cursor.execute(
+                f"""
+                UPDATE accounts
+                SET {", ".join(set_clauses)}
+                WHERE id = ? AND user_id = ?
+                """,
+                tuple(params),
+            )
+            self.db.conn.commit()
+        except Exception:
+            self.db.conn.rollback()
+            raise
+
+        account = self.get_account(account_id, user_id)
+        if not account:
+            raise ValueError("Failed to reload account after reset")
+        return account
 
     def account_exists(self, account_id: int, user_id: int) -> bool:
         """检查账户是否存在且属于用户"""

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from math import ceil
 from typing import List, Dict, Optional, Tuple
 import hashlib
 import json
@@ -41,12 +42,44 @@ except ImportError:
 import yfinance as yf
 
 from . import data_store, tushare_provider
+from .asset_metadata import get_asset_hint, resolve_asset_type
 from .error_handler import handle_error, create_data_error, create_network_error
 from .data_quality import DataQualityChecker, validate_data_before_analysis
 
 
 DATA_DIR = Path("data")
 USER_STATE_FILE = DATA_DIR / "user_state.json"
+DEFAULT_DATA_SOURCE_ORDER = ["Tushare", "AkShare", "AlphaVantage", "Binance", "yfinance"]
+
+
+def _merge_data_sources(preferred: List[str]) -> List[str]:
+    merged: List[str] = []
+    for source in preferred:
+        if source in DEFAULT_DATA_SOURCE_ORDER and source not in merged:
+            merged.append(source)
+    for source in DEFAULT_DATA_SOURCE_ORDER:
+        if source not in merged:
+            merged.append(source)
+    return merged
+
+
+def _env_enabled_sources() -> List[str]:
+    api_keys = get_api_keys()
+    enabled: List[str] = []
+    if api_keys.get("TUSHARE_TOKEN"):
+        enabled.append("Tushare")
+    enabled.append("AkShare")
+    if api_keys.get("ALPHA_VANTAGE_KEY"):
+        enabled.append("AlphaVantage")
+    enabled.extend(["Binance", "yfinance"])
+    return _merge_data_sources(enabled)
+
+
+def _estimate_quality_min_points(days: int) -> int:
+    """根据请求窗口估算最小有效点数，避免短窗口请求被误判为数据不足。"""
+    safe_days = max(1, int(days or 1))
+    estimated_trading_points = ceil(safe_days * 0.55) - 1
+    return min(30, max(1, estimated_trading_points))
 
 def identify_asset_type(ticker: str) -> str:
     """
@@ -54,6 +87,9 @@ def identify_asset_type(ticker: str) -> str:
     Returns: 'stock', 'index', 'etf', 'fund', 'bond', 'gold', 'crypto', 'us_stock', 'unknown'
     """
     ticker = ticker.upper()
+    hint = get_asset_hint(ticker)
+    hinted_type = hint.get("asset_type") if hint else None
+    hinted_name = hint.get("name") if hint else None
     
     if ticker.endswith(".OF"):
         return "fund" # 场外基金
@@ -70,6 +106,10 @@ def identify_asset_type(ticker: str) -> str:
         # Could be US stock
         return "us_stock"
         
+    resolved = resolve_asset_type(ticker, asset_name=hinted_name, asset_type=hinted_type)
+    if resolved in {"fund", "etf", "stock"}:
+        return resolved
+
     # A-Share / ETF / Index
     if ticker.isdigit() and len(ticker) == 6:
         # 00, 30, 60, 68 -> Stock
@@ -87,43 +127,26 @@ def identify_asset_type(ticker: str) -> str:
     return "stock"
 
 def get_active_data_sources() -> List[str]:
-    """获取当前激活的数据源列表（按优先级排序）"""
-    if not USER_STATE_FILE.exists():
-         return ["AkShare", "Binance", "Tushare", "AlphaVantage", "yfinance"]
-    try:
-        with open(USER_STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            sources = data.get("data_sources", ["AkShare", "Binance"])
-            if not sources:
-                 return ["AkShare", "Binance"]
-            return sources
-    except Exception:
-        return ["AkShare", "Binance"]
+    """获取当前激活的数据源列表（按优先级排序）。统一由服务端环境变量控制。"""
+    return _env_enabled_sources()
+
+
+def get_api_key_status() -> Dict[str, bool]:
+    """返回服务端环境变量中的数据源密钥是否已配置，不暴露明文。"""
+    api_keys = get_api_keys()
+    return {
+        "Tushare": bool(api_keys.get("TUSHARE_TOKEN")),
+        "AlphaVantage": bool(api_keys.get("ALPHA_VANTAGE_KEY")),
+    }
 
 def get_api_keys() -> Dict[str, str]:
-    """获取数据源 API Keys（优先从环境变量读取，其次从用户状态文件读取）"""
+    """获取数据源 API Keys。统一从服务端环境变量读取。"""
     api_keys = {}
 
-    # 从环境变量读取（优先级更高）
     if os.getenv("ALPHA_VANTAGE_KEY"):
         api_keys["ALPHA_VANTAGE_KEY"] = os.getenv("ALPHA_VANTAGE_KEY")
     if os.getenv("TUSHARE_TOKEN"):
         api_keys["TUSHARE_TOKEN"] = os.getenv("TUSHARE_TOKEN")
-
-    # 从用户状态文件读取（降级方案）
-    if not USER_STATE_FILE.exists():
-        return api_keys
-    try:
-        with open(USER_STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            file_keys = data.get("api_keys", {})
-            # 只有当环境变量没有设置时才使用文件中的值
-            if not api_keys.get("ALPHA_VANTAGE_KEY") and file_keys.get("ALPHA_VANTAGE_KEY"):
-                api_keys["ALPHA_VANTAGE_KEY"] = file_keys["ALPHA_VANTAGE_KEY"]
-            if not api_keys.get("TUSHARE_TOKEN") and file_keys.get("TUSHARE_TOKEN"):
-                api_keys["TUSHARE_TOKEN"] = file_keys["TUSHARE_TOKEN"]
-    except Exception:
-        pass
 
     return api_keys
 
@@ -162,9 +185,15 @@ def load_price_data_akshare(tickers: List[str], days: int) -> pd.DataFrame:
         # 处理 .OF 后缀 (场外基金)
         is_otc_fund = ticker.endswith(".OF")
         clean_ticker = ticker.replace(".SZ", "").replace(".SS", "").replace(".OF", "")
-        
+        hint = get_asset_hint(ticker)
+        resolved_type = resolve_asset_type(
+            ticker,
+            asset_name=str(hint.get("name") or ""),
+            asset_type=hint.get("asset_type"),
+        )
+
         df = pd.DataFrame()
-        is_fund = (ticker.isdigit() and len(ticker) == 6) or is_otc_fund
+        is_fund = resolved_type == "fund" or is_otc_fund
         is_us_stock = ticker in us_stock_prefix or ticker.upper() in us_stock_prefix
         
         # 简单判断黄金/贵金属 (上海黄金交易所)
@@ -194,8 +223,8 @@ def load_price_data_akshare(tickers: List[str], days: int) -> pd.DataFrame:
                 except Exception:
                     pass
 
-            # 0) 显式指定为场外基金 (.OF) -> 优先最高
-            if df.empty and is_otc_fund:
+            # 0) 场外基金优先按净值获取，避免误读成股票价格
+            if df.empty and (is_otc_fund or resolved_type == "fund"):
                 try:
                     temp_df = ak.fund_open_fund_info_em(
                         symbol=clean_ticker, indicator="单位净值走势"
@@ -237,7 +266,7 @@ def load_price_data_akshare(tickers: List[str], days: int) -> pd.DataFrame:
 
             # 2) 优先尝试作为 ETF 获取行情 (场内交易价格优先于净值)
             # 159755 等 ETF 应优先走此逻辑
-            if df.empty:
+            if df.empty and resolved_type != "fund":
                 try:
                     temp_df = ak.fund_etf_hist_em(
                         symbol=clean_ticker,
@@ -250,7 +279,7 @@ def load_price_data_akshare(tickers: List[str], days: int) -> pd.DataFrame:
                     pass
 
             # 3) 尝试作为 A股 获取行情
-            if df.empty:
+            if df.empty and resolved_type == "stock":
                 try:
                     temp_df = ak.stock_zh_a_hist(
                         symbol=clean_ticker,
@@ -424,6 +453,72 @@ def load_price_data_yfinance(tickers: List[str], days: int) -> pd.DataFrame:
     return data.ffill().bfill()
 
 
+def load_cn_realtime_quotes_sina(tickers: List[str]) -> Dict[str, Dict[str, object]]:
+    """Load mainland China realtime quotes from Sina in a lightweight batch call."""
+    normalized: List[Tuple[str, str]] = []
+    for ticker in tickers:
+        text = str(ticker or "").strip()
+        digits = "".join(ch for ch in text if ch.isdigit())
+        if len(digits) != 6:
+            continue
+        prefix = "sh" if digits.startswith(("5", "6", "9", "11", "12")) else "sz"
+        normalized.append((ticker, f"{prefix}{digits}"))
+
+    if not normalized:
+        return {}
+
+    url = "https://hq.sinajs.cn/list=" + ",".join(code for _, code in normalized)
+    headers = {
+        "Referer": "https://finance.sina.com.cn",
+        "User-Agent": "Mozilla/5.0",
+    }
+
+    response = requests.get(url, timeout=15, headers=headers)
+    response.raise_for_status()
+    response.encoding = "gbk"
+
+    quote_map: Dict[str, Dict[str, object]] = {}
+    for line in response.text.splitlines():
+        line = line.strip()
+        if not line or '="' not in line:
+            continue
+        left, right = line.split('="', 1)
+        payload = right.rstrip('";')
+        symbol = left.rsplit("_", 1)[-1]
+        fields = payload.split(",")
+        if len(fields) < 32:
+            continue
+
+        ticker = next((original for original, code in normalized if code == symbol), None)
+        if ticker is None:
+            continue
+
+        try:
+            price = float(fields[3])
+        except (TypeError, ValueError):
+            continue
+
+        trade_date = str(fields[30]).strip() or None
+        trade_time = str(fields[31]).strip() or None
+        timestamp = None
+        if trade_date and trade_time:
+            try:
+                timestamp = pd.Timestamp(f"{trade_date} {trade_time}")
+            except Exception:
+                timestamp = None
+
+        quote_map[ticker] = {
+            "ticker": ticker,
+            "name": fields[0].strip(),
+            "price": price,
+            "trade_date": trade_date,
+            "trade_time": trade_time,
+            "timestamp": timestamp,
+        }
+
+    return quote_map
+
+
 # ================================================================
 #  新增：各数据源的 OHLCV 提取函数
 # ================================================================
@@ -495,7 +590,13 @@ def _fetch_akshare_ohlcv_single(
 
     clean_ticker = ticker.replace(".SZ", "").replace(".SS", "")
     df = pd.DataFrame()
-    is_fund = ticker.isdigit() and len(ticker) == 6
+    hint = get_asset_hint(ticker)
+    resolved_type = resolve_asset_type(
+        ticker,
+        asset_name=str(hint.get("name") or ""),
+        asset_type=hint.get("asset_type"),
+    )
+    is_fund = resolved_type == "fund"
 
     us_stock_prefix = {
         "AAPL": "105.AAPL",
@@ -556,7 +657,7 @@ def _fetch_akshare_ohlcv_single(
                 pass
 
         # 3) ETF / A 股（日线含 OHLCV）
-        if df.empty:
+        if df.empty and resolved_type != "fund":
             try:
                 temp_df = ak.fund_etf_hist_em(
                     symbol=clean_ticker,
@@ -568,7 +669,7 @@ def _fetch_akshare_ohlcv_single(
             except Exception:
                 pass
 
-        if df.empty:
+        if df.empty and resolved_type == "stock":
             try:
                 temp_df = ak.stock_zh_a_hist(
                     symbol=clean_ticker,
@@ -1275,6 +1376,8 @@ def _load_price_data_remote(
     chinese_tickers = [
         t for t in tickers if ".SZ" in t or ".SS" in t or (t.isdigit() and len(t) == 6)
     ]
+    chinese_fund_tickers = [t for t in chinese_tickers if identify_asset_type(t) == "fund"]
+    chinese_market_tickers = [t for t in chinese_tickers if t not in chinese_fund_tickers]
     hk_index_tickers = [t for t in tickers if t.upper() in {"HSI"}]
     us_stock_tickers = [
         t
@@ -1294,10 +1397,10 @@ def _load_price_data_remote(
         used_tickers: List[str] = []
 
         # 优先尝试 Tushare（如果启用且配置了 token）
-        if use_tushare:
+        if chinese_market_tickers and use_tushare:
             try:
                 ts_data = load_price_data_tushare(
-                    chinese_tickers, days, tushare_token=tushare_token  # type: ignore[arg-type]
+                    chinese_market_tickers, days, tushare_token=tushare_token  # type: ignore[arg-type]
                 )
                 if not ts_data.empty:
                     chinese_data = ts_data.copy()
@@ -1305,8 +1408,8 @@ def _load_price_data_remote(
             except Exception:
                 pass
 
-        # 对于 Tushare 未覆盖的中国标的，退回到 AkShare
-        remaining = [t for t in chinese_tickers if t not in used_tickers]
+        # 场外基金直接走 AkShare；其余对 Tushare 未覆盖的中国标的再回退到 AkShare
+        remaining = [t for t in chinese_market_tickers if t not in used_tickers] + chinese_fund_tickers
         if remaining and use_akshare:
             try:
                 ak_data = load_price_data_akshare(remaining, days)
@@ -1395,8 +1498,8 @@ def _load_price_data_remote(
     if not data_frames:
         return pd.DataFrame()
     if len(data_frames) == 1:
-        return data_frames[0].ffill().bfill()
-    return pd.concat(data_frames, axis=1).ffill().bfill()
+        return _fill_dataframe_within_valid_range(data_frames[0])
+    return _fill_dataframe_within_valid_range(pd.concat(data_frames, axis=1))
 
 
 def _clean_price_dataframe(df: pd.DataFrame, max_one_day_return: float = 0.30, ffill_limit: int = 5) -> pd.DataFrame:
@@ -1419,7 +1522,101 @@ def _clean_price_dataframe(df: pd.DataFrame, max_one_day_return: float = 0.30, f
         ret = ret.clip(lower=-max_one_day_return, upper=max_one_day_return)
         clean = s.iloc[0] * (1 + ret.fillna(0)).cumprod()
         out[col] = clean.reindex(out.index)
-    return out.ffill().bfill()
+    return _fill_dataframe_within_valid_range(out)
+
+
+def _fill_dataframe_within_valid_range(df: pd.DataFrame) -> pd.DataFrame:
+    """Only fill gaps between a column's first and last real observations."""
+    out = df.copy()
+    if not out.empty and not isinstance(out.index, pd.DatetimeIndex):
+        out.index = pd.to_datetime(out.index)
+    out = out.sort_index()
+
+    for col in out.columns:
+        series = out[col]
+        first_valid = series.first_valid_index()
+        last_valid = series.last_valid_index()
+        if first_valid is None or last_valid is None:
+            continue
+        filled = series.loc[first_valid:last_valid].ffill().bfill()
+        out.loc[first_valid:last_valid, col] = filled
+        if first_valid != out.index[0]:
+            out.loc[out.index < first_valid, col] = np.nan
+        if last_valid != out.index[-1]:
+            out.loc[out.index > last_valid, col] = np.nan
+
+    return out
+
+
+def _latest_series_date(series: pd.Series | None) -> Optional[datetime]:
+    if series is None or series.empty:
+        return None
+    try:
+        return pd.to_datetime(series.index.max()).to_pydatetime()
+    except Exception:
+        return None
+
+
+def _should_refresh_local_series(
+    ticker: str,
+    series: pd.Series | None,
+    *,
+    refresh_stale: bool,
+) -> bool:
+    if series is None or series.empty:
+        return True
+    if not refresh_stale:
+        return False
+
+    latest_dt = _latest_series_date(series)
+    if latest_dt is None:
+        return True
+
+    today = datetime.now().date()
+    latest_date = latest_dt.date()
+    recent = series.dropna().sort_index().tail(2)
+    if (
+        len(recent) == 2
+        and pd.Timestamp(recent.index[-1]).date() == today
+        and pd.Timestamp(recent.index[-2]).date() < today
+        and abs(float(recent.iloc[-1]) - float(recent.iloc[-2])) < 1e-9
+    ):
+        return True
+
+    # 估值类场景需要尽量拿到最新可得价格。
+    # 场外基金通常按 T+1 披露净值，允许落后一个自然日；
+    # 场内股票/ETF/指数等应尽量更新到当日。
+    asset_type = identify_asset_type(ticker)
+    if asset_type == "fund":
+        return latest_date < (today - timedelta(days=1))
+    return latest_date < today
+
+
+def _trim_synthetic_tail(
+    local_series: pd.Series | None,
+    remote_series: pd.Series | None,
+) -> pd.Series | None:
+    if local_series is None or local_series.empty or remote_series is None or remote_series.empty:
+        return local_series
+
+    remote_last_dt = _latest_series_date(remote_series)
+    if remote_last_dt is None:
+        return local_series
+
+    trimmed = local_series.sort_index()
+    tail = trimmed[trimmed.index > pd.Timestamp(remote_last_dt)]
+    if tail.empty:
+        return trimmed
+
+    reference = float(remote_series.iloc[-1])
+    numeric_tail = pd.to_numeric(tail, errors="coerce").dropna()
+    if numeric_tail.empty:
+        return trimmed[trimmed.index <= pd.Timestamp(remote_last_dt)]
+
+    if all(abs(float(value) - reference) < 1e-9 for value in numeric_tail.tolist()):
+        return trimmed[trimmed.index <= pd.Timestamp(remote_last_dt)]
+
+    return trimmed
 
 
 def load_price_data(
@@ -1428,6 +1625,7 @@ def load_price_data(
     data_sources: List[str] | None = None,
     alpha_vantage_key: str | None = None,
     tushare_token: str | None = None,
+    refresh_stale: bool = False,
 ) -> pd.DataFrame:
     """内部实现：优先使用本地仓库，不足时再回退远程并写回本地"""
     if not tickers:
@@ -1437,7 +1635,11 @@ def load_price_data(
     try:
         from .api_response_cache import get_cached, set_cached, is_api_cache_enabled
         if is_api_cache_enabled():
-            cache_params = {"tickers": sorted(tickers), "days": days}
+            cache_params = {
+                "tickers": sorted(tickers),
+                "days": days,
+                "refresh_stale": refresh_stale,
+            }
             cached = get_cached("prices", cache_params)
             if cached is not None:
                 df = pd.DataFrame.from_dict(cached, orient="split")
@@ -1462,33 +1664,42 @@ def load_price_data(
         data_sources = get_active_data_sources()
 
     local_series_map: Dict[str, pd.Series] = {}
-    missing_tickers: List[str] = []
+    tickers_to_refresh: List[str] = []
 
     # 1. 先尝试从本地仓库读取
     for t in tickers:
         s = data_store.load_local_price_history(t)
-        if s is None or s.empty:
-            missing_tickers.append(t)
-        else:
+        if s is not None and not s.empty:
             # 本地有数据，先存下来，稍后统一裁剪
             local_series_map[t] = s
+        if _should_refresh_local_series(t, s, refresh_stale=refresh_stale):
+            tickers_to_refresh.append(t)
 
-    # 2. 对于本地缺失的标的，从远程加载并写回本地
-    if missing_tickers:
+    # 2. 对于本地缺失或已过时的标的，从远程加载并写回本地
+    if tickers_to_refresh:
         # 为本地仓库尽量缓存更长的历史，而不仅仅是用户当前选择的 days。
         # 这里与 data_updater 中的 MAX_CACHE_DAYS 保持一致，默认约 10 年（3650 天）。
         REMOTE_CACHE_DAYS = max(days, 3650)
         remote_df = _load_price_data_remote(
-            tickers=missing_tickers,
+            tickers=tickers_to_refresh,
             days=REMOTE_CACHE_DAYS,
             data_sources=data_sources,
             alpha_vantage_key=alpha_vantage_key,
             tushare_token=tushare_token,
         )
         if remote_df is not None and not remote_df.empty:
-            for t in missing_tickers:
+            for t in tickers_to_refresh:
                 if t in remote_df.columns:
-                    s = remote_df[t].dropna()
+                    remote_series = remote_df[t].dropna()
+                    if remote_series.empty:
+                        continue
+                    local_series = local_series_map.get(t)
+                    if local_series is not None and not local_series.empty:
+                        local_series = _trim_synthetic_tail(local_series, remote_series)
+                        s = pd.concat([local_series, remote_series]).sort_index()
+                        s = s[~s.index.duplicated(keep="last")]
+                    else:
+                        s = remote_series
                     if not s.empty:
                         # 旧接口继续保存为单列 close，以保持兼容性
                         data_store.save_local_price_history(t, s)
@@ -1518,7 +1729,7 @@ def load_price_data(
     for t, s in local_series_map.items():
         result[t] = s.reindex(trimmed_index)
 
-    result_df = result.ffill().bfill()
+    result_df = _fill_dataframe_within_valid_range(result)
     
     # 方案一：数据清洗增强（去重、前向填充限制、异常收益率截断）
     if not result_df.empty:
@@ -1526,7 +1737,12 @@ def load_price_data(
     
     # 数据质量检查
     if not result_df.empty:
-        is_valid, warnings = validate_data_before_analysis(result_df, tickers, min_data_points=30)
+        min_points = _estimate_quality_min_points(days)
+        is_valid, warnings = validate_data_before_analysis(
+            result_df,
+            tickers,
+            min_data_points=min_points,
+        )
         if warnings:
             # 记录警告但不阻止返回数据
             import logging
@@ -1538,7 +1754,11 @@ def load_price_data(
     try:
         from .api_response_cache import set_cached, is_api_cache_enabled
         if is_api_cache_enabled() and not result_df.empty:
-            cache_params = {"tickers": sorted(tickers), "days": days}
+            cache_params = {
+                "tickers": sorted(tickers),
+                "days": days,
+                "refresh_stale": refresh_stale,
+            }
             set_cached("prices", cache_params, result_df.to_dict(orient="split"))
     except Exception as e:
         import logging
@@ -1871,5 +2091,3 @@ def get_flow_summary(start_date: str = "2010-01-01", end_date: str = None) -> Di
 
     loader = ExternalDataLoader(data_dir="data/external")
     return loader.get_flow_summary(start_date, end_date)
-
-

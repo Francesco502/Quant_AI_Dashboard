@@ -5,17 +5,23 @@ import { api } from "./api"
 
 interface SettingsContextType {
   dataSources: string[]
-  setDataSources: (sources: string[]) => void
-  apiKeys: Record<string, string>
-  setApiKeys: (keys: Record<string, string>) => void
+  apiKeyStatus: {
+    Tushare: boolean
+    AlphaVantage: boolean
+  }
+  configurationMode: "env_locked"
   isLoading: boolean
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined)
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  const [dataSources, setDataSourcesState] = useState<string[]>(["AkShare", "Binance"])
-  const [apiKeys, setApiKeysState] = useState<Record<string, string>>({})
+  const [dataSources, setDataSourcesState] = useState<string[]>(["Tushare", "AkShare"])
+  const [apiKeyStatus, setApiKeyStatus] = useState<{ Tushare: boolean; AlphaVantage: boolean }>({
+    Tushare: false,
+    AlphaVantage: false,
+  })
+  const [configurationMode, setConfigurationMode] = useState<"env_locked">("env_locked")
   const [isLoading, setIsLoading] = useState(
     () => typeof window !== "undefined" && !!localStorage.getItem("token")
   )
@@ -26,35 +32,22 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
     api.stz.getDataSources()
       .then((res) => {
-        setDataSourcesState(res.sources || ["AkShare", "Binance"])
-        setApiKeysState(res.api_keys || {})
+        setDataSourcesState(res.sources || ["Tushare", "AkShare"])
+        setApiKeyStatus(res.api_key_status || { Tushare: false, AlphaVantage: false })
+        setConfigurationMode(res.configuration_mode || "env_locked")
       })
       .catch(() => {
-        setDataSourcesState(["AkShare", "Binance"])
+        setDataSourcesState(["Tushare", "AkShare"])
       })
       .finally(() => setIsLoading(false))
   }, [])
-
-  // Save to API when changed
-  const updateDataSources = (newSources: string[]) => {
-    setDataSourcesState(newSources)
-    if (typeof window === "undefined" || !localStorage.getItem("token")) return
-    void api.stz.updateDataSources(newSources, apiKeys).catch(() => undefined)
-  }
-
-  const updateApiKeys = (newKeys: Record<string, string>) => {
-    setApiKeysState(newKeys)
-    if (typeof window === "undefined" || !localStorage.getItem("token")) return
-    void api.stz.updateDataSources(dataSources, newKeys).catch(() => undefined)
-  }
 
   return (
     <SettingsContext.Provider
       value={{
         dataSources,
-        setDataSources: updateDataSources,
-        apiKeys,
-        setApiKeys: updateApiKeys,
+        apiKeyStatus,
+        configurationMode,
         isLoading
       }}
     >

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 from core.backtest_engine import BacktestEngine
 from core.data_service import load_price_data
-from core.stocktradebyz_adapter import get_default_selector_configs
+from core.strategy_catalog import get_strategy_definition, list_backtestable_strategies
 from core.analysis.performance_extended import (
     ExtendedPerformanceAnalyzer,
     compare_multiple_strategies,
@@ -77,6 +77,13 @@ class CompareStrategiesRequest(BaseModel):
     benchmark_code: Optional[str] = None
 
 
+class ExtendedAnalysisRequest(BaseModel):
+    equity_curve: List[Dict[str, Any]]
+    trades: List[Dict[str, Any]]
+    initial_capital: float = 100000.0
+    benchmark_ticker: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 #  内置经典策略
 # ---------------------------------------------------------------------------
@@ -133,11 +140,58 @@ BUILTIN_STRATEGIES: Dict[str, Dict[str, Any]] = {
     }
 }
 
+
+def _normalize_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+
+    parsed = pd.to_datetime(value)
+    if isinstance(parsed, pd.Timestamp):
+        return parsed.to_pydatetime()
+    if hasattr(parsed, "to_pydatetime"):
+        return parsed.to_pydatetime()
+    raise ValueError(f"Unsupported date value: {value}")
+
+
+def _load_benchmark_returns(
+    benchmark_ticker: Optional[str],
+    equity_points: List[Dict[str, Any]],
+) -> Optional[pd.Series]:
+    if not benchmark_ticker or not equity_points:
+        return None
+
+    sorted_points = sorted(equity_points, key=lambda item: item["date"])
+    start_date = sorted_points[0]["date"]
+    end_date = sorted_points[-1]["date"]
+    days = max((end_date - start_date).days + 30, len(sorted_points) + 5)
+
+    benchmark_data = load_price_data([benchmark_ticker], days=days)
+    if benchmark_ticker not in benchmark_data.columns:
+        return None
+
+    benchmark_prices = benchmark_data[benchmark_ticker].dropna()
+    benchmark_prices.index = pd.to_datetime(benchmark_prices.index)
+    benchmark_prices = benchmark_prices[
+        (benchmark_prices.index >= pd.Timestamp(start_date))
+        & (benchmark_prices.index <= pd.Timestamp(end_date))
+    ]
+    if benchmark_prices.empty:
+        return None
+
+    benchmark_returns = benchmark_prices.pct_change().fillna(0)
+    equity_index = pd.DatetimeIndex(point["date"] for point in sorted_points)
+    aligned_returns = benchmark_returns.reindex(equity_index).ffill().fillna(0)
+    if aligned_returns.empty or len(aligned_returns) != len(equity_index):
+        return None
+
+    return aligned_returns.reset_index(drop=True)
+
 # ---------------------------------------------------------------------------
 #  统一策略列表（经典 + Z哥战法）
 # ---------------------------------------------------------------------------
 
 def _build_unified_strategy_list() -> List[Dict[str, Any]]:
+    return list_backtestable_strategies()
     """
     合并经典策略与 STZ 战法策略，返回统一格式列表。
     所有页面（回测、扫描、信号）共享同一份策略列表。
@@ -255,11 +309,10 @@ async def list_strategies():
 @router.post("/run", response_model=Dict[str, Any])
 async def run_backtest(request: BacktestRequest):
     """Run a backtest"""
-    if request.strategy_id not in BUILTIN_STRATEGIES:
+    strategy_conf = get_strategy_definition(request.strategy_id)
+    if strategy_conf is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
-
-    strategy_conf = BUILTIN_STRATEGIES[request.strategy_id]
-    strategy_func = strategy_conf["func"]
+    strategy_func = strategy_conf.func
 
     try:
         start_dt = datetime.strptime(request.start_date, "%Y-%m-%d")
@@ -323,11 +376,12 @@ async def run_multi_strategy_backtest(request: MultiStrategyRequest):
         strategy_params = {}
 
         for sid, conf in request.strategies.items():
-            if sid not in BUILTIN_STRATEGIES:
+            strategy_conf = get_strategy_definition(sid)
+            if strategy_conf is None:
                 continue
 
             strategies[sid] = (
-                BUILTIN_STRATEGIES[sid]["func"],
+                strategy_conf.func,
                 conf.get("params", {})
             )
             weights[sid] = conf.get("weight", 1.0 / len(request.strategies))
@@ -428,11 +482,10 @@ async def optimize_parameters(request: ParameterOptimizationRequest):
 
     使用网格搜索优化策略参数。
     """
-    if request.strategy_id not in BUILTIN_STRATEGIES:
+    strategy_conf = get_strategy_definition(request.strategy_id)
+    if strategy_conf is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
-
-    strategy_conf = BUILTIN_STRATEGIES[request.strategy_id]
-    strategy_func = strategy_conf["func"]
+    strategy_func = strategy_conf.func
 
     try:
         start_dt = datetime.strptime(request.start_date, "%Y-%m-%d")
@@ -512,28 +565,40 @@ async def optimize_parameters(request: ParameterOptimizationRequest):
 
 
 @router.post("/extended-analysis", response_model=Dict[str, Any])
-async def extended_analysis(
-    equity_curve: List[Dict[str, Any]],
-    trades: List[Dict[str, Any]],
-    initial_capital: float = 100000,
-    benchmark_ticker: Optional[str] = None
-):
+async def extended_analysis(request: ExtendedAnalysisRequest):
     """
     扩展绩效分析 - v1.2.0 新增
 
     计算信息比率、滚动夏普、交易分析、月度收益等详细指标。
     """
     try:
-        analyzer = ExtendedPerformanceAnalyzer(initial_capital)
+        analyzer = ExtendedPerformanceAnalyzer(request.initial_capital)
+        normalized_equity_curve = sorted(
+            [
+                {
+                    **point,
+                    "date": _normalize_datetime(point["date"]),
+                }
+                for point in request.equity_curve
+            ],
+            key=lambda item: item["date"],
+        )
+        normalized_trades = [
+            {
+                **trade,
+                "date": _normalize_datetime(trade["date"]),
+            }
+            for trade in request.trades
+        ]
 
-        for point in equity_curve:
+        for point in normalized_equity_curve:
             analyzer.add_equity_point(
                 point["date"],
                 point["equity"],
                 point.get("cash", 0)
             )
 
-        for trade in trades:
+        for trade in normalized_trades:
             analyzer.add_trade(
                 trade["date"],
                 trade["ticker"],
@@ -545,11 +610,9 @@ async def extended_analysis(
 
         # 加载基准数据
         benchmark_series = None
-        if benchmark_ticker:
+        if request.benchmark_ticker:
             try:
-                # 简化处理：在这里需要实际加载数据
-                # 为简化API，暂时返回占位符
-                pass
+                benchmark_series = _load_benchmark_returns(request.benchmark_ticker, normalized_equity_curve)
             except Exception as e:
                 logger.warning(f"加载基准数据失败: {e}")
 
@@ -622,7 +685,11 @@ async def extended_analysis(
                 "top_5_weight": metrics.top_5_weight,
                 "top_10_weight": metrics.top_10_weight,
                 "description": metrics.position_concentration.get("description", "N/A")
-            }
+            },
+            "benchmark": {
+                "ticker": request.benchmark_ticker,
+                "loaded": benchmark_series is not None,
+            },
         }
 
     except Exception as e:

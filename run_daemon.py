@@ -1,17 +1,22 @@
-"""启动后台守护进程脚本
-"""
-import sys
-import os
+"""Launcher for the background daemon process."""
 
-# 将当前目录加入 path，确保能找到 core
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from __future__ import annotations
+
+import os
+import sys
+
+
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+if REPO_ROOT not in sys.path:
+    sys.path.append(REPO_ROOT)
 
 from core.daemon import main
 
+
 if __name__ == "__main__":
-    print("正在启动后台守护进程...")
-    print("按 Ctrl+C 停止")
+    print("Starting background daemon...")
+    print("Press Ctrl+C to stop.")
     try:
         main()
     except KeyboardInterrupt:
-        print("已停止")
+        print("Daemon stopped.")

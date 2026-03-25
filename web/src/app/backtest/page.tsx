@@ -1,901 +1,383 @@
-﻿"use client"
+"use client"
 
-import { useState, useEffect, useCallback, useMemo } from "react"
-import { usePathname, useRouter } from "next/navigation"
-import { motion } from "framer-motion"
-import { GlassCard, CardTitle } from "@/components/ui/card"
+import Link from "next/link"
+import { useEffect, useMemo, useState } from "react"
+import { BarChart3, Download, Play, Radar, RefreshCw, Sparkles, Workflow } from "lucide-react"
+import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts"
+
+import { MeasuredChart } from "@/components/charts/measured-chart"
+import { MultiAssetPicker } from "@/components/shared/multi-asset-picker"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { CardDescription, CardTitle, GlassCard } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import { api, type BacktestRunResponse, type UnknownRecord } from "@/lib/api"
-import {
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-  ReferenceLine,
-  Area,
-  AreaChart
-} from "recharts"
-import { Play, RotateCcw, Settings2, TrendingUp, AlertTriangle, Layers, ZoomIn, ZoomOut, Download } from "lucide-react"
-import { cn, formatPercent, formatCurrency } from "@/lib/utils"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { HelpTooltip } from "@/components/ui/tooltip"
+import { api, type Asset, type BacktestRunResponse, type RunStrategyResult, type UnknownRecord } from "@/lib/api"
+import { SONG_COLORS } from "@/lib/chart-theme"
 import { GLOSSARY } from "@/lib/glossary"
-import ComparativeAnalysisPanel from "./ComparativeAnalysisPanel"
-import { StrategyTemplateSelector } from "@/components/trading/StrategyTemplateSelector"
+import { formatCurrency, formatPercent } from "@/lib/utils"
 
-// Design System Constants
-const COLORS = {
-  equity: "#3B82F6",
-  equityGradientStart: "#3B82F6",
-  equityGradientEnd: "#60A5FA",
-  drawdown: "#DC2626",
-  grid: "rgba(0, 0, 0, 0.04)",
-  tooltipBg: "rgba(255, 255, 255, 0.94)"
-}
+type Mode = "classic" | "scan" | "compare"
+type Params = Record<string, string | number | boolean | null>
+type Strategy = { id: string; name: string; description: string; category: "classic" | "stz"; default_params: Params; class_name: string }
+type EquityPoint = { date: string; equity: number }
+type TradeRecord = { timestamp: string; symbol: string; side: "BUY" | "SELL"; price: number; quantity: number; commission: number }
+type ScanRow = { ticker: string; name?: string; selector_alias?: string; last_close?: number }
 
-const tooltipStyle = {
-  backgroundColor: COLORS.tooltipBg,
-  border: '1px solid rgba(0, 0, 0, 0.06)',
-  borderRadius: '10px',
-  backdropFilter: 'blur(20px)',
-  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
-  color: '#1A1A1A',
-  fontSize: '12px',
-}
+const PARAM_LABELS: Record<string, string> = { short_window: "短均线", long_window: "长均线", window: "回看窗口", std_dev: "标准差", fast: "快线", slow: "慢线", signal: "信号线", threshold: "阈值", holding_days: "持有天数" }
+const DEFAULT_METRICS = { total_return: 0, sharpe_ratio: 0, max_drawdown: 0, volatility: 0 }
 
-// 缁熶竴绛栫暐绫诲瀷
-type StrategyParams = Record<string, string | number | boolean | null>
-
-interface UnifiedStrategy {
-  id: string
-  name: string
-  description: string
-  category: "classic" | "stz"
-  default_params: StrategyParams
-  class_name: string
-  alias: string
-  activate: boolean
-}
-
-interface EquityPoint {
-  date: string
-  equity: number
-}
-
-interface TradeRecord {
-  timestamp: string
-  symbol: string
-  side: "BUY" | "SELL"
-  price: number
-  quantity: number
-  commission: number
-}
-
-interface StzSignalRow {
-  ticker: string
-  name?: string
-  selector_alias?: string
-  last_close?: number
-}
-
-interface StzResultShape {
-  count?: number
-  data?: StzSignalRow[]
-  message?: string
-}
-
-interface ComparisonRow {
-  id: string
-  name: string
-  weight: number
-  metrics: Record<string, number>
-  equity_curve: EquityPoint[]
-  trades: TradeRecord[]
-}
-
-interface ComparativePanelRow {
-  id: string
-  name: string
-  weight?: number
-  metrics: {
-    total_return: number
-    sharpe_ratio: number
-    max_drawdown: number
-    volatility: number
-    annual_return?: number
-    information_ratio?: number
-    beta?: number
-    alpha?: number
-  }
-  equity_curve: EquityPoint[]
-  trades: TradeRecord[]
-}
-
-interface BacktestPageResult extends BacktestRunResponse {
-  comparisonData?: ComparisonRow[]
-}
-
-const DEFAULT_METRICS: Record<string, number> = {
-  total_return: 0,
-  sharpe_ratio: 0,
-  max_drawdown: 0,
-  volatility: 0,
-}
-
-const getErrorMessage = (error: unknown, fallback: string) =>
-  error instanceof Error ? error.message : fallback
-
-const normalizeStrategy = (row: UnknownRecord): UnifiedStrategy | null => {
+function normalizeStrategy(row: UnknownRecord): Strategy | null {
   const id = typeof row.id === "string" ? row.id : ""
   if (!id) return null
-
-  const category = row.category === "stz" ? "stz" : "classic"
-  const defaultParamsRaw = (row.default_params && typeof row.default_params === "object")
-    ? row.default_params as Record<string, unknown>
-    : {}
-  const defaultParams = Object.fromEntries(
-    Object.entries(defaultParamsRaw).map(([key, value]) => [key, typeof value === "object" ? null : (value as string | number | boolean | null)])
-  ) as StrategyParams
-
+  const rawParams = row.default_params && typeof row.default_params === "object" ? (row.default_params as Record<string, unknown>) : {}
   return {
     id,
     name: typeof row.name === "string" ? row.name : id,
     description: typeof row.description === "string" ? row.description : "",
-    category,
-    default_params: defaultParams,
+    category: row.category === "stz" ? "stz" : "classic",
+    default_params: Object.fromEntries(Object.entries(rawParams).map(([key, value]) => [key, typeof value === "object" ? null : (value as string | number | boolean | null)])),
     class_name: typeof row.class_name === "string" ? row.class_name : id,
-    alias: typeof row.alias === "string" ? row.alias : (typeof row.name === "string" ? row.name : id),
-    activate: Boolean(row.activate ?? true),
   }
 }
 
-// Enhanced Chart Component with Zoom/Pan simulation
-const EnhancedChart = ({ data }: { data: EquityPoint[] }) => {
-  const [viewRange, setViewRange] = useState<{ start: number; end: number }>({ start: 0, end: 100 })
-  const autoScale = true
+function normalizeParams(params: Params) {
+  return Object.fromEntries(
+    Object.entries(params).map(([key, value]) => {
+      if (typeof value === "string") {
+        const trimmed = value.trim()
+        const numeric = Number(trimmed)
+        if (trimmed !== "" && Number.isFinite(numeric)) return [key, numeric]
+        if (trimmed === "true") return [key, true]
+        if (trimmed === "false") return [key, false]
+      }
+      return [key, value]
+    }),
+  )
+}
 
-  const paginatedData = data.slice(viewRange.start, viewRange.end)
-
-  const handleZoomIn = useCallback(() => {
-    const range = viewRange.end - viewRange.start
-    if (range > 10) {
-      const newRange = Math.floor(range * 0.8)
-      const center = Math.floor((viewRange.start + viewRange.end) / 2)
-      setViewRange({
-        start: Math.max(0, center - Math.floor(newRange / 2)),
-        end: Math.min(data.length, center + Math.floor(newRange / 2))
-      })
-    }
-  }, [viewRange, data.length])
-
-  const handleZoomOut = useCallback(() => {
-    const range = viewRange.end - viewRange.start
-    const newRange = Math.min(data.length, Math.floor(range * 1.2))
-    const center = Math.floor((viewRange.start + viewRange.end) / 2)
-    setViewRange({
-      start: Math.max(0, center - Math.floor(newRange / 2)),
-      end: Math.min(data.length, center + Math.floor(newRange / 2))
-    })
-  }, [viewRange, data.length])
-
-  const handleResetZoom = useCallback(() => {
-    setViewRange({ start: 0, end: data.length })
-  }, [data.length])
-
-  if (!data || data.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center text-muted-foreground opacity-50">
-        No data yet. Run a backtest first.
-      </div>
-    )
-  }
-
+function Metric({ label, value, tone = SONG_COLORS.ink, help }: { label: string; value: string; tone?: string; help?: string }) {
   return (
-    <div className="relative w-full h-full">
-      {/* Chart Header with Controls */}
-      <div className="absolute top-0 right-0 flex gap-2 z-10">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleZoomIn}
-          className="h-8 w-8 p-0 bg-background/80 backdrop-blur rounded-md"
-          title="Zoom in"
-        >
-          <ZoomIn className="w-4 h-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleZoomOut}
-          className="h-8 w-8 p-0 bg-background/80 backdrop-blur rounded-md"
-          title="Zoom out"
-        >
-          <ZoomOut className="w-4 h-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleResetZoom}
-          className="h-8 w-8 p-0 bg-background/80 backdrop-blur rounded-md"
-          title="Reset"
-        >
-          <RotateCcw className="w-4 h-4" />
-        </Button>
+    <GlassCard className="space-y-2 p-4">
+      <div className="flex items-center gap-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+        <span>{label}</span>
+        {help ? <HelpTooltip content={help} /> : null}
       </div>
+      <div className="text-2xl font-semibold tracking-[-0.04em]" style={{ color: tone }}>{value}</div>
+    </GlassCard>
+  )
+}
 
-      {/* Responsive Chart */}
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={paginatedData}>
-          <defs>
-            <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={COLORS.equityGradientStart} stopOpacity={0.3}/>
-              <stop offset="95%" stopColor={COLORS.equityGradientStart} stopOpacity={0}/>
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={COLORS.grid} />
-          <XAxis
-            dataKey="date"
-            stroke="#888"
-            fontSize={11}
-            tickLine={false}
-            axisLine={false}
-            minTickGap={40}
-            tickMargin={10}
-          />
-          <YAxis
-            domain={autoScale ? ['auto', 'auto'] : undefined}
-            stroke="#888"
-            fontSize={11}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={(val) => `楼${(val/1000).toFixed(0)}k`}
-            tickMargin={10}
-          />
-          <Tooltip
-            contentStyle={tooltipStyle}
-            formatter={(val?: number | string) => [formatCurrency(Number(val ?? 0)), "Equity"]}
-            labelFormatter={(label) => `Date: ${label}`}
-          />
-          <Legend />
-          <Area
-            type="monotone"
-            dataKey="equity"
-            stroke={COLORS.equityGradientStart}
-            strokeWidth={2}
-            fill="url(#equityGradient)"
-            animationDuration={300}
-          />
-          <ReferenceLine y={data[0]?.equity} stroke="#888" strokeDasharray="3 3" label={{ position: "left", value: "Start" }} />
-        </AreaChart>
-      </ResponsiveContainer>
-
-      {/* View Statistics */}
-      <div className="flex justify-between text-xs text-muted-foreground mt-2 px-1">
-        <span>Points: {paginatedData.length}</span>
-        <span>
-          Range: {paginatedData[0]?.date || "-"} ~ {paginatedData[paginatedData.length - 1]?.date || "-"}
-        </span>
+function EquityChart({ data }: { data: EquityPoint[] }) {
+  if (data.length === 0) {
+    return <GlassCard className="flex h-[320px] items-center justify-center p-6 text-sm text-muted-foreground">暂无权益曲线数据。</GlassCard>
+  }
+  const values = data.map((item) => item.equity)
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const pad = Math.max((max - min) * 0.12, max * 0.01)
+  return (
+    <GlassCard className="space-y-4 p-5">
+      <div className="space-y-1">
+        <CardTitle>权益曲线</CardTitle>
+        <CardDescription>Y 轴会随当前数据自动缩放，便于观察波动。</CardDescription>
       </div>
-    </div>
+      <div className="h-[280px]">
+        <MeasuredChart height={280}>
+          {(width, height) => (
+            <AreaChart width={width} height={height} data={data}>
+              <defs>
+                <linearGradient id="bt-fill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={SONG_COLORS.indigo} stopOpacity={0.24} />
+                  <stop offset="100%" stopColor={SONG_COLORS.indigo} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={SONG_COLORS.grid} vertical={false} strokeDasharray="3 3" />
+              <XAxis dataKey="date" tickLine={false} axisLine={false} minTickGap={36} stroke={SONG_COLORS.axis} />
+              <YAxis tickLine={false} axisLine={false} stroke={SONG_COLORS.axis} domain={[Math.max(0, min - pad), max + pad]} tickFormatter={(v) => `¥${(Number(v) / 1000).toFixed(0)}k`} />
+              <Tooltip formatter={(value) => [formatCurrency(Number(value)), "权益"]} labelFormatter={(label) => `日期：${label}`} contentStyle={{ borderRadius: 18, border: "1px solid rgba(0,0,0,0.06)", backgroundColor: "rgba(255,255,255,0.95)" }} />
+              <Area type="monotone" dataKey="equity" stroke={SONG_COLORS.indigo} strokeWidth={2.2} fill="url(#bt-fill)" />
+            </AreaChart>
+          )}
+        </MeasuredChart>
+      </div>
+    </GlassCard>
   )
 }
 
 export default function BacktestPage() {
-  const pathname = usePathname()
-  const router = useRouter()
-  const [strategies, setStrategies] = useState<UnifiedStrategy[]>([])
-  const [selectedStrategy, setSelectedStrategy] = useState<string>("")
-  const [tickers, setTickers] = useState<string>("013281,002611,160615")
-  const [startDate, setStartDate] = useState<string>("2024-01-01")
-  const [endDate, setEndDate] = useState<string>("")
-  const [initialCapital, setInitialCapital] = useState<string>("100000")
-  const [params, setParams] = useState<StrategyParams>({})
+  const [mode, setMode] = useState<Mode>("classic")
+  const [strategies, setStrategies] = useState<Strategy[]>([])
+  const [assets, setAssets] = useState<Asset[]>([])
+  const [selectedTickers, setSelectedTickers] = useState<string[]>([])
+  const [manualTickers, setManualTickers] = useState("")
+  const [selectedStrategy, setSelectedStrategy] = useState("")
+  const [startDate, setStartDate] = useState("2024-01-01")
+  const [endDate, setEndDate] = useState("")
+  const [initialCapital, setInitialCapital] = useState("100000")
+  const [params, setParams] = useState<Params>({})
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<BacktestPageResult | null>(null)
-  const [showComparison, setShowComparison] = useState(false)
+  const [error, setError] = useState("")
+  const [classicResult, setClassicResult] = useState<BacktestRunResponse | null>(null)
+  const [scanResult, setScanResult] = useState<RunStrategyResult | null>(null)
+  const [compareResult, setCompareResult] = useState<BacktestRunResponse | null>(null)
 
-  // Load strategy list from unified endpoint.
   useEffect(() => {
-    api.backtest.listStrategies().then((res) => {
-      const parsed = (res || [])
-        .map((row) => normalizeStrategy(row as UnknownRecord))
-        .filter((row): row is UnifiedStrategy => row !== null)
-      setStrategies(parsed)
-      if (parsed.length > 0) {
-        setSelectedStrategy(parsed[0].id)
-        setParams((parsed[0].default_params || {}) as StrategyParams)
+    void (async () => {
+      try {
+        const [rows, pool, personalAssets] = await Promise.all([
+          api.backtest.listStrategies(),
+          api.stz.getAssetPool().catch(() => []),
+          api.user.assets.getOverview(false).catch(() => ({ assets: [] })),
+        ])
+        const parsed = (rows || []).map((row) => normalizeStrategy(row as UnknownRecord)).filter((row): row is Strategy => row !== null)
+        const mergedAssets = new Map<string, Asset>()
+        for (const asset of pool || []) {
+          mergedAssets.set(asset.ticker, asset)
+        }
+        for (const asset of personalAssets.assets || []) {
+          if (!mergedAssets.has(asset.ticker)) {
+            mergedAssets.set(asset.ticker, {
+              ticker: asset.ticker,
+              name: asset.asset_name || asset.ticker,
+            })
+          }
+        }
+        setStrategies(parsed)
+        setAssets(Array.from(mergedAssets.values()))
+        const firstClassic = parsed.find((item) => item.category === "classic") ?? parsed[0]
+        if (firstClassic) {
+          setSelectedStrategy(firstClassic.id)
+          setParams(firstClassic.default_params)
+        }
+      } catch (requestError) {
+        setError(requestError instanceof Error ? requestError.message : "读取回测配置失败")
       }
-    }).catch((error) => console.error("Failed to load strategies:", error))
+    })()
   }, [])
 
-  const handleStrategyChange = (id: string) => {
+  useEffect(() => {
+    if (assets.length > 0 && selectedTickers.length === 0) {
+      setSelectedTickers(assets.slice(0, 3).map((asset) => asset.ticker))
+    }
+  }, [assets, selectedTickers.length])
+
+  const classicStrategies = useMemo(() => strategies.filter((item) => item.category === "classic"), [strategies])
+  const scanStrategies = useMemo(() => strategies.filter((item) => item.category === "stz"), [strategies])
+  const strategyGroup = mode === "scan" ? scanStrategies : classicStrategies
+  const currentStrategy = strategyGroup.find((item) => item.id === selectedStrategy) ?? strategyGroup[0] ?? null
+  const activeTickers = selectedTickers.length > 0 ? selectedTickers : manualTickers.split(",").map((item) => item.trim().toUpperCase()).filter(Boolean)
+  const activeMetrics = (classicResult?.metrics || compareResult?.portfolio?.metrics || DEFAULT_METRICS) as Record<string, number>
+  const activeEquity = ((classicResult?.equity_curve || compareResult?.portfolio?.equity_curve || []) as EquityPoint[])
+  const activeTrades = ((classicResult?.trades || compareResult?.portfolio?.trades || []) as TradeRecord[])
+
+  useEffect(() => {
+    if (strategyGroup.length === 0) return
+    if (!strategyGroup.some((item) => item.id === selectedStrategy)) {
+      setSelectedStrategy(strategyGroup[0].id)
+      setParams(strategyGroup[0].default_params)
+    }
+  }, [selectedStrategy, strategyGroup])
+
+  const setStrategy = (id: string) => {
     setSelectedStrategy(id)
-    const strat = strategies.find(s => s.id === id)
-    if (strat) {
-      setParams((strat.default_params || {}) as StrategyParams)
-    }
+    const next = strategies.find((item) => item.id === id)
+    if (next) setParams(next.default_params)
   }
 
-  const handleParamChange = (key: string, value: string) => {
-    setParams((prev) => ({ ...prev, [key]: value }))
+  const setParam = (key: string, value: string) => {
+    setParams((previous) => ({ ...previous, [key]: value }))
   }
 
-  const handleRun = async () => {
-    setLoading(true)
-    setResult(null)
-    setShowComparison(false)
-    try {
-      const strat = strategies.find(s => s.id === selectedStrategy)
-
-      if (strat && strat.category === "stz") {
-        // STZ 绛栫暐 鈫?浣跨敤 /stz/run 鎺ュ彛
-        const tickerList = tickers.split(",").map(t => t.trim()).filter(Boolean)
-        const res = await api.stz.run({
-          trade_date: endDate || new Date().toISOString().split('T')[0],
-          mode: "universe",
-          selector_names: [strat.class_name],
-          selector_params: { [strat.class_name]: params },
-          tickers: tickerList.length > 0 ? tickerList : undefined
-        })
-        // Adapt STZ response into backtest result shape.
-        setResult({
-          metrics: DEFAULT_METRICS,
-          equity_curve: [],
-          trades: [],
-          stz_result: res as unknown as UnknownRecord,
-        })
-      } else {
-        // 缁忓吀绛栫暐 鈫?浣跨敤 /backtest/run 鎺ュ彛
-        const tickerList = tickers.split(",").map(t => t.trim()).filter(Boolean)
-        const res = await api.backtest.run({
-          strategy_id: selectedStrategy,
-          tickers: tickerList,
-          start_date: startDate,
-          end_date: endDate || undefined,
-          initial_capital: parseFloat(initialCapital),
-          params
-        })
-        setResult(res as BacktestPageResult)
-      }
-    } catch (error) {
-      console.error("Backtest failed", error)
-      alert(`Backtest failed: ${getErrorMessage(error, "Please check parameters or data.")}`)
-    } finally {
-      setLoading(false)
-    }
+  const resetResults = () => {
+    setClassicResult(null)
+    setScanResult(null)
+    setCompareResult(null)
   }
 
-  // Run comparison for all classic strategies
-  const handleCompareStrategies = async () => {
-    if (classicStrategies.length < 2) {
-      alert("Please select at least 2 classic strategies for comparison.")
+  const run = async () => {
+    if (activeTickers.length === 0) {
+      setError("请先选择至少一个标的。")
       return
     }
-
     setLoading(true)
-    setResult(null)
-    setShowComparison(true)
+    setError("")
+    resetResults()
     try {
-      const tickerList = tickers.split(",").map(t => t.trim()).filter(Boolean)
-
-      // Prepare strategies object
-      const strategiesObj: Record<string, { weight: number; params: UnknownRecord }> = {}
-      classicStrategies.forEach(s => {
-        strategiesObj[s.id] = {
-          weight: 1.0 / classicStrategies.length,
-          params: (s.default_params || {}) as UnknownRecord
-        }
-      })
-
-      const res = await api.backtest.runMulti({
-        strategies: strategiesObj,
-        tickers: tickerList,
-        start_date: startDate,
-        end_date: endDate || undefined,
-        initial_capital: parseFloat(initialCapital),
-        benchmark_ticker: "000300.SH"
-      })
-
-      // Store comparison result
-      const comparisonResult: BacktestPageResult = {
-        portfolio: res.portfolio,
-        individual: res.individual || {},
-        comparisonData: classicStrategies.map(s => ({
-          id: s.id,
-          name: s.name,
-          weight: res.portfolio?.weights?.[s.id] || 1.0 / classicStrategies.length,
-          metrics: res.individual?.[s.id]?.metrics || DEFAULT_METRICS,
-          equity_curve: (res.individual?.[s.id]?.equity_curve || []) as EquityPoint[],
-          trades: (res.individual?.[s.id]?.trades || []) as TradeRecord[],
-        }))
+      if (mode === "classic" && currentStrategy) {
+        const response = await api.backtest.run({ strategy_id: currentStrategy.id, tickers: activeTickers, start_date: startDate, end_date: endDate || undefined, initial_capital: Number(initialCapital), params: normalizeParams(params) })
+        setClassicResult(response)
+      } else if (mode === "scan" && currentStrategy) {
+        const response = await api.stz.run({ trade_date: endDate || new Date().toISOString().split("T")[0], mode: "universe", selector_names: [currentStrategy.class_name], selector_params: { [currentStrategy.class_name]: normalizeParams(params) }, tickers: activeTickers })
+        setScanResult(response)
+      } else {
+        const response = await api.backtest.runMulti({
+          strategies: Object.fromEntries(classicStrategies.map((item) => [item.id, { weight: 1 / classicStrategies.length, params: normalizeParams(item.default_params) }])),
+          tickers: activeTickers,
+          start_date: startDate,
+          end_date: endDate || undefined,
+          initial_capital: Number(initialCapital),
+          benchmark_ticker: "000300.SH",
+        })
+        setCompareResult(response)
       }
-      setResult(comparisonResult)
-    } catch (error) {
-      console.error("Comparison failed", error)
-      alert(`Comparison failed: ${getErrorMessage(error, "Please check parameters.")}`)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "运行失败")
     } finally {
       setLoading(false)
     }
   }
 
-  const currentStrategy = strategies.find(s => s.id === selectedStrategy)
-  const isSTZ = currentStrategy?.category === "stz"
-
-  // Split STZ strategies and classic strategies.
-  const classicStrategies = strategies.filter(s => s.category === "classic")
-  const stzStrategies = strategies.filter(s => s.category === "stz")
-  const stzResult = result?.stz_result as StzResultShape | undefined
-  const metrics = (result?.metrics || DEFAULT_METRICS) as Record<string, number>
-  const equityCurve = (result?.equity_curve || []) as EquityPoint[]
-  const trades = (result?.trades || []) as TradeRecord[]
-  const comparisonResults = useMemo(() => {
-    if (!result?.comparisonData) return {}
-    return result.comparisonData.reduce<Record<string, ComparativePanelRow>>((acc, row) => {
-      acc[row.id] = {
-        id: row.id,
-        name: row.name,
-        weight: row.weight,
-        metrics: {
-          total_return: Number(row.metrics.total_return || 0),
-          sharpe_ratio: Number(row.metrics.sharpe_ratio || 0),
-          max_drawdown: Number(row.metrics.max_drawdown || 0),
-          volatility: Number(row.metrics.volatility || 0),
-          annual_return: Number(row.metrics.annual_return || 0),
-          information_ratio: Number(row.metrics.information_ratio || 0),
-          beta: Number(row.metrics.beta || 0),
-          alpha: Number(row.metrics.alpha || 0),
-        },
-        equity_curve: row.equity_curve,
-        trades: row.trades,
-      }
-      return acc
-    }, {})
-  }, [result?.comparisonData])
+  const exportReport = async (reportType: "html" | "pdf") => {
+    try {
+      const response = await api.backtest.export({ equity_curve: activeEquity, trades: activeTrades, metrics: activeMetrics, report_type: reportType, include_charts: true })
+      if (response?.download_url) window.open(response.download_url, "_blank")
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "导出失败")
+    }
+  }
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Navigation Tabs */}
-      <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-xl w-fit">
-        <Button
-          variant="ghost"
-          className={cn(
-            "rounded-lg px-4 py-2 text-sm font-medium transition-all",
-            !pathname.includes("portfolio") && "bg-background shadow-sm text-foreground"
-          )}
-          onClick={() => router.push("/backtest")}
-        >
-          Historical Backtest
-        </Button>
-        <Button
-          variant="ghost"
-          className={cn(
-            "rounded-lg px-4 py-2 text-sm font-medium transition-all hover:bg-muted/80",
-            pathname.includes("portfolio") && "bg-background shadow-sm text-foreground"
-          )}
-          onClick={() => router.push("/portfolio-backtest")}
-        >
-          Portfolio Backtest
-        </Button>
-        <Button
-          variant="ghost"
-          className={cn(
-            "rounded-lg px-4 py-2 text-sm font-medium transition-all hover:bg-muted/80",
-            pathname.includes("optimizer") && "bg-background shadow-sm text-foreground"
-          )}
-          onClick={() => router.push("/backtest/optimizer")}
-        >
-          Parameter Optimization
-        </Button>
-      </div>
-
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground/90">
-            Historical Backtest
-          </h1>
-          <p className="text-[13px] text-foreground/40">
-            Validate strategy performance on historical data for both classic quant and STZ scanners.
-            <span className="mx-2">|</span>
-            Responsive charts enabled
-          </p>
+    <div className="mx-auto max-w-7xl space-y-8 md:space-y-12 p-6 md:p-10">
+      <section className="space-y-4">
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline" className="rounded-full border-black/[0.07] bg-white/60 px-3 py-1 text-xs">回测中心</Badge>
+          <Badge variant="outline" className="rounded-full border-black/[0.05] bg-white/45 px-3 py-1 text-xs text-muted-foreground">回测 / 扫描 / 对比</Badge>
         </div>
-        {result && (
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                try {
-                  const exportData = {
-                    equity_curve: equityCurve,
-                    trades,
-                    metrics,
-                    report_type: "html",
-                    include_charts: true,
-                  }
-                  const res = await api.backtest.export(exportData)
-                  if (res?.download_url) {
-                    window.open(res.download_url, "_blank")
-                  } else {
-                    alert("Export succeeded, but no download URL was returned.")
-                  }
-                } catch (error) {
-                  alert(`Export failed: ${getErrorMessage(error, "Unknown error")}`)
-                }
-              }}
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Export HTML
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => window.open("/api/backtest/export", "_blank")}
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              Export Report
-            </Button>
-          </div>
-        )}
+        <h1 className="text-3xl font-medium tracking-wide text-foreground/90">把回测流程拆成三件清楚的事</h1>
+        <p className="max-w-4xl text-base font-light tracking-wide text-foreground/60">策略回测看单一策略，信号扫描看当期候选，多策略对比看风格差异。不再把所有控件挤在一个侧栏里。</p>
+      </section>
+
+      <div className="flex flex-wrap gap-2">
+        <Button asChild variant="outline"><Link href="/backtest">历史回测</Link></Button>
+        <Button asChild variant="outline"><Link href="/portfolio-backtest">组合回测</Link></Button>
+        <Button asChild variant="outline"><Link href="/backtest/optimizer">参数优化</Link></Button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Configuration Panel */}
-        <GlassCard className="lg:col-span-1 p-6 space-y-6 h-fit">
-          <div className="flex items-center gap-2 mb-2">
-            <Settings2 className="w-5 h-5 text-primary" />
-            <CardTitle>Backtest Configuration</CardTitle>
-          </div>
+      <Tabs value={mode} onValueChange={(value) => setMode(value as Mode)} className="space-y-8">
+        <TabsList className="h-auto flex-wrap rounded-[24px] bg-white/40 backdrop-blur-md border border-white/60 p-2 shadow-[0_4px_16px_rgba(0,0,0,0.02)]">
+          <TabsTrigger value="classic" className="gap-2 rounded-[18px] px-4 py-2.5"><BarChart3 className="h-4 w-4" />策略回测</TabsTrigger>
+          <TabsTrigger value="scan" className="gap-2 rounded-[18px] px-4 py-2.5"><Radar className="h-4 w-4" />信号扫描</TabsTrigger>
+          <TabsTrigger value="compare" className="gap-2 rounded-[18px] px-4 py-2.5"><Workflow className="h-4 w-4" />多策略对比</TabsTrigger>
+        </TabsList>
 
-          <div className="space-y-4">
-            {/* 绛栫暐閫夋嫨 - 鍒嗙粍 */}
-            <div className="space-y-2">
-              <Label className="flex items-center gap-1">
-                Select Strategy
-                <HelpTooltip content="Classic strategies support full backtest outputs; STZ is used for signal validation and screening." />
-              </Label>
-              <Select value={selectedStrategy} onValueChange={handleStrategyChange}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select strategy" />
-                </SelectTrigger>
-                <SelectContent>
-                  {classicStrategies.length > 0 && (
-                    <>
-                      <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground bg-muted/50">
-                        Classic Quant Strategies
-                      </div>
-                      {classicStrategies.map(s => (
-                        <SelectItem key={s.id} value={s.id}>
-                          <span className="flex items-center gap-2">
-                            {s.name}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </>
-                  )}
-                  {stzStrategies.length > 0 && (
-                    <>
-                      <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground bg-muted/50 mt-1">
-                        STZ Strategies
-                      </div>
-                      {stzStrategies.map(s => (
-                        <SelectItem key={s.id} value={s.id}>
-                          <span className="flex items-center gap-2">
-                            {s.alias}
-                            <span className="text-muted-foreground text-xs">({s.class_name})</span>
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </>
-                  )}
-                </SelectContent>
-              </Select>
-              {currentStrategy && (
-                <div className="flex items-start gap-1.5 mt-1">
-                  <Badge
-                    variant={isSTZ ? "default" : "secondary"}
-                    className="text-xs shrink-0"
-                  >
-                    {isSTZ ? "STZ" : "Classic"}
-                  </Badge>
-                  <p className="flex-1 min-w-0 text-xs text-muted-foreground whitespace-normal break-words">
-                    {currentStrategy.description}
-                  </p>
+        <TabsContent value={mode} className="space-y-5">
+          <GlassCard className="space-y-8 p-6 md:p-8 border-white/40 bg-white/30 backdrop-blur-2xl shadow-[0_8px_32px_rgba(142,115,77,0.04)]">
+            <div className="grid gap-8 md:gap-12 xl:grid-cols-[0.9fr_1.1fr]">
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <CardTitle>{mode === "classic" ? "选择一个经典策略" : mode === "scan" ? "选择一个 STZ 扫描器" : "自动对比全部经典策略"}</CardTitle>
+                  <CardDescription>{mode === "classic" ? "适合验证历史收益、回撤与交易记录。" : mode === "scan" ? "适合快速发现当前候选标的，不输出权益曲线。" : "适合判断哪一类经典策略更稳健。"} </CardDescription>
                 </div>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label>Tickers (comma-separated)</Label>
-              <Input value={tickers} onChange={e => setTickers(e.target.value)} placeholder="e.g. 013281,002611" />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-2">
-                <Label>Start Date</Label>
-                <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+                {mode === "compare" ? (
+                  <div className="rounded-[24px] border border-black/[0.05] bg-white/55 px-4 py-4 text-sm leading-7 text-muted-foreground">
+                    当前会对比 {classicStrategies.length} 个经典策略：{classicStrategies.map((item) => item.name).join("、") || "暂无可用策略"}。
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label>策略</Label>
+                    <Select value={currentStrategy?.id || ""} onValueChange={setStrategy}>
+                      <SelectTrigger className="rounded-2xl border-black/[0.07] bg-white/55"><SelectValue placeholder="请选择策略" /></SelectTrigger>
+                      <SelectContent>{strategyGroup.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent>
+                    </Select>
+                    {currentStrategy?.description ? <p className="text-[12px] leading-6 text-muted-foreground">{currentStrategy.description}</p> : null}
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label>标的</Label>
+                  {assets.length > 0 ? <MultiAssetPicker assets={assets} selected={selectedTickers} onChange={setSelectedTickers} placeholder="默认使用资产池前 3 项" maxPreview={3} /> : <Input value={manualTickers} onChange={(event) => setManualTickers(event.target.value)} placeholder="例如 013281,002611,160615" className="rounded-2xl border-black/[0.07] bg-white/55" />}
+                  <p className="text-[12px] leading-6 text-muted-foreground">当前使用：{activeTickers.length ? activeTickers.join("、") : "请先选择标的"}</p>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label>{isSTZ ? "Trade Date" : "End Date"}</Label>
-                <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
-              </div>
-            </div>
 
-            {!isSTZ && (
-              <div className="space-y-2">
-                <Label>Initial Capital</Label>
-                <Input type="number" value={initialCapital} onChange={e => setInitialCapital(e.target.value)} />
-              </div>
-            )}
+              <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div className="space-y-2"><Label>开始日期</Label><Input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="rounded-2xl border-black/[0.07] bg-white/55" /></div>
+                  <div className="space-y-2"><Label>{mode === "scan" ? "扫描日期" : "结束日期"}</Label><Input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} className="rounded-2xl border-black/[0.07] bg-white/55" /></div>
+                  <div className="space-y-2"><Label>初始资金<HelpTooltip content="仅影响经典回测和多策略对比。" /></Label><Input type="number" value={initialCapital} onChange={(event) => setInitialCapital(event.target.value)} className="rounded-2xl border-black/[0.07] bg-white/55" /></div>
+                </div>
 
-            {/* Dynamic Params */}
-            {currentStrategy && Object.keys(params).length > 0 && (
-              <div className="pt-4 border-t border-black/[0.04] space-y-4">
-                <Label className="text-[11px] font-medium uppercase tracking-wider text-foreground/40">
-                  Strategy Parameters
-                </Label>
-
-                {/* Strategy Template Selector */}
-                <StrategyTemplateSelector
-                  currentStrategyId={selectedStrategy}
-                  currentStrategyType={isSTZ ? "stz" : "classic"}
-                  currentParams={params}
-                  onLoadTemplate={(template) => {
-                    setParams(template.params as StrategyParams)
-                  }}
-                />
-
-                {Object.entries(params).map(([key, val]) => {
-                  // Skip nested object parameters in this simple editor.
-                  if (typeof val === "object" && val !== null) return null
-                  return (
-                    <div key={key} className="space-y-1">
-                      <Label className="text-xs font-mono">{key}</Label>
-                      <Input
-                        value={String(val ?? "")}
-                        onChange={e => handleParamChange(key, e.target.value)}
-                        className="h-8"
-                      />
+                {mode !== "compare" && Object.keys(params).length > 0 ? (
+                  <div className="rounded-[24px] border border-black/[0.05] bg-white/45 p-4">
+                    <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground/82"><Workflow className="h-4 w-4" style={{ color: SONG_COLORS.ochre }} />核心参数</div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {Object.entries(params).map(([key, value]) => (
+                        <div key={key} className="space-y-1.5">
+                          <Label className="text-xs font-medium">{PARAM_LABELS[key] ?? key}</Label>
+                          <Input value={String(value ?? "")} onChange={(event) => setParam(key, event.target.value)} className="rounded-2xl border-black/[0.07] bg-white/70" />
+                        </div>
+                      ))}
                     </div>
-                  )
-                })}
+                  </div>
+                ) : null}
+
+                <div className="flex flex-wrap gap-3">
+                  <Button onClick={() => void run()} disabled={loading}>{loading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}{mode === "classic" ? "开始回测" : mode === "scan" ? "运行扫描" : "开始对比"}</Button>
+                  <Button variant="outline" onClick={resetResults}>清空结果</Button>
+                </div>
               </div>
-            )}
+            </div>
+          </GlassCard>
+        </TabsContent>
+      </Tabs>
 
-            <Button
-              className="w-full mt-4"
-              onClick={handleRun}
-              disabled={loading}
-            >
-              {loading ? (
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ repeat: Infinity, duration: 1 }}
-                  className="mr-2"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </motion.div>
-              ) : (
-                <Play className="w-4 h-4 mr-2" />
-              )}
-              {isSTZ ? "Run Scanner" : "Run Backtest"}
-            </Button>
+      {error ? <div className="rounded-[26px] border px-4 py-4 text-sm leading-7" style={{ borderColor: "rgba(182,69,60,0.18)", color: SONG_COLORS.negative, backgroundColor: "rgba(182,69,60,0.08)" }}>{error}</div> : null}
 
-            {/* Compare Strategies Button */}
-            {classicStrategies.length >= 2 && (
-              <Button
-                className="w-full mt-2"
-                variant="outline"
-                onClick={handleCompareStrategies}
-                disabled={loading || classicStrategies.length < 2}
-              >
-                <TrendingUp className="w-4 h-4 mr-2" />
-                Compare Strategies ({classicStrategies.length})
-              </Button>
-            )}
+      {(classicResult || compareResult) ? (
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1"><CardTitle>{compareResult ? "组合对比结果" : "策略回测结果"}</CardTitle><CardDescription>{compareResult ? "先看组合总结果，再看各经典策略差异。" : "看收益、回撤、波动率与交易记录是否匹配你的预期。"} </CardDescription></div>
+            <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void exportReport("html")}><Download className="mr-2 h-4 w-4" />导出 HTML</Button><Button variant="outline" onClick={() => void exportReport("pdf")}><Download className="mr-2 h-4 w-4" />导出 PDF</Button></div>
+          </div>
+          <div className="grid gap-4 md:grid-cols-4">
+            <Metric label="总收益" value={formatPercent(activeMetrics.total_return || 0)} tone={(activeMetrics.total_return || 0) >= 0 ? SONG_COLORS.positive : SONG_COLORS.negative} help={GLOSSARY.TotalReturn.definition} />
+            <Metric label="夏普比率" value={(activeMetrics.sharpe_ratio || 0).toFixed(2)} tone={SONG_COLORS.indigo} help={GLOSSARY.SharpeRatio.definition} />
+            <Metric label="最大回撤" value={formatPercent(activeMetrics.max_drawdown || 0)} tone={SONG_COLORS.negative} help={GLOSSARY.MaxDrawdown.definition} />
+            <Metric label="波动率" value={formatPercent(activeMetrics.volatility || 0)} help={GLOSSARY.Volatility.definition} />
+          </div>
+          <EquityChart data={activeEquity} />
+          <GlassCard className="space-y-4 p-5">
+            <div className="space-y-1"><CardTitle>交易记录</CardTitle><CardDescription>判断策略是否存在过度交易或节奏失衡。</CardDescription></div>
+            {activeTrades.length > 0 ? (
+              <div className="overflow-x-auto rounded-[24px] border border-black/[0.05] bg-white/45">
+                <table className="w-full min-w-[680px] text-sm">
+                  <thead><tr className="border-b border-black/[0.05] text-left text-[12px] uppercase tracking-[0.12em] text-muted-foreground"><th className="px-4 py-3">日期</th><th className="px-4 py-3">代码</th><th className="px-4 py-3">方向</th><th className="px-4 py-3 text-right">价格</th><th className="px-4 py-3 text-right">数量</th><th className="px-4 py-3 text-right">手续费</th></tr></thead>
+                  <tbody>{activeTrades.map((trade, index) => <tr key={`${trade.symbol}-${trade.timestamp}-${index}`} className="border-b border-black/[0.04] last:border-b-0"><td className="px-4 py-3 font-mono text-[12px] text-foreground/70">{new Date(trade.timestamp).toLocaleDateString("zh-CN")}</td><td className="px-4 py-3 font-medium text-foreground/82">{trade.symbol}</td><td className="px-4 py-3 font-medium" style={{ color: trade.side === "BUY" ? SONG_COLORS.negative : SONG_COLORS.positive }}>{trade.side === "BUY" ? "买入" : "卖出"}</td><td className="px-4 py-3 text-right">{formatCurrency(Number(trade.price || 0))}</td><td className="px-4 py-3 text-right">{trade.quantity}</td><td className="px-4 py-3 text-right">{formatCurrency(Number(trade.commission || 0))}</td></tr>)}</tbody>
+                </table>
+              </div>
+            ) : <div className="rounded-[22px] border border-dashed border-black/[0.08] bg-white/40 px-4 py-8 text-center text-sm text-muted-foreground">当前结果没有交易记录。</div>}
+          </GlassCard>
+        </div>
+      ) : null}
+
+      {scanResult ? (
+        <GlassCard className="space-y-4 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1"><CardTitle>扫描结果</CardTitle><CardDescription>STZ 扫描只关心当前命中的候选标的，不强行展示权益曲线。</CardDescription></div>
+            <Badge variant="outline" className="rounded-full border-black/[0.07] bg-white/60 px-3 py-1 text-xs">{scanResult.count} 条信号</Badge>
+          </div>
+          {(scanResult.data as ScanRow[]).length > 0 ? (
+            <div className="overflow-x-auto rounded-[24px] border border-black/[0.05] bg-white/45">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead><tr className="border-b border-black/[0.05] text-left text-[12px] uppercase tracking-[0.12em] text-muted-foreground"><th className="px-4 py-3">代码</th><th className="px-4 py-3">名称</th><th className="px-4 py-3">扫描器</th><th className="px-4 py-3 text-right">收盘价</th></tr></thead>
+                <tbody>{(scanResult.data as ScanRow[]).map((row, index) => <tr key={`${row.ticker}-${index}`} className="border-b border-black/[0.04] last:border-b-0"><td className="px-4 py-3 font-mono">{row.ticker}</td><td className="px-4 py-3">{row.name || "-"}</td><td className="px-4 py-3">{row.selector_alias || currentStrategy?.name || "STZ"}</td><td className="px-4 py-3 text-right">{row.last_close != null ? formatCurrency(Number(row.last_close)) : "-"}</td></tr>)}</tbody>
+              </table>
+            </div>
+          ) : <div className="rounded-[22px] border border-dashed border-black/[0.08] bg-white/40 px-4 py-8 text-center text-sm text-muted-foreground">当前条件下没有筛选到符合要求的标的。</div>}
+        </GlassCard>
+      ) : null}
+
+      {!classicResult && !scanResult && !compareResult ? (
+        <GlassCard className="p-6">
+          <div className="flex items-start gap-4">
+            <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl" style={{ backgroundColor: "rgba(111,124,142,0.12)", color: SONG_COLORS.indigo }}><Sparkles className="h-5 w-5" /></div>
+            <div className="space-y-2"><CardTitle>第一次使用建议</CardTitle><p className="text-sm leading-7 text-muted-foreground">先用“策略回测”验证一个经典策略，再切到“多策略对比”看风格差异；若你只想找今天的候选标的，就用“信号扫描”。</p></div>
           </div>
         </GlassCard>
-
-        {/* Results Panel */}
-        <div className="lg:col-span-3 space-y-6">
-          {/* STZ Scan Results */}
-          {stzResult && (
-            <GlassCard className="p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <Layers className="w-5 h-5 text-blue-500" />
-                <CardTitle>Scan Results</CardTitle>
-                <Badge variant="secondary">{stzResult.count || 0} signals</Badge>
-              </div>
-              {stzResult.data && Array.isArray(stzResult.data) && stzResult.data.length > 0 ? (
-                <div className="rounded-md border overflow-hidden overflow-x-auto">
-                  <table className="w-full text-[13px]">
-                    <thead>
-                      <tr className="border-b border-black/[0.04] text-foreground/40 text-[12px] uppercase tracking-wider bg-muted/30">
-                        <th className="py-2 px-3 text-left">Ticker</th>
-                        <th className="py-2 px-3 text-left">Name</th>
-                        <th className="py-2 px-3 text-left">Selector</th>
-                        <th className="py-2 px-3 text-right">Close</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stzResult.data.map((row, idx: number) => (
-                        <tr key={idx} className="border-b border-black/[0.03] hover:bg-muted/20">
-                          <td className="py-2 px-3 font-mono font-medium">{row.ticker}</td>
-                          <td className="py-2 px-3">{row.name || "-"}</td>
-                          <td className="py-2 px-3">
-                            <Badge variant="outline" className="text-xs">{row.selector_alias}</Badge>
-                          </td>
-                          <td className="py-2 px-3 text-right">{Number(row.last_close).toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="py-12 text-center text-muted-foreground bg-muted/20 rounded-lg border border-dashed">
-                  No symbols matched current conditions.
-                </div>
-              )}
-              <p className="text-xs text-muted-foreground mt-3">{stzResult.message}</p>
-            </GlassCard>
-          )}
-
-          {/* Classic Backtest Metrics */}
-          {!stzResult && (
-            <>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <GlassCard className="p-4 flex flex-col justify-center">
-                  <span className="text-xs text-muted-foreground uppercase flex items-center gap-1">
-                    Total Return
-                    <HelpTooltip content={GLOSSARY.TotalReturn.definition} />
-                  </span>
-                  <span className={cn("text-2xl font-bold", (metrics.total_return || 0) >= 0 ? "text-emerald-500" : "text-red-500")}>
-                    {result ? formatPercent(metrics.total_return || 0) : "---"}
-                  </span>
-                </GlassCard>
-                <GlassCard className="p-4 flex flex-col justify-center">
-                  <span className="text-xs text-muted-foreground uppercase flex items-center gap-1">
-                    Sharpe Ratio
-                    <HelpTooltip content={GLOSSARY.SharpeRatio.definition} />
-                  </span>
-                  <span className="text-2xl font-bold">
-                    {result ? (metrics.sharpe_ratio || 0).toFixed(2) : "---"}
-                  </span>
-                </GlassCard>
-                <GlassCard className="p-4 flex flex-col justify-center">
-                  <span className="text-xs text-muted-foreground uppercase flex items-center gap-1">
-                    Max Drawdown
-                    <HelpTooltip content={GLOSSARY.MaxDrawdown.definition} />
-                  </span>
-                  <span className="text-2xl font-bold text-red-500">
-                    {result ? formatPercent(metrics.max_drawdown || 0) : "---"}
-                  </span>
-                </GlassCard>
-                <GlassCard className="p-4 flex flex-col justify-center">
-                  <span className="text-xs text-muted-foreground uppercase flex items-center gap-1">
-                    Volatility
-                    <HelpTooltip content={GLOSSARY.Volatility.definition} />
-                  </span>
-                  <span className="text-2xl font-bold">
-                    {result ? formatPercent(metrics.volatility || 0) : "---"}
-                  </span>
-                </GlassCard>
-              </div>
-
-              {/* Enhanced Chart */}
-              <GlassCard className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-primary" />
-                    <CardTitle className="flex items-center gap-1">
-                      Equity Curve
-                      <HelpTooltip content={GLOSSARY.EquityCurve.definition} />
-                    </CardTitle>
-                  </div>
-                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                    <ZoomIn className="w-3 h-3" />
-                    Zoom and pan supported
-                  </span>
-                </div>
-                <div className="h-[400px] w-full">
-                  {result && equityCurve.length > 0 ? (
-                    <EnhancedChart data={equityCurve} />
-                  ) : (
-                    <div className="h-full flex items-center justify-center text-muted-foreground opacity-50">
-                      No data yet. Run a backtest first.
-                    </div>
-                  )}
-                </div>
-              </GlassCard>
-
-              {/* Trades Table */}
-              <GlassCard className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5 text-primary" />
-                    <CardTitle>Trade Log ({trades.length || 0})</CardTitle>
-                  </div>
-                </div>
-                <div className="max-h-[300px] overflow-auto rounded-lg border">
-                  <table className="w-full text-[13px] text-left">
-                    <thead className="sticky top-0 bg-background z-10 shadow-sm">
-                      <tr className="border-b border-black/[0.04] text-foreground/40 text-[12px] uppercase tracking-wider">
-                        <th className="py-2 px-3 text-left">Time</th>
-                        <th className="py-2 px-3 text-left">Ticker</th>
-                        <th className="py-2 px-3 text-left">Side</th>
-                        <th className="py-2 px-3 text-right">Price</th>
-                        <th className="py-2 px-3 text-right">Quantity</th>
-                        <th className="py-2 px-3 text-right">Commission</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-black/[0.03]">
-                      {trades.map((t, i: number) => (
-                        <tr key={i} className="hover:bg-black/[0.02] transition-colors duration-150">
-                          <td className="py-2 px-3 font-mono text-xs">{new Date(t.timestamp).toLocaleDateString()}</td>
-                          <td className="py-2 px-3 font-bold">{t.symbol}</td>
-                          <td className={cn("py-2 px-3 font-bold", t.side === "BUY" ? "text-red-500" : "text-emerald-500")}>
-                            {t.side === "BUY" ? "Buy" : "Sell"}
-                          </td>
-                          <td className="py-2 px-3 text-right font-mono">{t.price.toFixed(2)}</td>
-                          <td className="py-2 px-3 text-right font-mono">{t.quantity}</td>
-                          <td className="py-2 px-3 text-right font-mono text-muted-foreground">{t.commission.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                      {!trades.length && !stzResult && (
-                        <tr>
-                          <td colSpan={6} className="py-8 text-center text-muted-foreground">No trades recorded.</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </GlassCard>
-            </>
-          )}
-
-          {/* Comparison Panel - Show when showComparison is true */}
-          {showComparison && Object.keys(comparisonResults).length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="lg:col-span-3 space-y-6"
-            >
-              <ComparativeAnalysisPanel results={comparisonResults} />
-            </motion.div>
-          )}
-
-          {/* Empty state */}
-          {!result && !showComparison && (
-            <div className="flex flex-col items-center justify-center min-h-[400px] text-muted-foreground bg-muted/10 rounded-xl border border-dashed">
-              <TrendingUp className="h-12 w-12 mb-4 opacity-20" />
-              <p className="text-lg font-medium">Ready to run</p>
-              <p className="text-sm opacity-70 mt-2">Select a strategy, configure parameters, then run.</p>
-              <div className="mt-6 flex gap-4 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                  Multi-strategy comparison
-                </span>
-                <span className="flex items-center gap-1">
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" /></svg>
-                  Parameter optimization
-                </span>
-                <span className="flex items-center gap-1">
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
-                  Report export
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      ) : null}
     </div>
   )
 }
-

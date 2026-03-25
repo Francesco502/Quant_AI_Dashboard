@@ -540,8 +540,14 @@ class OrderManager:
         quantity: Optional[int] = None
     ):
         """设置止盈规则"""
-        rule = self._build_stop_loss_rule(
-            account_id, symbol, entry_price, take_profit_type, take_profit_price, take_profit_percentage, quantity
+        rule = self._build_take_profit_rule(
+            account_id,
+            symbol,
+            entry_price,
+            take_profit_type,
+            take_profit_price,
+            take_profit_percentage,
+            quantity,
         )
 
         cursor = self.db.conn.cursor()
@@ -571,14 +577,14 @@ class OrderManager:
         quantity: Optional[int]
     ) -> Dict:
         """构建止损规则"""
-        if stop_type == "percentage" and stop_percentage:
-            trigger_price = entry_price * (1 - stop_percentage) if stop_percentage > 0 else 0
-        elif stop_type == "trailing" and stop_percentage:
-            trigger_price = entry_price * (1 - stop_percentage)
-        elif stop_price:
-            trigger_price = stop_price
-        else:
-            trigger_price = entry_price * 0.95  # 默认5%止损
+        trigger_price = self._resolve_exit_trigger_price(
+            entry_price=entry_price,
+            exit_type=stop_type,
+            explicit_price=stop_price,
+            percentage=stop_percentage,
+            direction="down",
+            default_multiplier=0.95,
+        )
 
         return {
             "account_id": account_id,
@@ -587,6 +593,57 @@ class OrderManager:
             "trigger_price": trigger_price,
             "quantity": quantity
         }
+
+    def _build_take_profit_rule(
+        self,
+        account_id: int,
+        symbol: str,
+        entry_price: float,
+        take_profit_type: str,
+        take_profit_price: Optional[float],
+        take_profit_percentage: Optional[float],
+        quantity: Optional[int]
+    ) -> Dict:
+        """构建止盈规则"""
+        trigger_price = self._resolve_exit_trigger_price(
+            entry_price=entry_price,
+            exit_type=take_profit_type,
+            explicit_price=take_profit_price,
+            percentage=take_profit_percentage,
+            direction="up",
+            default_multiplier=1.10,
+        )
+
+        return {
+            "account_id": account_id,
+            "symbol": symbol,
+            "stop_type": take_profit_type,
+            "trigger_price": trigger_price,
+            "quantity": quantity
+        }
+
+    def _resolve_exit_trigger_price(
+        self,
+        *,
+        entry_price: float,
+        exit_type: str,
+        explicit_price: Optional[float],
+        percentage: Optional[float],
+        direction: str,
+        default_multiplier: float,
+    ) -> float:
+        """根据出场方向统一计算止损/止盈触发价。"""
+        normalized_type = (exit_type or "percentage").strip().lower()
+        pct = float(percentage or 0)
+
+        if normalized_type in {"percentage", "trailing"} and pct > 0:
+            multiplier = 1 + pct if direction == "up" else 1 - pct
+            return entry_price * multiplier
+
+        if explicit_price and explicit_price > 0:
+            return explicit_price
+
+        return entry_price * default_multiplier
 
     def remove_stop_loss(self, account_id: int, symbol: str):
         """移除止损规则"""

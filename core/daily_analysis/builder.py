@@ -75,7 +75,6 @@ def build_analysis_input(ticker: str, market: str = "cn") -> Dict[str, Any]:
         "bias_risk": bias_risk if bias_risk else None,
         "trend_ok": trend_ok,
         "asset_type": asset_type,
-        "position_summary": None,  # 筹码分布：占位，后续可接入 AkShare/Tushare 等
         "history_start": series.index[0].isoformat() if hasattr(series.index[0], "isoformat") else str(series.index[0]),
         "history_end": series.index[-1].isoformat() if hasattr(series.index[-1], "isoformat") else str(series.index[-1]),
     }
@@ -182,4 +181,3 @@ def build_analysis_input(ticker: str, market: str = "cn") -> Dict[str, Any]:
         "news_summary": news_summary or None,
         "generated_at": datetime.now().isoformat(),
     }
-

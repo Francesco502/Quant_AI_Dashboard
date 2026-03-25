@@ -102,7 +102,14 @@ class TestBacktestAPI:
         response = auth_client.post("/api/backtest/optimize", json=payload)
         assert response.status_code == 404
 
-    def test_extended_analysis(self, auth_client):
+    @patch("api.routers.backtest.load_price_data")
+    def test_extended_analysis(self, mock_load_price, auth_client):
+        benchmark_dates = pd.to_datetime(["2025-01-01", "2025-02-01", "2025-03-01"])
+        mock_load_price.return_value = pd.DataFrame(
+            {"000300.SH": [3000.0, 3060.0, 3120.0]},
+            index=benchmark_dates,
+        )
+
         payload = {
             "equity_curve": [
                 {"date": "2025-01-01", "equity": 100000, "cash": 100000},
@@ -118,7 +125,11 @@ class TestBacktestAPI:
         }
 
         response = auth_client.post("/api/backtest/extended-analysis", json=payload)
-        assert response.status_code in [200, 500]
+        assert response.status_code == 200
+        data = response.json()
+        assert data["benchmark"]["ticker"] == "000300.SH"
+        assert data["benchmark"]["loaded"] is True
+        assert "information_ratio" in data["metrics"]
 
     def test_export_backtest_html(self, auth_client):
         payload = {
@@ -185,6 +196,52 @@ class TestBacktestAPI:
         data = response.json()
         assert isinstance(data, list)
         assert len(data) > 0
+        strategy_ids = {item["id"] for item in data}
+        assert "ema_crossover" in strategy_ids
+        assert "macd_trend" in strategy_ids
+        assert "donchian_breakout" in strategy_ids
+        assert "momentum_rotation" in strategy_ids
+
+    @patch("api.routers.backtest.load_price_data")
+    def test_run_new_builtin_strategy(self, mock_load_price, auth_client):
+        dates = pd.date_range(start="2025-01-01", periods=160, freq="B")
+        mock_load_price.return_value = pd.DataFrame({"600519": np.linspace(100, 180, len(dates))}, index=dates)
+
+        payload = {
+            "strategy_id": "macd_trend",
+            "tickers": ["600519"],
+            "start_date": "2025-01-01",
+            "end_date": "2025-08-15",
+            "initial_capital": 100000.0,
+            "params": {"fast": 12, "slow": 26, "signal": 9},
+        }
+
+        response = auth_client.post("/api/backtest/run", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert "metrics" in data
+        assert "equity_curve" in data
+
+    @patch("api.routers.backtest.load_price_data")
+    def test_run_donchian_breakout_strategy(self, mock_load_price, auth_client):
+        dates = pd.date_range(start="2025-01-01", periods=180, freq="B")
+        prices = np.concatenate([np.linspace(100, 120, 120), np.linspace(121, 150, 60)])
+        mock_load_price.return_value = pd.DataFrame({"600519": prices}, index=dates)
+
+        payload = {
+            "strategy_id": "donchian_breakout",
+            "tickers": ["600519"],
+            "start_date": "2025-01-01",
+            "end_date": "2025-09-30",
+            "initial_capital": 100000.0,
+            "params": {"breakout_window": 55, "exit_window": 20},
+        }
+
+        response = auth_client.post("/api/backtest/run", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert "metrics" in data
+        assert "equity_curve" in data
 
     def test_health_check(self, auth_client):
         response = auth_client.get("/api/health")

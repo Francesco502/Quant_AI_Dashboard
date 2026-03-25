@@ -106,14 +106,14 @@ export function OrderForm({ ticker, current_price, balance, position, onSubmit, 
             <Button
               type="button"
               onClick={() => setSide('BUY')}
-              className={`flex-1 py-3 ${side === 'BUY' ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}
+              className={`flex-1 py-3 ${side === 'BUY' ? 'bg-market-up hover:opacity-90 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}
             >
               买入
             </Button>
             <Button
               type="button"
               onClick={() => setSide('SELL')}
-              className={`flex-1 py-3 ${side === 'SELL' ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}
+              className={`flex-1 py-3 ${side === 'SELL' ? 'bg-market-down hover:opacity-90 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}
             >
               卖出
             </Button>
@@ -216,8 +216,8 @@ export function OrderForm({ ticker, current_price, balance, position, onSubmit, 
           {quantity && (
             <div className={`text-sm p-3 rounded-lg ${
               side === 'BUY'
-                ? canAfford() ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-                : canAfford() ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                ? canAfford() ? 'bg-market-down-soft text-market-down' : 'bg-market-up-soft text-market-up'
+                : canAfford() ? 'bg-market-down-soft text-market-down' : 'bg-market-up-soft text-market-up'
             }`}>
               <div className="flex justify-between items-center">
                 <span>
@@ -226,12 +226,12 @@ export function OrderForm({ ticker, current_price, balance, position, onSubmit, 
                 </span>
                 {canAfford() ? (
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    <span className="w-2 h-2 rounded-full bg-market-down" />
                     充足
                   </span>
                 ) : (
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-red-500" />
+                    <span className="w-2 h-2 rounded-full bg-market-up" />
                     不足
                   </span>
                 )}
@@ -241,7 +241,7 @@ export function OrderForm({ ticker, current_price, balance, position, onSubmit, 
 
           {/* 错误提示 */}
           {error && (
-            <div className="text-red-600 text-sm bg-red-50 p-3 rounded-lg flex items-center gap-2">
+            <div className="text-market-up text-sm bg-market-up-soft p-3 rounded-lg flex items-center gap-2">
               <span className="font-semibold">错误:</span> {error}
             </div>
           )}
@@ -252,8 +252,8 @@ export function OrderForm({ ticker, current_price, balance, position, onSubmit, 
               type="submit"
               className={`flex-1 py-3 text-base font-semibold ${
                 side === 'BUY'
-                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                  : 'bg-red-600 hover:bg-red-700 text-white'
+                  ? 'bg-market-up hover:opacity-90 text-white'
+                  : 'bg-market-down hover:opacity-90 text-white'
               }`}
             >
               {side === 'BUY' ? '买入下单' : '卖出下单'}

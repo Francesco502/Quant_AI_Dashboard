@@ -16,6 +16,7 @@ import sqlite3
 import pandas as pd
 from core.database import Database
 from core.data_service import load_price_data
+from core.paper_trading_fees import estimate_buy_total_cost, estimate_trade_fee
 
 logger = logging.getLogger(__name__)
 
@@ -198,8 +199,8 @@ class PaperAccount:
             
         # 2. 计算费用 (简化版：万分之三佣金，最低5元)
         amount = price * shares
-        fee = max(5.0, amount * 0.0003)
-        total_cost = amount + fee
+        fee = estimate_trade_fee("BUY", price, shares)
+        total_cost = estimate_buy_total_cost(price, shares)
         
         # 3. 检查余额
         if self.balance < total_cost:
@@ -314,7 +315,7 @@ class PaperAccount:
         # 3. 计算收益与费用
         amount = price * shares
         # 卖出印花税(0.1%) + 佣金(万3)
-        fee = max(5.0, amount * 0.0003) + (amount * 0.001)
+        fee = estimate_trade_fee("SELL", price, shares)
         net_income = amount - fee
         
         try:
@@ -559,8 +560,8 @@ class PaperAccount:
 
                 # 2. 计算费用
                 amount = price * shares
-                fee = max(5.0, amount * 0.0003)
-                total_cost = amount + fee
+                fee = estimate_trade_fee("BUY", price, shares)
+                total_cost = estimate_buy_total_cost(price, shares)
 
                 # 3. 检查余额
                 if self.balance < total_cost:
@@ -703,7 +704,7 @@ class PaperAccount:
 
                 # 3. 计算收益与费用
                 amount = price * shares
-                fee = max(5.0, amount * 0.0003) + (amount * 0.001)
+                fee = estimate_trade_fee("SELL", price, shares)
                 net_income = amount - fee
 
                 # 4. 增加余额

@@ -2,15 +2,6 @@ name: CI - Run Tests with Coverage
 
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - main
-      - develop
-      - feature/*
-  pull_request:
-    branches:
-      - main
-      - develop
 
 jobs:
   frontend-quality:

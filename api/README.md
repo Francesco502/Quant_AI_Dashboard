@@ -1,6 +1,6 @@
 # Quant-AI Dashboard API
 
-FastAPI backend for the Quant-AI Dashboard `v2.1.0` workspace.
+FastAPI backend for the Quant-AI Dashboard `v2.1.1` workspace.
 
 ## Responsibilities
 

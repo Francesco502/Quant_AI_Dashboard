@@ -11,7 +11,7 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 log_info "========================================"
-log_info "Quant-AI Dashboard v2.1.0 single-image startup"
+log_info "Quant-AI Dashboard v2.1.1 single-image startup"
 log_info "========================================"
 
 export ENABLE_DAEMON="${ENABLE_DAEMON:-true}"

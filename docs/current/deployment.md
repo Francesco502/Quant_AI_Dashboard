@@ -4,7 +4,7 @@
 
 Use [`docker-compose.yml`](../../docker-compose.yml), which builds [`Dockerfile.optimized`](../../Dockerfile.optimized).
 
-This is the standard `v2.1.0` full-stack single-image deployment path for the repository. One image contains:
+This is the standard `v2.1.1` full-stack single-image deployment path for the repository. One image contains:
 
 - static frontend served by Nginx
 - FastAPI backend served by Uvicorn
@@ -19,7 +19,7 @@ docker compose up -d --build
 ## Direct Single-Image Build
 
 ```bash
-docker build -f Dockerfile.optimized -t quant-ai-dashboard:2.1.0 .
+docker build -f Dockerfile.optimized -t quant-ai-dashboard:2.1.1 .
 ```
 
 ## Direct Single-Image Run
@@ -36,7 +36,7 @@ docker run -d \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/models:/app/models \
   -v $(pwd)/strategies:/app/strategies \
-  quant-ai-dashboard:2.1.0
+  quant-ai-dashboard:2.1.1
 ```
 
 ## Stop

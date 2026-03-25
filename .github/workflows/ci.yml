@@ -203,7 +203,7 @@ jobs:
 
       - name: Run performance benchmarks
         run: |
-          pytest tests/performance/ -v --benchmark-only --benchmark-storage=./benchmarks/
+          pytest tests/performance/ -v --benchmark-storage=./benchmarks/
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4

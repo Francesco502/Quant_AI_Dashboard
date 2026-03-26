@@ -1,6 +1,6 @@
 services:
   quant-app:
-    image: francescoli/quant_app:v2.1.2
+    image: francescoli/quant_app:v2.1.3
     build:
       context: .
       dockerfile: Dockerfile.optimized

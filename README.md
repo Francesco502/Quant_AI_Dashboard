@@ -2,7 +2,7 @@
 
 Personal quantitative analysis, paper trading, strategy research, and decision-support workspace.
 
-Current release: **v2.1.2**
+Current release: **v2.1.3**
 
 ## What This Repo Contains
 

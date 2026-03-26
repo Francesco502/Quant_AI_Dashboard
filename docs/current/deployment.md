@@ -4,7 +4,7 @@
 
 Use [`docker-compose.yml`](../../docker-compose.yml), which builds [`Dockerfile.optimized`](../../Dockerfile.optimized).
 
-This is the standard `v2.1.1` full-stack single-image deployment path for the repository. One image contains:
+This is the standard `v2.1.2` full-stack single-image deployment path for the repository. One image contains:
 
 - static frontend served by Nginx
 - FastAPI backend served by Uvicorn
@@ -19,7 +19,7 @@ docker compose up -d --build
 ## Direct Single-Image Build
 
 ```bash
-docker build -f Dockerfile.optimized -t quant-ai-dashboard:2.1.1 .
+docker build -f Dockerfile.optimized -t quant-ai-dashboard:2.1.2 .
 ```
 
 ## Direct Single-Image Run
@@ -36,7 +36,7 @@ docker run -d \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/models:/app/models \
   -v $(pwd)/strategies:/app/strategies \
-  quant-ai-dashboard:2.1.1
+  quant-ai-dashboard:2.1.2
 ```
 
 ## Stop
@@ -73,6 +73,15 @@ Set these through `.env` or your deployment platform:
 - `TUSHARE_TOKEN` when using Tushare
 - `ALPHA_VANTAGE_KEY` when using Alpha Vantage
 - `OPENAI_API_KEY`, `DASHSCOPE_API_KEY`, `ARK_API_KEY`, or other model-provider keys as needed
+
+## Release Security Gate
+
+Production deployment must explicitly choose one browser-origin model:
+
+- same-origin routing: set `API_EXPECT_SAME_ORIGIN=true`
+- explicit cross-origin routing: set `CORS_ORIGINS=https://your-frontend-domain`
+
+If neither is configured correctly, the service can still start, but `/api/health` will report `security.ready=false` and strict production validation can fail startup.
 
 ## Notes
 

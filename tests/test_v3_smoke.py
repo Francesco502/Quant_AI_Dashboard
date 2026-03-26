@@ -8,7 +8,7 @@ from core.version import VERSION
 @pytest.mark.integration
 def test_version_consistency():
     """版本号在核心与 API 中保持一致"""
-    assert VERSION == "2.1.1"
+    assert VERSION == "2.1.2"
     assert app.version == VERSION
 
 

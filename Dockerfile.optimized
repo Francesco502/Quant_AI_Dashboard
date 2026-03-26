@@ -1,5 +1,5 @@
 # ============================================================
-# Quant-AI Dashboard v2.1.1 - Optimized single-container image
+# Quant-AI Dashboard v2.1.2 - Optimized single-container image
 # Target: 2-core / 2GB runtime environment
 #
 # Process model:
@@ -33,6 +33,7 @@ RUN npm ci
 COPY web/ ./
 
 ENV NEXT_PUBLIC_API_URL=/api
+ENV NEXT_STATIC_EXPORT=1
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
@@ -58,7 +59,7 @@ ENV PATH=/root/.local/bin:$PATH
 COPY api/ ./api/
 COPY core/ ./core/
 COPY run_daemon.py set_password.py ./
-COPY daemon_config.json risk_config.json env.example ./
+COPY risk_config.json env.example ./
 COPY models/registry.json ./models/registry.json
 COPY strategies/config.json ./strategies/config.json
 

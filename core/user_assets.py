@@ -823,11 +823,29 @@ class UserAssetService:
                 )
             return [dict(row) for row in cursor.fetchall()]
 
-    def _calculate_position_state(self, transactions: Iterable[Dict[str, Any]]) -> Dict[str, float]:
+    @staticmethod
+    def _transaction_date(tx: Dict[str, Any]) -> Optional[dt.date]:
+        trade_date = str(tx.get("trade_date") or "").strip()
+        if not trade_date:
+            return None
+        try:
+            return dt.date.fromisoformat(trade_date[:10])
+        except ValueError:
+            return None
+
+    def _calculate_position_state(
+        self,
+        transactions: Iterable[Dict[str, Any]],
+        as_of: Optional[dt.date] = None,
+    ) -> Dict[str, float]:
         units = 0.0
         cost_total = 0.0
 
         for tx in transactions:
+            trade_date = self._transaction_date(tx)
+            if as_of is not None and trade_date is not None and trade_date > as_of:
+                continue
+
             tx_type = str(tx.get("transaction_type") or "").upper()
             quantity = max(0.0, self._to_float(tx.get("quantity"), 0.0))
             price = max(0.0, self._to_float(tx.get("price"), 0.0))
@@ -882,6 +900,42 @@ class UserAssetService:
         return {ticker: self._calculate_position_state(items) for ticker, items in grouped.items()}
 
     @staticmethod
+    def _latest_transaction_date(transactions: Iterable[Dict[str, Any]]) -> Optional[dt.date]:
+        latest: Optional[dt.date] = None
+        for tx in transactions:
+            trade_date = UserAssetService._transaction_date(tx)
+            if trade_date is None:
+                continue
+            if latest is None or trade_date > latest:
+                latest = trade_date
+        return latest
+
+    def _calculate_period_net_flow(
+        self,
+        transactions: Iterable[Dict[str, Any]],
+        start_date: dt.date,
+        end_date: dt.date,
+    ) -> float:
+        net_flow = 0.0
+        for tx in transactions:
+            trade_date = self._transaction_date(tx)
+            if trade_date is None or trade_date <= start_date or trade_date > end_date:
+                continue
+
+            tx_type = str(tx.get("transaction_type") or "").upper()
+            quantity = max(0.0, self._to_float(tx.get("quantity"), 0.0))
+            price = max(0.0, self._to_float(tx.get("price"), 0.0))
+            fee = max(0.0, self._to_float(tx.get("fee"), 0.0))
+            amount = self._to_float(tx.get("amount"), quantity * price)
+
+            if tx_type in {"BUY", "ADJUSTMENT_IN"}:
+                net_flow += amount + fee
+            elif tx_type in {"SELL", "ADJUSTMENT_OUT"}:
+                net_flow -= max(0.0, amount - fee)
+
+        return net_flow
+
+    @staticmethod
     def _reference_price(series: pd.Series, target_date: dt.date) -> Optional[float]:
         if series.empty:
             return None
@@ -890,14 +944,26 @@ class UserAssetService:
             return None
         return float(filtered.iloc[-1])
 
+    @staticmethod
+    def _price_on_date(series: pd.Series, target_date: dt.date) -> Optional[float]:
+        if series.empty:
+            return None
+        normalized_index = series.index.normalize()
+        exact_matches = series[normalized_index == pd.Timestamp(target_date)]
+        if exact_matches.empty:
+            return None
+        return float(exact_matches.iloc[-1])
+
     def _calculate_period_changes(
         self,
         user_id: int,
         ticker: str,
         series: pd.Series,
+        transactions: Iterable[Dict[str, Any]],
         units: float,
         latest_price: float,
         latest_date: Optional[dt.date] = None,
+        flow_end_date: Optional[dt.date] = None,
     ) -> Dict[str, float]:
         if units <= 0 or latest_price <= 0:
             return {
@@ -926,6 +992,10 @@ class UserAssetService:
                 "year_change_pct": 0.0,
             }
 
+        resolved_flow_end_date = flow_end_date or resolved_latest_date
+        if resolved_flow_end_date < resolved_latest_date:
+            resolved_flow_end_date = resolved_latest_date
+
         current_market_value = units * latest_price
         periods = {
             "day": resolved_latest_date - dt.timedelta(days=1),
@@ -936,20 +1006,27 @@ class UserAssetService:
         result: Dict[str, float] = {}
 
         for name, ref_date in periods.items():
+            net_flow = self._calculate_period_net_flow(transactions, ref_date, resolved_flow_end_date)
             ref_market_value = self._snapshot_change_value(user_id, ticker, ref_date)
             if ref_market_value is None or ref_market_value <= 0:
-                ref_price = self._reference_price(series, ref_date)
-                if ref_price is None or ref_price <= 0:
-                    result[f"{name}_change"] = 0.0
-                    result[f"{name}_change_pct"] = 0.0
-                    continue
-                ref_market_value = units * ref_price
+                ref_state = self._calculate_position_state(transactions, as_of=ref_date)
+                ref_units = ref_state["units"]
+                if ref_units <= 0 and abs(net_flow) <= 1e-10:
+                    ref_units = units
 
-            if ref_market_value <= 0:
-                result[f"{name}_change"] = 0.0
-                result[f"{name}_change_pct"] = 0.0
-                continue
-            change_value = current_market_value - ref_market_value
+                if ref_units > 0:
+                    ref_price = self._reference_price(series, ref_date)
+                    if ref_price is None or ref_price <= 0:
+                        result[f"{name}_change"] = 0.0
+                        result[f"{name}_change_pct"] = 0.0
+                        continue
+                    ref_market_value = ref_units * ref_price
+                elif abs(net_flow) <= 1e-10:
+                    ref_market_value = current_market_value
+                else:
+                    ref_market_value = 0.0
+
+            change_value = current_market_value - ref_market_value - net_flow
             result[f"{name}_change"] = change_value
             result[f"{name}_change_pct"] = ((change_value / ref_market_value) * 100.0) if ref_market_value > 0 else 0.0
 
@@ -1026,15 +1103,38 @@ class UserAssetService:
 
         return due_dates
 
-    def reconcile_due_dca(self, user_id: int, as_of: Optional[dt.date] = None) -> Dict[str, Any]:
-        self._ensure_tables()
-        today = as_of or dt.date.today()
+    @staticmethod
+    def _next_trading_day(
+        trade_date: dt.date,
+        market: Market,
+        calendar_service,
+    ) -> dt.date:
+        next_date = trade_date + dt.timedelta(days=1)
+        while not calendar_service.is_trading_day(next_date, market):
+            next_date += dt.timedelta(days=1)
+        return next_date
 
+    def _requires_delayed_fund_confirmation(self, rule: Dict[str, Any]) -> bool:
+        asset_type = self._resolve_asset_type(
+            str(rule.get("ticker") or ""),
+            asset_name=rule.get("asset_name"),
+            asset_type=rule.get("asset_type"),
+        )
+        return self._should_prefer_fund_nav(
+            {
+                "ticker": str(rule.get("ticker") or ""),
+                "asset_name": rule.get("asset_name"),
+                "asset_type": asset_type,
+            }
+        )
+
+    def _list_active_dca_rules(self, user_id: int) -> List[Dict[str, Any]]:
         with self._db_lock:
             cursor = self._cursor()
             cursor.execute(
                 """
-                SELECT h.ticker, r.enabled, r.frequency, r.weekday, r.monthday, r.amount,
+                SELECT h.ticker, h.asset_name, h.asset_type,
+                       r.enabled, r.frequency, r.weekday, r.monthday, r.amount,
                        r.start_date, r.end_date, r.shift_to_next_trading_day, r.last_run_date,
                        (
                            SELECT MAX(t.trade_date)
@@ -1051,48 +1151,104 @@ class UserAssetService:
                 """,
                 (int(user_id),),
             )
-            rules = [dict(row) for row in cursor.fetchall()]
+            return [dict(row) for row in cursor.fetchall()]
 
-        created = 0
+    def _load_dca_price_series(
+        self,
+        ticker: str,
+        start_date: dt.date,
+        as_of: dt.date,
+        price_cache: Dict[str, pd.Series],
+        *,
+        refresh_stale: bool,
+    ) -> pd.Series:
+        if ticker in price_cache:
+            return price_cache[ticker]
+
+        lookback_days = max((as_of - start_date).days + 30, 120)
+        try:
+            price_df = load_price_data(
+                [ticker],
+                days=lookback_days,
+                refresh_stale=refresh_stale,
+            )
+            series = price_df[ticker].dropna() if ticker in price_df.columns else pd.Series(dtype=float)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to load price data for DCA %s: %s", ticker, exc)
+            series = pd.Series(dtype=float)
+
+        price_cache[ticker] = series
+        return series
+
+    def _resolve_dca_occurrences(
+        self,
+        rule: Dict[str, Any],
+        as_of: dt.date,
+        calendar_service,
+    ) -> List[Dict[str, dt.date]]:
+        ticker = str(rule["ticker"])
+        market = self._resolve_market(ticker)
+        due_dates = self._compute_due_dates(rule, as_of)
+        latest_reset = rule.get("latest_reset_date")
+        if latest_reset:
+            reset_date = dt.date.fromisoformat(str(latest_reset))
+            due_dates = [item for item in due_dates if item >= reset_date]
+        if not due_dates:
+            return []
+
+        delayed_confirmation = self._requires_delayed_fund_confirmation(rule)
+        occurrences: List[Dict[str, dt.date]] = []
+        for due_date in due_dates:
+            effective_date = due_date
+            if rule.get("shift_to_next_trading_day"):
+                while effective_date <= as_of and not calendar_service.is_trading_day(effective_date, market):
+                    effective_date += dt.timedelta(days=1)
+            if effective_date > as_of:
+                continue
+
+            confirmation_date = effective_date
+            if delayed_confirmation:
+                confirmation_date = self._next_trading_day(effective_date, market, calendar_service)
+
+            occurrences.append(
+                {
+                    "effective_date": effective_date,
+                    "confirmation_date": confirmation_date,
+                }
+            )
+
+        return occurrences
+
+    def _build_pending_dca_map(
+        self,
+        user_id: int,
+        rules: Iterable[Dict[str, Any]],
+        as_of: dt.date,
+    ) -> Dict[str, Dict[str, Any]]:
+        pending_map: Dict[str, Dict[str, Any]] = {}
         price_cache: Dict[str, pd.Series] = {}
         calendar_service = get_trading_calendar()
 
         with self._db_lock:
             cursor = self._cursor()
             for rule in rules:
-                ticker = str(rule["ticker"])
-                market = self._resolve_market(ticker)
-                due_dates = self._compute_due_dates(rule, today)
-                latest_reset = rule.get("latest_reset_date")
-                if latest_reset:
-                    reset_date = dt.date.fromisoformat(str(latest_reset))
-                    due_dates = [item for item in due_dates if item >= reset_date]
-                if not due_dates:
+                if not self._requires_delayed_fund_confirmation(rule):
                     continue
 
+                ticker = str(rule["ticker"])
                 start_date = self._date_or_today(rule.get("start_date"))
-                lookback_days = max((today - start_date).days + 30, 120)
-                if ticker not in price_cache:
-                    try:
-                        price_df = load_price_data(
-                            [ticker],
-                            days=lookback_days,
-                            refresh_stale=True,
-                        )
-                        series = price_df[ticker].dropna() if ticker in price_df.columns else pd.Series(dtype=float)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning("Failed to load price data for DCA %s: %s", ticker, exc)
-                        series = pd.Series(dtype=float)
-                    price_cache[ticker] = series
+                series = self._load_dca_price_series(
+                    ticker,
+                    start_date,
+                    as_of,
+                    price_cache,
+                    refresh_stale=False,
+                )
 
-                series = price_cache[ticker]
-                executed_dates: List[str] = []
-                for due_date in due_dates:
-                    effective_date = due_date
-                    if rule.get("shift_to_next_trading_day"):
-                        while effective_date <= today and not calendar_service.is_trading_day(effective_date, market):
-                            effective_date += dt.timedelta(days=1)
-                    if effective_date > today:
+                for occurrence in self._resolve_dca_occurrences(rule, as_of, calendar_service):
+                    effective_date = occurrence["effective_date"]
+                    confirmation_date = occurrence["confirmation_date"]
+                    if confirmation_date <= as_of:
                         continue
 
                     cursor.execute(
@@ -1102,13 +1258,74 @@ class UserAssetService:
                         WHERE user_id = ? AND ticker = ? AND source = 'dca' AND trade_date = ?
                         LIMIT 1
                         """,
-                        (int(user_id), ticker, effective_date.isoformat()),
+                        (int(user_id), ticker, confirmation_date.isoformat()),
                     )
                     if cursor.fetchone():
-                        executed_dates.append(effective_date.isoformat())
                         continue
 
-                    price = self._reference_price(series, effective_date)
+                    amount = max(0.0, self._to_float(rule.get("amount"), 0.0))
+                    estimated_price = self._price_on_date(series, effective_date)
+                    estimated_units = (amount / estimated_price) if estimated_price and estimated_price > 0 else None
+                    pending_map[ticker] = {
+                        "status": "pending_confirmation",
+                        "amount": round(amount, 2),
+                        "execution_date": effective_date.isoformat(),
+                        "confirmation_date": confirmation_date.isoformat(),
+                        "price_basis_date": effective_date.isoformat(),
+                        "estimated_price": round(estimated_price, 6) if estimated_price and estimated_price > 0 else None,
+                        "estimated_units": round(estimated_units, 6) if estimated_units and estimated_units > 0 else None,
+                    }
+                    break
+
+        return pending_map
+
+    def reconcile_due_dca(self, user_id: int, as_of: Optional[dt.date] = None) -> Dict[str, Any]:
+        self._ensure_tables()
+        today = as_of or dt.date.today()
+        rules = self._list_active_dca_rules(user_id)
+
+        created = 0
+        price_cache: Dict[str, pd.Series] = {}
+        calendar_service = get_trading_calendar()
+
+        with self._db_lock:
+            cursor = self._cursor()
+            for rule in rules:
+                ticker = str(rule["ticker"])
+                start_date = self._date_or_today(rule.get("start_date"))
+                series = self._load_dca_price_series(
+                    ticker,
+                    start_date,
+                    today,
+                    price_cache,
+                    refresh_stale=True,
+                )
+                executed_dates: List[str] = []
+                delayed_confirmation = self._requires_delayed_fund_confirmation(rule)
+                for occurrence in self._resolve_dca_occurrences(rule, today, calendar_service):
+                    effective_date = occurrence["effective_date"]
+                    confirmation_date = occurrence["confirmation_date"]
+                    if confirmation_date > today:
+                        continue
+
+                    cursor.execute(
+                        """
+                        SELECT 1
+                        FROM user_asset_transactions
+                        WHERE user_id = ? AND ticker = ? AND source = 'dca' AND trade_date = ?
+                        LIMIT 1
+                        """,
+                        (int(user_id), ticker, confirmation_date.isoformat()),
+                    )
+                    if cursor.fetchone():
+                        executed_dates.append(confirmation_date.isoformat())
+                        continue
+
+                    price = (
+                        self._price_on_date(series, effective_date)
+                        if delayed_confirmation
+                        else self._reference_price(series, effective_date)
+                    )
                     if price is None or price <= 0:
                         logger.warning("Skip DCA for %s on %s because price is unavailable", ticker, effective_date)
                         continue
@@ -1123,14 +1340,18 @@ class UserAssetService:
                         user_id,
                         ticker,
                         transaction_type="BUY",
-                        trade_date=effective_date.isoformat(),
+                        trade_date=confirmation_date.isoformat(),
                         quantity=quantity,
                         price=price,
                         amount=amount,
                         source="dca",
-                        note=f"Auto DCA {amount:.2f}",
+                        note=(
+                            f"Auto DCA {amount:.2f} confirmed {confirmation_date.isoformat()}"
+                            if confirmation_date != effective_date
+                            else f"Auto DCA {amount:.2f}"
+                        ),
                     )
-                    executed_dates.append(effective_date.isoformat())
+                    executed_dates.append(confirmation_date.isoformat())
                     created += 1
 
                 if executed_dates:
@@ -1275,6 +1496,12 @@ class UserAssetService:
             )
             normalized_holdings.append(effective_holding)
 
+        pending_dca_map = self._build_pending_dca_map(
+            user_id,
+            self._list_active_dca_rules(user_id),
+            dt.date.today(),
+        )
+
         tickers = [str(item["ticker"]) for item in normalized_holdings]
         price_df = pd.DataFrame()
         if tickers:
@@ -1317,7 +1544,8 @@ class UserAssetService:
         }
         for holding in normalized_holdings:
             ticker = str(holding["ticker"])
-            state = self._calculate_position_state(grouped_transactions.get(ticker, []))
+            transactions = grouped_transactions.get(ticker, [])
+            state = self._calculate_position_state(transactions)
             if ticker in fund_nav_df.columns:
                 series = fund_nav_df[ticker].dropna()
             else:
@@ -1363,13 +1591,16 @@ class UserAssetService:
                     valuation_date = dt.date.fromisoformat(str(latest_price_date)[:10])
                 except ValueError:
                     valuation_date = None
+            latest_trade_date = self._latest_transaction_date(transactions)
             period_changes = self._calculate_period_changes(
                 user_id,
                 ticker,
                 valuation_series,
+                transactions,
                 state["units"],
                 latest_price,
                 valuation_date,
+                latest_trade_date,
             )
 
             asset_payload = {
@@ -1396,6 +1627,7 @@ class UserAssetService:
                 "month_change_pct": round(period_changes["month_change_pct"], 4),
                 "year_change_pct": round(period_changes["year_change_pct"], 4),
                 "dca_rule": dca_rules.get(ticker),
+                "pending_dca": pending_dca_map.get(ticker),
                 "updated_at": holding.get("updated_at"),
             }
             assets.append(asset_payload)

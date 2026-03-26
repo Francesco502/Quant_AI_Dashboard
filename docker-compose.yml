@@ -1,6 +1,6 @@
 services:
   quant-app:
-    image: francescoli/quant_app:v2.1.3
+    image: francescoli/quant_app:v2.1.4
     build:
       context: .
       dockerfile: Dockerfile.optimized
@@ -16,6 +16,8 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       DISABLE_HEAVY_MODELS: "true"
+      TZ: "${TZ:-Asia/Shanghai}"
+      APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"
       ENABLE_DAEMON: "${ENABLE_DAEMON:-true}"
       API_EXPECT_SAME_ORIGIN: "${API_EXPECT_SAME_ORIGIN:-true}"
       SECRET_KEY: "${SECRET_KEY:-quant-ai-dashboard-secret-key-change-me}"
@@ -24,6 +26,20 @@ services:
       ALPHA_VANTAGE_KEY: "${ALPHA_VANTAGE_KEY:-}"
       TUSHARE_TOKEN: "${TUSHARE_TOKEN:-}"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:8686}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-}"
+      ARK_API_KEY: "${ARK_API_KEY:-}"
+      ARK_BASE_URL: "${ARK_BASE_URL:-}"
+      ARK_MODEL: "${ARK_MODEL:-}"
+      VOLCENGINE_API_KEY: "${VOLCENGINE_API_KEY:-}"
+      VOLCENGINE_ARK_API_KEY: "${VOLCENGINE_ARK_API_KEY:-}"
+      VOLCENGINE_BASE_URL: "${VOLCENGINE_BASE_URL:-}"
+      VOLCENGINE_MODEL: "${VOLCENGINE_MODEL:-}"
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
+      DASHSCOPE_BASE_URL: "${DASHSCOPE_BASE_URL:-}"
+      DASHSCOPE_MODEL: "${DASHSCOPE_MODEL:-}"
     deploy:
       resources:
         limits:

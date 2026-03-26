@@ -13,6 +13,7 @@ import time
 import threading
 import logging
 import os
+from copy import deepcopy
 from typing import Dict, List, Optional, Callable, Any
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
@@ -90,6 +91,8 @@ class SystemMonitor:
         self.start_time = datetime.now()
         self.metrics_collected_count = 0
         self.health_checks_count = 0
+        self.last_health_check_time: Optional[datetime] = None
+        self.last_health_status: Optional[Dict[str, Any]] = None
 
         # 业务指标追踪（使用 deque 限制内存）
         self.data_update_times: deque = deque(maxlen=100)
@@ -311,7 +314,13 @@ class SystemMonitor:
 
         return result
 
-    def check_health(self, data_sources: Optional[List[str]] = None) -> Dict:
+    def check_health(
+        self,
+        data_sources: Optional[List[str]] = None,
+        *,
+        force: bool = False,
+        max_age_seconds: Optional[float] = None,
+    ) -> Dict:
         """
         健康检查（带缓存避免频繁检查）
 
@@ -321,6 +330,19 @@ class SystemMonitor:
         Returns:
             健康状态字典
         """
+        effective_max_age = (
+            float(max_age_seconds)
+            if max_age_seconds is not None
+            else max(float(self.config.collection_interval) * 2.0, 30.0)
+        )
+        if (
+            not force
+            and self.last_health_status is not None
+            and self.last_health_check_time is not None
+            and (datetime.now() - self.last_health_check_time).total_seconds() <= effective_max_age
+        ):
+            return deepcopy(self.last_health_status)
+
         checks = self.health_checker.check_all(data_sources)
         overall_status = self.health_checker.get_overall_status(checks)
 
@@ -338,6 +360,8 @@ class SystemMonitor:
         }
 
         self.health_checks_count += 1
+        self.last_health_check_time = datetime.now()
+        self.last_health_status = deepcopy(health_status)
 
         # 触发回调
         if self.on_health_check:
@@ -352,7 +376,7 @@ class SystemMonitor:
         """获取监控状态"""
         uptime = (datetime.now() - self.start_time).total_seconds()
         last_metric_time = None
-        last_health_time = None
+        last_health_time = self.last_health_check_time
 
         if self.metrics_collector.last_collection_time:
             last_metric_time = self.metrics_collector.last_collection_time
@@ -393,7 +417,7 @@ class SystemMonitor:
                     # 健康检查（低频，每5次收集执行一次）
                     current_time = time.time()
                     if current_time - last_health_check >= self.config.collection_interval * 5:
-                        self.check_health(data_sources)
+                        self.check_health(data_sources, force=True)
                         last_health_check = current_time
 
                     # 等待下次收集
@@ -461,7 +485,7 @@ class SystemMonitor:
             if value is not None:
                 latest_metrics[metric_name] = value
 
-        health_status = self.check_health()
+        health_status = self.check_health(max_age_seconds=max(float(self.config.collection_interval) * 4.0, 60.0))
 
         return {
             "monitoring": {

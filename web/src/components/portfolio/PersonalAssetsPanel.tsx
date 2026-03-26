@@ -7,6 +7,7 @@ import {
   AssetSearchResult,
   UserAssetDcaRule,
   UserAssetOverview,
+  UserAssetPendingDca,
   UserAssetRow,
   UserAssetTransaction,
   UserAssetUpsertRequest,
@@ -83,7 +84,7 @@ function createDefaultDcaRule(): UserAssetDcaRule {
 }
 
 const OVERVIEW_CACHE_PREFIX = "user-assets-overview:"
-const OVERVIEW_CACHE_VERSION = 2
+const OVERVIEW_CACHE_VERSION = 3
 const OVERVIEW_CACHE_TTL_MS = 12 * 60 * 60 * 1000
 
 type OverviewCachePayload = {
@@ -272,6 +273,14 @@ function formatQuantity(value: number) {
   })
 }
 
+function formatPendingQuantity(value?: number | null) {
+  if (value === null || value === undefined) return "-"
+  return value.toLocaleString("zh-CN", {
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4,
+  })
+}
+
 function describeDca(rule?: UserAssetDcaRule | null) {
   if (!rule?.enabled) return "未启用"
 
@@ -281,6 +290,22 @@ function describeDca(rule?: UserAssetDcaRule | null) {
 
   const weekday = weeklyOptions.find((item) => item.value === String(rule.weekday ?? 3))?.label || "周四"
   return `${weekday} · ${formatCurrency(rule.amount || 0)}`
+}
+
+function renderPendingDcaDescription(pending?: UserAssetPendingDca | null) {
+  if (!pending) return null
+
+  const estimateReady =
+    typeof pending.estimated_price === "number" &&
+    pending.estimated_price > 0 &&
+    typeof pending.estimated_units === "number" &&
+    pending.estimated_units > 0
+
+  if (!estimateReady) {
+    return `已于 ${pending.execution_date} 发起，预计 ${pending.confirmation_date} 确认；${pending.price_basis_date} 净值待公布，确认后再开始计算收益`
+  }
+
+  return `已于 ${pending.execution_date} 发起，预计 ${pending.confirmation_date} 确认；按 ${pending.price_basis_date} 净值 ${pending.estimated_price!.toFixed(4)} 预计确认 ${formatPendingQuantity(pending.estimated_units)} 份，收益从确认后开始计算`
 }
 
 function AssetTypeField({
@@ -853,6 +878,7 @@ export function PersonalAssetsPanel() {
                     const editingThisRow = isEditing(asset.ticker)
                     const draft = editingThisRow && inlineForm ? inlineForm : null
                     const resolvedType = inferAssetType(asset.ticker, asset.asset_name, asset.asset_type)
+                    const pendingDcaDescription = renderPendingDcaDescription(asset.pending_dca)
 
                     return (
                       <Fragment key={asset.ticker}>
@@ -875,6 +901,11 @@ export function PersonalAssetsPanel() {
                               <Badge variant="outline">{assetTypeLabel(resolvedType)}</Badge>
                               <span>{valuationHint(resolvedType)}</span>
                               {asset.dca_rule?.enabled ? <Badge variant="secondary">定投中</Badge> : null}
+                              {asset.pending_dca ? (
+                                <Badge className="border-amber-500/25 bg-amber-500/10 text-amber-700 hover:bg-amber-500/10">
+                                  已定投，份额待确认
+                                </Badge>
+                              ) : null}
                             </div>
                           </button>
                         </TableCell>
@@ -927,6 +958,11 @@ export function PersonalAssetsPanel() {
                                 {asset.dca_rule?.enabled ? "定投中" : "未启用"}
                               </Badge>
                               <div className="text-xs text-muted-foreground">{describeDca(asset.dca_rule)}</div>
+                              {asset.pending_dca && pendingDcaDescription ? (
+                                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-900/80">
+                                  {pendingDcaDescription}
+                                </div>
+                              ) : null}
                             </div>
                           )}
                         </TableCell>

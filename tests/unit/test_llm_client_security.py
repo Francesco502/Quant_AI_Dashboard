@@ -14,10 +14,17 @@ def test_build_config_without_api_key_returns_unconfigured_dummy_config(monkeypa
             "LLM_PROVIDER",
             "OPENAI_API_KEY",
             "DASHSCOPE_API_KEY",
+            "ARK_API_KEY",
+            "VOLCENGINE_API_KEY",
+            "VOLCENGINE_ARK_API_KEY",
             "OPENAI_BASE_URL",
             "DASHSCOPE_BASE_URL",
+            "ARK_BASE_URL",
+            "VOLCENGINE_BASE_URL",
             "OPENAI_MODEL",
             "DASHSCOPE_MODEL",
+            "ARK_MODEL",
+            "VOLCENGINE_MODEL",
             "GEMINI_API_KEY",
             "GEMINI_MODEL",
             "ANTHROPIC_API_KEY",
@@ -156,6 +163,25 @@ def test_explicit_openai_provider_uses_dashscope_key_and_reports_explicit_mode(m
 def test_dummy_client_raises_instead_of_returning_placeholder() -> None:
     with pytest.raises(RuntimeError, match="not configured or unavailable"):
         llm_client.DummyLLMClient().chat_completion([{"role": "user", "content": "ping"}])
+
+
+def test_ark_key_uses_general_volcengine_openai_compatible_endpoint(monkeypatch) -> None:
+    llm_client.reset_client_cache()
+    try:
+        monkeypatch.setenv("LLM_PROVIDER", "openai_compat")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("ARK_BASE_URL", raising=False)
+        monkeypatch.delenv("VOLCENGINE_BASE_URL", raising=False)
+        monkeypatch.setenv("ARK_API_KEY", "ark-key")
+
+        config = llm_client._build_config_from_env()
+
+        assert config.provider == "openai_compat"
+        assert config.api_key == "ark-key"
+        assert config.base_url == "https://ark.cn-beijing.volces.com/api/v3"
+    finally:
+        llm_client.reset_client_cache()
 
 
 def test_get_client_raises_when_provider_initialization_fails(monkeypatch) -> None:

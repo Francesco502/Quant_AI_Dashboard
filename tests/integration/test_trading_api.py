@@ -33,7 +33,7 @@ class TestTradingAPI:
             def __init__(self):
                 self.account_mgr = FakeAccountManager()
 
-            def get_portfolio(self, user_id, account_id):
+            def get_portfolio(self, user_id, account_id, refresh_prices=True):
                 return {
                     "total_assets": 99922.8569,
                     "cash": 95575.9169,
@@ -50,6 +50,53 @@ class TestTradingAPI:
         assert payload["total_assets"] == pytest.approx(99922.8569)
         assert payload["market_value"] == pytest.approx(4346.94)
         assert payload["total_return_pct"] < 0
+
+    def test_get_account_performance_ignores_none_equity_values(self, auth_client, monkeypatch):
+        class FakeAccount:
+            balance = 95575.9169
+            frozen = 0.0
+            initial_capital = 100000.0
+            created_at = None
+
+        class FakeAccountManager:
+            def account_exists(self, account_id, user_id):
+                return True
+
+            def get_account(self, account_id, user_id):
+                return FakeAccount()
+
+            def get_trade_history(self, account_id, limit=500):
+                return [{"realized_pnl": 120.0}, {"realized_pnl": -30.0}]
+
+            def get_equity_history(self, account_id, days=90):
+                return [
+                    {"date": "2026-03-20", "equity": 100000.0},
+                    {"date": "2026-03-21", "equity": None},
+                    {"date": "2026-03-22", "equity": 100500.0},
+                    {"date": "2026-03-23", "equity": 100300.0},
+                ]
+
+        class FakeService:
+            def __init__(self):
+                self.account_mgr = FakeAccountManager()
+
+            def get_portfolio(self, user_id, account_id, refresh_prices=True):
+                return {
+                    "total_assets": 100300.0,
+                    "cash": 95575.9169,
+                    "position_value": 4724.0831,
+                }
+
+        monkeypatch.setattr("api.routers.trading.get_trading_service", lambda: FakeService())
+
+        response = auth_client.get("/api/trading/accounts/1/performance")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["initial_capital"] == 100000.0
+        assert payload["total_assets"] == pytest.approx(100300.0)
+        assert payload["total_trades"] == 2
+        assert payload["win_rate_pct"] == pytest.approx(50.0)
 
     def test_create_account(self, auth_client):
         response = auth_client.post(

@@ -204,7 +204,12 @@ class AccountManager:
 
         return result
 
-    def get_positions(self, account_id: int, refresh_prices: bool = True) -> List[Position]:
+    def get_positions(
+        self,
+        account_id: int,
+        refresh_prices: bool = True,
+        remote_cache_days: Optional[int] = 30,
+    ) -> List[Position]:
         """获取账户持仓列表"""
         cursor = self.db.conn.cursor()
         cursor.execute("""
@@ -218,7 +223,11 @@ class AccountManager:
         if refresh_prices and positions:
             tickers = [p.ticker for p in positions]
             try:
-                price_df = load_price_data(tickers, days=1)
+                price_df = load_price_data(
+                    tickers,
+                    days=5,
+                    remote_cache_days=max(5, int(remote_cache_days or 30)),
+                )
                 if not price_df.empty:
                     for p in positions:
                         if p.ticker in price_df.columns:

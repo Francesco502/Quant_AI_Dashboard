@@ -13,6 +13,7 @@ from core.backtest_engine import BacktestEngine
 from core.data_service import load_price_data
 from core.order_types import OrderSide, OrderType
 from core.strategy_catalog import get_strategy_definition
+from core.time_utils import local_now_iso
 
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,9 @@ SCREENING_HISTORY_DAYS = 90
 SCREENING_LIMIT_DEFAULT = 480
 EVALUATION_LIMIT_DEFAULT = 120
 HISTORY_BATCH_SIZE = 160
+AUTO_TRADING_PREFILTER_SOURCE_MULTIPLIER = 4
+AUTO_TRADING_REMOTE_CACHE_DAYS_MIN = 120
+AUTO_TRADING_REMOTE_CACHE_DAYS_MAX = 540
 UNIVERSE_MODE_MANUAL = "manual"
 UNIVERSE_MODE_ASSET_POOL = "asset_pool"
 UNIVERSE_MODE_CN_A_SHARE = "cn_a_share"
@@ -69,6 +73,41 @@ def _clean_price_frame(price_data: pd.DataFrame, ticker: str) -> Optional[pd.Dat
 def _estimate_warmup_days(strategy_params: Dict[str, Any]) -> int:
     numeric_values = [int(value) for value in strategy_params.values() if isinstance(value, (int, float))]
     return max(numeric_values + [30]) + 20
+
+
+def _resolve_remote_cache_days(requested_days: int) -> int:
+    return max(
+        AUTO_TRADING_REMOTE_CACHE_DAYS_MIN,
+        min(int(requested_days or AUTO_TRADING_REMOTE_CACHE_DAYS_MIN), AUTO_TRADING_REMOTE_CACHE_DAYS_MAX),
+    )
+
+
+def _downsample_tickers(tickers: Sequence[str], limit: int) -> List[str]:
+    normalized = _normalize_ticker_list(tickers)
+    if len(normalized) <= limit:
+        return normalized
+    if limit <= 1:
+        return normalized[:1]
+
+    step = (len(normalized) - 1) / float(limit - 1)
+    sampled: List[str] = []
+    seen = set()
+    for index in range(limit):
+        ticker = normalized[round(index * step)]
+        if ticker not in seen:
+            sampled.append(ticker)
+            seen.add(ticker)
+
+    if len(sampled) < limit:
+        for ticker in normalized:
+            if ticker in seen:
+                continue
+            sampled.append(ticker)
+            seen.add(ticker)
+            if len(sampled) >= limit:
+                break
+
+    return sampled[:limit]
 
 
 def _round_quantity(ticker: str, raw_quantity: float) -> int:
@@ -139,11 +178,21 @@ def _prefilter_universe_tickers(
     if len(normalized) <= screening_limit:
         return normalized
 
+    source_limit = max(screening_limit * AUTO_TRADING_PREFILTER_SOURCE_MULTIPLIER, screening_limit)
+    if len(normalized) > source_limit:
+        normalized = _downsample_tickers(normalized, source_limit)
+
     screening_days = max(SCREENING_HISTORY_DAYS, min(140, evaluation_days))
+    remote_cache_days = _resolve_remote_cache_days(screening_days)
     scores: Dict[str, float] = {}
     for batch in _iter_batches(normalized, batch_size):
         try:
-            frame = load_price_data(batch, days=screening_days, refresh_stale=False)
+            frame = load_price_data(
+                batch,
+                days=screening_days,
+                refresh_stale=False,
+                remote_cache_days=remote_cache_days,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("auto-trading: screening batch failed: %s", exc)
             continue
@@ -169,10 +218,16 @@ def _load_price_history_batched(
     if not normalized:
         return pd.DataFrame()
 
+    remote_cache_days = _resolve_remote_cache_days(history_days)
     frames: List[pd.DataFrame] = []
     for batch in _iter_batches(normalized, batch_size):
         try:
-            frame = load_price_data(batch, days=history_days, refresh_stale=False)
+            frame = load_price_data(
+                batch,
+                days=history_days,
+                refresh_stale=False,
+                remote_cache_days=remote_cache_days,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("auto-trading: history batch failed: %s", exc)
             continue
@@ -363,7 +418,10 @@ def run_auto_trading_cycle(cfg: Dict[str, Any], trading_service) -> Dict[str, An
         batch_size=history_batch_size,
     )
     if price_data.empty:
-        raise ValueError("No market data available for auto-trading universe")
+        raise ValueError(
+            "No market data available for auto-trading universe; "
+            "check TUSHARE_TOKEN, AkShare network access, or preloaded local price cache"
+        )
 
     evaluations = evaluate_strategies(
         price_data=price_data,
@@ -468,7 +526,7 @@ def run_auto_trading_cycle(cfg: Dict[str, Any], trading_service) -> Dict[str, An
         )
 
     return {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": local_now_iso(),
         "username": username,
         "account_id": account.id,
         "universe_mode": universe.mode,

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 Message = Dict[str, str]
 
-DEFAULT_OPENAI_COMPAT_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
+DEFAULT_OPENAI_COMPAT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_OPENAI_MODEL = "doubao-seed-1-6-thinking"
 DEFAULT_OPENAI_API_KEY = ""
 DEFAULT_ANTHROPIC_MODEL = "claude-3-5-sonnet-20241022"
@@ -288,7 +288,7 @@ def _build_openai_compat_config(api_key: str) -> LLMConfig:
         or os.getenv("VOLCENGINE_API_KEY")
         or os.getenv("VOLCENGINE_ARK_API_KEY")
     ):
-        base_url = "https://ark.cn-beijing.volces.com/api/coding/v3"
+        base_url = DEFAULT_OPENAI_COMPAT_BASE_URL
     if not base_url:
         base_url = DEFAULT_OPENAI_COMPAT_BASE_URL
 

@@ -303,7 +303,7 @@ export default function TradingPage() {
     }
 
     try {
-      void api.trading.auto
+      const autoStatusPromise = api.trading.auto
         .getStatus()
         .then(async (status) => {
           setAutoStatus(status)
@@ -312,7 +312,7 @@ export default function TradingPage() {
 
           const snapshot = status.account?.found ? status.account : null
           const snapshotAccount = buildAccountFromSnapshot(snapshot)
-          if (!snapshotAccount) return
+          if (!snapshotAccount?.account_id) return null
 
           setAccount(snapshotAccount)
           setTradeHistory(snapshot?.recent_trades || [])
@@ -325,6 +325,7 @@ export default function TradingPage() {
           ])
           if (perfResult.status === "fulfilled") setPerformance(perfResult.value)
           if (curveResult.status === "fulfilled") setEquityCurve(curveResult.value)
+          return snapshotAccount.account_id
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : "读取自动交易状态失败"
@@ -333,15 +334,17 @@ export default function TradingPage() {
           if (!permissionDenied) {
             setNotice({ tone: "error", text: message })
           }
+          return null
         })
 
-      const [pool, personalOverview] = await Promise.all([
+      const [pool, personalOverview, preferredAccountId] = await Promise.all([
         withTimeout(api.stz.getAssetPool().catch(() => []), [], 1500),
         withTimeout(
           api.user.assets.getOverview(false).catch(() => ({ assets: [] })),
           { assets: [] },
           1500,
         ),
+        withTimeout(autoStatusPromise, null, 2000),
       ])
 
       const mergedAssets = mergeAssetChoices(
@@ -351,12 +354,14 @@ export default function TradingPage() {
       )
       setAssetOptions(mergedAssets)
 
-      setTradeHistory([])
-      setRecentOrders([])
+      if (!preferredAccountId) {
+        setTradeHistory([])
+        setRecentOrders([])
+      }
       setManualTicker((current) => current || mergedAssets[0]?.ticker || "")
 
       void api.trading.paper
-        .getAccount()
+        .getAccount(preferredAccountId ?? undefined)
         .then(async (resolvedAccount) => {
           setAccount(resolvedAccount)
           const nextAccountId = resolvedAccount?.account_id
@@ -370,13 +375,15 @@ export default function TradingPage() {
           setManualTicker((current) => current || resolvedAccount.portfolio.positions[0]?.ticker || mergedAssets[0]?.ticker || "")
           setTradeHistory(await api.trading.paper.getHistory(nextAccountId, 12).catch(() => []))
 
-          const [perfResult, curveResult] = await Promise.allSettled([
-            api.trading.paper.getPerformance(nextAccountId),
-            api.trading.paper.getEquityCurve(nextAccountId, 90),
-          ])
+          if (!preferredAccountId) {
+            const [perfResult, curveResult] = await Promise.allSettled([
+              api.trading.paper.getPerformance(nextAccountId),
+              api.trading.paper.getEquityCurve(nextAccountId, 90),
+            ])
 
-          if (perfResult.status === "fulfilled") setPerformance(perfResult.value)
-          if (curveResult.status === "fulfilled") setEquityCurve(curveResult.value)
+            if (perfResult.status === "fulfilled") setPerformance(perfResult.value)
+            if (curveResult.status === "fulfilled") setEquityCurve(curveResult.value)
+          }
         })
         .catch(() => {
           setAccount(null)

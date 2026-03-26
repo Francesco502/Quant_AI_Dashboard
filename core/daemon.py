@@ -31,6 +31,7 @@ from .training_pipeline import TrainingPipeline
 from .feature_store import get_feature_store
 from .data_store import load_local_price_history
 from .auto_paper_trading import run_auto_trading_cycle
+from .time_utils import local_now_str
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -250,7 +251,7 @@ def save_status(patch: Dict[str, Any]) -> None:
     status = load_status()
 
     status.update(patch)
-    status["last_updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    status["last_updated_at"] = local_now_str()
     with open(STATUS_PATH, "w", encoding="utf-8") as f:
         json.dump(status, f, ensure_ascii=False, indent=2)
 
@@ -381,8 +382,8 @@ def data_update_job(cfg: Dict[str, Any]) -> None:
     )
     save_status(
         {
-            "last_data_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "last_feature_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_data_update": local_now_str(),
+            "last_feature_update": local_now_str(),
             "feature_success_count": feature_success_count,
             "feature_fail_count": feature_fail_count,
         }
@@ -422,7 +423,7 @@ def daily_analysis_job(cfg: Dict[str, Any]) -> None:
         result = run_daily_analysis_from_env(include_market_review=True)
         save_status(
             {
-                "last_daily_analysis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_daily_analysis": local_now_str(),
                 "last_daily_analysis_result": {
                     "result_count": len(result.get("results", [])),
                     "has_market_review": bool(result.get("market_review")),
@@ -480,7 +481,7 @@ def training_job(cfg: Dict[str, Any]) -> None:
 
         save_status(
             {
-                "last_training_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_training_run": local_now_str(),
                 "training_stats": {
                     "total": stats["total"],
                     "trained": stats["trained"],
@@ -495,7 +496,7 @@ def training_job(cfg: Dict[str, Any]) -> None:
         logging.error("daemon: 璁粌浠诲姟寮傚父: %s", e, exc_info=True)
         save_status(
             {
-                "last_training_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_training_run": local_now_str(),
                 "training_error": str(e),
             }
         )
@@ -512,8 +513,10 @@ def trading_job(cfg: Dict[str, Any]) -> None:
         result = run_auto_trading_cycle(cfg, get_trading_service())
         save_status(
             {
-                "last_trading_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "trading_run_state": "idle",
+                "last_trading_run": local_now_str(),
                 "last_trading_result": result,
+                "last_trading_error": None,
             }
         )
         logging.info(
@@ -525,7 +528,7 @@ def trading_job(cfg: Dict[str, Any]) -> None:
         logging.error("daemon: auto trading failed: %s", e, exc_info=True)
         save_status(
             {
-                "last_trading_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_trading_run": local_now_str(),
                 "last_trading_error": str(e),
             }
         )
@@ -588,7 +591,7 @@ def main() -> None:
         {
             "daemon_running": True,
             "daemon_pid": os.getpid(),
-            "last_started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_started_at": local_now_str(),
             "config_trading_enabled": bool(cfg.get("trading", {}).get("enabled", False)),
             "config_trading_interval_minutes": int(cfg.get("trading", {}).get("interval_minutes", 0) or 0),
         }
@@ -658,7 +661,7 @@ def main() -> None:
         save_status(
             {
                 "daemon_running": False,
-                "last_stopped_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_stopped_at": local_now_str(),
             }
         )
         # Cleanup pid file.

@@ -64,7 +64,6 @@ async def get_paper_account(current_user: UserInDB = Depends(get_current_active_
         cursor = db.conn.cursor()
         user_id = _resolve_user_id(cursor, current_user)
         account_mgr = AccountManager(db)
-        account_mgr = AccountManager(db)
 
         cursor.execute(
             """
@@ -130,6 +129,7 @@ async def get_equity_history(
         db = get_database()
         cursor = db.conn.cursor()
         user_id = _resolve_user_id(cursor, current_user)
+        account_mgr = AccountManager(db)
         account_id = _get_active_account_id(cursor, user_id)
 
         if account_id is None:

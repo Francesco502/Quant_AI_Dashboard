@@ -92,9 +92,9 @@ pytest tests/ --cov=core --cov=api --cov-report=xml
 - 策略引擎模块：>75%
 - 整体覆盖率：>70%
 
-## 🔎 v2.1.3 快速健康检查
+## 🔎 v2.1.4 快速健康检查
 
-当前版本在 `tests/test_v3_smoke.py` 中提供了一组**轻量级冒烟测试**，用于快速验证 v2.1.3 代码是否有基础问题：
+当前版本在 `tests/test_v3_smoke.py` 中提供了一组**轻量级冒烟测试**，用于快速验证 v2.1.4 代码是否有基础问题：
 
 ```bash
 # 仅运行 v3 冒烟测试
@@ -103,7 +103,7 @@ pytest tests/test_v3_smoke.py -q
 
 检查内容包括：
 
-- `core.version.VERSION` 是否为 `2.1.3`，且与 `api.main.app.version` 一致
+- `core.version.VERSION` 是否为 `2.1.4`，且与 `api.main.app.version` 一致
 - `/api/health` 是否可以正常返回，且返回结构中包含 `status`、`service`、`version` 和 `memory` 信息
 
 如需做真实运行态发布验收，请先启动前后端服务，再执行：

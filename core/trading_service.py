@@ -328,11 +328,11 @@ class TradingService:
             return []
         return self.order_mgr.get_active_orders(account_id)
 
-    def get_positions(self, user_id: int, account_id: int) -> List[Dict]:
+    def get_positions(self, user_id: int, account_id: int, refresh_prices: bool = True) -> List[Dict]:
         """获取持仓列表"""
         if not self.account_mgr.account_exists(account_id, user_id):
             return []
-        positions = self.account_mgr.get_positions(account_id, refresh_prices=True)
+        positions = self.account_mgr.get_positions(account_id, refresh_prices=refresh_prices)
         return [
             {
                 "ticker": p.ticker,
@@ -346,13 +346,13 @@ class TradingService:
             for p in positions
         ]
 
-    def get_portfolio(self, user_id: int, account_id: int) -> Dict:
+    def get_portfolio(self, user_id: int, account_id: int, refresh_prices: bool = True) -> Dict:
         """获取账户投资组合"""
         account = self.account_mgr.get_account(account_id, user_id)
         if not account:
             return {}
 
-        positions = self.account_mgr.get_positions(account_id, refresh_prices=True)
+        positions = self.account_mgr.get_positions(account_id, refresh_prices=refresh_prices)
         position_value = sum(p.market_value for p in positions)
 
         return {
@@ -571,7 +571,7 @@ class TradingService:
         """获取单个标的当前价格"""
         try:
             from core.data_service import load_price_data
-            df = load_price_data([symbol], days=1)
+            df = load_price_data([symbol], days=5, remote_cache_days=30)
             if not df.empty and symbol in df.columns:
                 valid_prices = df[symbol].dropna()
                 if not valid_prices.empty:

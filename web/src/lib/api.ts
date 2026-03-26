@@ -652,6 +652,16 @@ export interface UserAssetDcaRule {
   last_run_date?: string | null;
 }
 
+export interface UserAssetPendingDca {
+  status: "pending_confirmation";
+  amount: number;
+  execution_date: string;
+  confirmation_date: string;
+  price_basis_date: string;
+  estimated_price?: number | null;
+  estimated_units?: number | null;
+}
+
 export interface UserAssetRow {
   ticker: string;
   asset_name?: string | null;
@@ -676,6 +686,7 @@ export interface UserAssetRow {
   month_change_pct?: number;
   year_change_pct?: number;
   dca_rule?: UserAssetDcaRule | null;
+  pending_dca?: UserAssetPendingDca | null;
   updated_at?: string | null;
 }
 
@@ -908,7 +919,11 @@ export const api = {
                 method: "POST",
                 body: JSON.stringify(data),
             }),
-        getHistory: async (_accountId?: number, limit: number = 50) => {
+        getHistory: async (accountId?: number, limit: number = 50) => {
+            if (accountId) {
+                const detail = await fetchApi<{ trade_history?: TradeHistoryRecord[] }>(`/trading/accounts/${accountId}`);
+                return Array.isArray(detail.trade_history) ? detail.trade_history.slice(0, limit) : [];
+            }
             const result = await fetchApi<{ trades: TradeHistoryRecord[]; count: number }>(
                 `/accounts/paper/trades?limit=${limit}`
             );

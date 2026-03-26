@@ -11,14 +11,22 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 log_info "========================================"
-log_info "Quant-AI Dashboard v2.1.3 single-image startup"
+log_info "Quant-AI Dashboard v2.1.4 single-image startup"
 log_info "========================================"
 
 export ENABLE_DAEMON="${ENABLE_DAEMON:-true}"
 export DISABLE_HEAVY_MODELS="${DISABLE_HEAVY_MODELS:-true}"
+export TZ="${TZ:-Asia/Shanghai}"
+export APP_TIMEZONE="${APP_TIMEZONE:-${TZ}}"
 
 log_info "ENABLE_DAEMON=${ENABLE_DAEMON}"
 log_info "DISABLE_HEAVY_MODELS=${DISABLE_HEAVY_MODELS}"
+log_info "TZ=${TZ}"
+
+if [ -f "/usr/share/zoneinfo/${TZ}" ]; then
+    ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime
+    echo "${TZ}" >/etc/timezone
+fi
 
 mkdir -p /app/data/prices /app/data/models /app/data/accounts /app/data/signals
 mkdir -p /app/logs /app/strategies /app/models

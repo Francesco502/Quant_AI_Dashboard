@@ -37,6 +37,7 @@ from core.auto_paper_trading import (
 from core.asset_metadata import get_asset_pool_tickers
 from core.daemon import load_config as load_daemon_config, load_status as load_daemon_status, save_config as save_daemon_config, save_status as save_daemon_status
 from core.strategy_catalog import list_backtestable_strategies
+from core.time_utils import local_now_iso, local_now_str, local_today_str
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["trading"])
@@ -144,6 +145,15 @@ def _normalize_account_name(name: Optional[str]) -> str:
     return normalized
 
 
+def _safe_float(value: Any, default: Optional[float] = 0.0) -> Optional[float]:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _build_universe_summary(trading_cfg: Dict[str, Any]) -> Dict[str, Any]:
     mode = str(trading_cfg.get("universe_mode") or "").strip().lower()
     if mode not in AUTO_TRADING_UNIVERSE_LABELS:
@@ -217,8 +227,8 @@ def _build_auto_trading_payload(service: TradingService, trading_cfg: Dict[str, 
         "account_name": _normalize_account_name(account.account_name),
         "balance": account.balance,
         "initial_capital": account.initial_capital,
-        "portfolio": service.get_portfolio(user_id, account.id),
-        "positions": service.get_positions(user_id, account.id),
+        "portfolio": service.get_portfolio(user_id, account.id, refresh_prices=False),
+        "positions": service.get_positions(user_id, account.id, refresh_prices=False),
         "recent_trades": service.account_mgr.get_trade_history(account.id, limit=12),
         "recent_orders": [_serialize_order(order) for order in service.get_orders_by_account(user_id, account.id)[:12]],
         "found": True,
@@ -504,8 +514,8 @@ async def get_account_detail(
             raise HTTPException(status_code=404, detail="账户不存在或无权访问")
 
         account = service.account_mgr.get_account(account_id, current_user.id)
-        positions = service.get_positions(current_user.id, account_id)
-        portfolio = service.get_portfolio(current_user.id, account_id)
+        positions = service.get_positions(current_user.id, account_id, refresh_prices=False)
+        portfolio = service.get_portfolio(current_user.id, account_id, refresh_prices=False)
         trade_history = service.account_mgr.get_trade_history(account_id, limit=100)
 
         return {
@@ -659,7 +669,7 @@ async def run_auto_trading_now(
             response["message"] = "已有一轮自动交易正在后台执行，请稍后刷新结果。"
             return jsonable_encoder(response)
 
-        requested_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        requested_at = local_now_str()
         save_daemon_status(
             {
                 "trading_run_state": "running",
@@ -712,7 +722,7 @@ async def close_account(
             raise HTTPException(status_code=404, detail="账户不存在或无权访问")
 
         # 检查是否有持仓
-        positions = service.get_positions(current_user.id, account_id)
+        positions = service.get_positions(current_user.id, account_id, refresh_prices=False)
         if positions:
             raise HTTPException(status_code=400, detail="账户仍有持仓，无法关闭")
 
@@ -743,7 +753,7 @@ async def get_positions(
         if not service.account_mgr.account_exists(account_id, current_user.id):
             raise HTTPException(status_code=404, detail="账户不存在或无权访问")
 
-        positions = service.get_positions(current_user.id, account_id)
+        positions = service.get_positions(current_user.id, account_id, refresh_prices=refresh)
         return {"positions": positions}
 
     except HTTPException:
@@ -755,6 +765,7 @@ async def get_positions(
 @router.get("/accounts/{account_id}/portfolio")
 async def get_portfolio(
     account_id: int,
+    refresh: bool = Query(default=True, description="是否刷新最新持仓市值"),
     current_user: UserInDB = Depends(get_current_active_user)
 ):
     """查询账户投资组合"""
@@ -764,7 +775,7 @@ async def get_portfolio(
         if not service.account_mgr.account_exists(account_id, current_user.id):
             raise HTTPException(status_code=404, detail="账户不存在或无权访问")
 
-        portfolio = service.get_portfolio(current_user.id, account_id)
+        portfolio = service.get_portfolio(current_user.id, account_id, refresh_prices=refresh)
         return portfolio
 
     except HTTPException:
@@ -945,12 +956,12 @@ async def get_account_performance(
             raise HTTPException(status_code=404, detail="账户不存在")
 
         # 获取最新投资组合快照
-        portfolio = service.get_portfolio(current_user.id, account_id)
+        portfolio = service.get_portfolio(current_user.id, account_id, refresh_prices=False)
         total_market_value = float(portfolio.get("position_value", 0.0) or 0.0)
         total_assets = float(portfolio.get("total_assets", account.balance) or 0.0)
 
         # 计算总收益率
-        initial_capital = account.initial_capital
+        initial_capital = _safe_float(account.initial_capital, 0.0) or 0.0
         total_return_pct = ((total_assets - initial_capital) / initial_capital * 100) if initial_capital > 0 else 0
 
         # 获取交易历史计算胜率和夏普比率
@@ -959,15 +970,14 @@ async def get_account_performance(
         # 计算胜率
         profitable_trades = 0
         total_closed_trades = 0
-        daily_returns = []
-
         # 简化计算：基于已实现盈亏
         realized_pnl_list = []
         for trade in trade_history:
-            if trade.get("realized_pnl") is not None:
-                realized_pnl_list.append(trade["realized_pnl"])
+            realized_pnl = _safe_float(trade.get("realized_pnl", trade.get("pnl")), None)
+            if realized_pnl is not None:
+                realized_pnl_list.append(realized_pnl)
                 total_closed_trades += 1
-                if trade["realized_pnl"] > 0:
+                if realized_pnl > 0:
                     profitable_trades += 1
 
         win_rate = (profitable_trades / total_closed_trades * 100) if total_closed_trades > 0 else 0
@@ -977,10 +987,14 @@ async def get_account_performance(
         equity_history = service.account_mgr.get_equity_history(account_id, days=90)
         sharpe_ratio = 0.0
         max_drawdown = 0.0
+        equity_values = [
+            value
+            for value in (_safe_float(entry.get("equity"), None) for entry in equity_history)
+            if value is not None and value > 0
+        ]
 
-        if len(equity_history) >= 10:
+        if len(equity_values) >= 10:
             # 计算日收益率
-            equity_values = [e["equity"] for e in equity_history]
             returns = []
             for i in range(1, len(equity_values)):
                 if equity_values[i-1] > 0:
@@ -1011,7 +1025,10 @@ async def get_account_performance(
         if days_active < 1:
             days_active = 1
 
-        annual_return_pct = ((1 + total_return_pct / 100) ** (365 / days_active) - 1) * 100 if total_return_pct != 0 else 0
+        growth_base = 1 + total_return_pct / 100
+        annual_return_pct = 0.0
+        if total_return_pct != 0 and growth_base > 0:
+            annual_return_pct = ((growth_base) ** (365 / days_active) - 1) * 100
 
         return {
             "account_id": account_id,
@@ -1027,7 +1044,7 @@ async def get_account_performance(
             "total_trades": total_closed_trades,
             "profitable_trades": profitable_trades,
             "days_active": days_active,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": local_now_iso()
         }
 
     except HTTPException:
@@ -1063,14 +1080,14 @@ async def get_equity_curve(
         # 如果没有历史记录，生成基于当前持仓的实时数据
         if not equity_history:
             account = service.account_mgr.get_account(account_id, current_user.id)
-            positions = service.get_positions(current_user.id, account_id)
+            positions = service.get_positions(current_user.id, account_id, refresh_prices=False)
             total_market_value = sum(float(p.get("market_value", 0.0) or 0.0) for p in positions)
             current_equity = account.balance + account.frozen + total_market_value
 
             # 返回单点数据
             from datetime import datetime
             equity_history = [{
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "date": local_today_str(),
                 "equity": current_equity,
                 "cash": account.balance,
                 "market_value": total_market_value

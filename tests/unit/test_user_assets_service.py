@@ -97,12 +97,12 @@ def test_user_asset_overview_uses_cached_payload_between_reads(
 @patch("core.user_assets.load_price_data")
 def test_reconcile_due_dca_shifts_to_next_trading_day(mock_load_price, _mock_realtime, asset_service):
     dates = pd.to_datetime(["2026-03-13", "2026-03-16"])
-    mock_load_price.return_value = pd.DataFrame({"006810": [1.95, 2.00]}, index=dates)
+    mock_load_price.return_value = pd.DataFrame({"159755": [1.95, 2.00]}, index=dates)
 
     asset_service.upsert_asset(
         1,
         {
-            "ticker": "006810",
+            "ticker": "159755",
             "asset_name": "泰康港股通中证香港银行投资指数C",
             "units": 0,
             "avg_cost": 0,
@@ -121,7 +121,7 @@ def test_reconcile_due_dca_shifts_to_next_trading_day(mock_load_price, _mock_rea
     result = asset_service.reconcile_due_dca(1, as_of=dt.date(2026, 3, 16))
 
     assert result["created"] == 1
-    txns = asset_service.list_transactions(1, "006810")
+    txns = asset_service.list_transactions(1, "159755")
     dca_trades = [item for item in txns if item["source"] == "dca"]
     assert len(dca_trades) == 1
     assert dca_trades[0]["trade_date"] == "2026-03-16"
@@ -236,3 +236,123 @@ def test_user_asset_overview_prefers_fund_nav_for_linked_fund(
     assert asset["asset_type"] == "fund"
     assert asset["current_price"] == pytest.approx(1.3770)
     assert asset["last_price_date"] == "2026-03-19"
+
+
+@patch("core.user_assets.load_cn_realtime_quotes_sina", return_value={})
+@patch("core.user_assets.load_price_data_akshare")
+@patch("core.user_assets.load_price_data")
+def test_otc_fund_dca_pending_confirmation_is_exposed_in_overview(
+    mock_load_price,
+    mock_load_price_akshare,
+    _mock_realtime,
+    asset_service,
+):
+    execution_dates = pd.to_datetime(["2026-03-19", "2026-03-20"])
+    mock_load_price.return_value = pd.DataFrame({"002611": [2.00, 2.05]}, index=execution_dates)
+    mock_load_price_akshare.return_value = pd.DataFrame({"002611": [2.00]}, index=pd.to_datetime(["2026-03-19"]))
+
+    asset_service.upsert_asset(
+        1,
+        {
+            "ticker": "002611",
+            "asset_name": "Fund DCA Test",
+            "asset_type": "fund",
+            "units": 0,
+            "avg_cost": 0,
+            "trade_date": "2026-03-18",
+            "dca_rule": {
+                "enabled": True,
+                "frequency": "weekly",
+                "weekday": 3,
+                "amount": 100,
+                "start_date": "2026-03-19",
+                "shift_to_next_trading_day": True,
+            },
+        },
+    )
+
+    thursday_result = asset_service.reconcile_due_dca(1, as_of=dt.date(2026, 3, 19))
+    assert thursday_result["created"] == 0
+    assert [item for item in asset_service.list_transactions(1, "002611") if item["source"] == "dca"] == []
+
+    class ThursdayDate(dt.date):
+        @classmethod
+        def today(cls) -> "ThursdayDate":
+            return cls(2026, 3, 19)
+
+    with patch("core.user_assets.dt.date", ThursdayDate):
+        overview = asset_service.get_overview(1, sync_dca=False, force_refresh=True)
+
+    asset = overview["assets"][0]
+    assert asset["units"] == pytest.approx(0.0)
+    assert asset["invested_amount"] == pytest.approx(0.0)
+    assert asset["total_return"] == pytest.approx(0.0)
+    assert asset["pending_dca"] == {
+        "status": "pending_confirmation",
+        "amount": 100.0,
+        "execution_date": "2026-03-19",
+        "confirmation_date": "2026-03-20",
+        "price_basis_date": "2026-03-19",
+        "estimated_price": 2.0,
+        "estimated_units": 50.0,
+    }
+
+
+@patch("core.user_assets.load_cn_realtime_quotes_sina", return_value={})
+@patch("core.user_assets.load_price_data_akshare")
+@patch("core.user_assets.load_price_data")
+def test_otc_fund_dca_confirms_next_trading_day_and_starts_earning_on_confirmation_day(
+    mock_load_price,
+    mock_load_price_akshare,
+    _mock_realtime,
+    asset_service,
+):
+    execution_dates = pd.to_datetime(["2026-03-19", "2026-03-20"])
+    mock_load_price.return_value = pd.DataFrame({"002611": [2.00, 2.05]}, index=execution_dates)
+    mock_load_price_akshare.return_value = pd.DataFrame({"002611": [2.00, 2.05]}, index=execution_dates)
+
+    asset_service.upsert_asset(
+        1,
+        {
+            "ticker": "002611",
+            "asset_name": "Fund DCA Test",
+            "asset_type": "fund",
+            "units": 0,
+            "avg_cost": 0,
+            "trade_date": "2026-03-18",
+            "dca_rule": {
+                "enabled": True,
+                "frequency": "weekly",
+                "weekday": 3,
+                "amount": 100,
+                "start_date": "2026-03-19",
+                "shift_to_next_trading_day": True,
+            },
+        },
+    )
+
+    friday_result = asset_service.reconcile_due_dca(1, as_of=dt.date(2026, 3, 20))
+    assert friday_result["created"] == 1
+
+    txns = asset_service.list_transactions(1, "002611")
+    dca_trades = [item for item in txns if item["source"] == "dca"]
+    assert len(dca_trades) == 1
+    assert dca_trades[0]["trade_date"] == "2026-03-20"
+    assert dca_trades[0]["price"] == pytest.approx(2.00)
+
+    class FridayDate(dt.date):
+        @classmethod
+        def today(cls) -> "FridayDate":
+            return cls(2026, 3, 20)
+
+    with patch("core.user_assets.dt.date", FridayDate):
+        overview = asset_service.get_overview(1, sync_dca=False, force_refresh=True)
+
+    asset = overview["assets"][0]
+    assert asset["units"] == pytest.approx(50.0)
+    assert asset["invested_amount"] == pytest.approx(100.0)
+    assert asset["pending_dca"] is None
+    assert asset["current_price"] == pytest.approx(2.05)
+    assert asset["total_return"] == pytest.approx(2.5)
+    assert asset["day_change"] == pytest.approx(2.5)
+    assert asset["week_change"] == pytest.approx(2.5)

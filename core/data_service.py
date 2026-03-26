@@ -1626,10 +1626,13 @@ def load_price_data(
     alpha_vantage_key: str | None = None,
     tushare_token: str | None = None,
     refresh_stale: bool = False,
+    remote_cache_days: int | None = None,
 ) -> pd.DataFrame:
     """内部实现：优先使用本地仓库，不足时再回退远程并写回本地"""
     if not tickers:
         return pd.DataFrame()
+
+    effective_remote_cache_days = max(days, int(remote_cache_days or 3650))
 
     # API 响应文件缓存（Dexter 借鉴）：命中则直接返回
     try:
@@ -1639,6 +1642,7 @@ def load_price_data(
                 "tickers": sorted(tickers),
                 "days": days,
                 "refresh_stale": refresh_stale,
+                "remote_cache_days": effective_remote_cache_days,
             }
             cached = get_cached("prices", cache_params)
             if cached is not None:
@@ -1679,7 +1683,7 @@ def load_price_data(
     if tickers_to_refresh:
         # 为本地仓库尽量缓存更长的历史，而不仅仅是用户当前选择的 days。
         # 这里与 data_updater 中的 MAX_CACHE_DAYS 保持一致，默认约 10 年（3650 天）。
-        REMOTE_CACHE_DAYS = max(days, 3650)
+        REMOTE_CACHE_DAYS = effective_remote_cache_days
         remote_df = _load_price_data_remote(
             tickers=tickers_to_refresh,
             days=REMOTE_CACHE_DAYS,
@@ -1758,6 +1762,7 @@ def load_price_data(
                 "tickers": sorted(tickers),
                 "days": days,
                 "refresh_stale": refresh_stale,
+                "remote_cache_days": effective_remote_cache_days,
             }
             set_cached("prices", cache_params, result_df.to_dict(orient="split"))
     except Exception as e:

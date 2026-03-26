@@ -31,14 +31,14 @@ daemon_config.json
 daemon_status.json
 
 # Runtime data and caches
-data/
+/data/
 *.parquet
 *.csv
 *.db
 *.sqlite
-data/api_cache/
-data/scratchpad/
-data/logs/
+/data/api_cache/
+/data/scratchpad/
+/data/logs/
 
 # Logs and reports
 logs/

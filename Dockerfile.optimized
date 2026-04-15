@@ -10,9 +10,12 @@
 # ============================================================
 
 # -------------------- Stage 1: Python dependencies --------------------
-FROM python:3.11-slim AS python-deps
+FROM python:3.11-slim-bookworm AS python-deps
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Debian mirror fetches can intermittently fail during CI/buildx publishes.
+# Use a pinned base and retry-friendly apt settings to keep image publishes stable.
+RUN apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
     gcc g++ \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,9 +44,10 @@ RUN npx next build
 # With output="export", static files are generated under /build/out.
 
 # -------------------- Stage 3: Runtime --------------------
-FROM python:3.11-slim AS runtime
+FROM python:3.11-slim-bookworm AS runtime
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
     nginx \
     supervisor \
     curl \

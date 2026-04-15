@@ -354,22 +354,22 @@ class UserAssetService:
             "otc_fund": "fund",
             "基金": "fund",
             "场外基金": "fund",
-            "鍩洪噾": "fund",
-            "鍦哄鍩洪噾": "fund",
+            "联接": "fund",
+            "联接基金": "fund",
             "etf": "etf",
             "lof": "etf",
             "exchange_fund": "etf",
             "场内etf": "etf",
             "场内基金": "etf",
-            "鍦哄唴etf": "etf",
-            "鍦哄唴鍩洪噾": "etf",
+            "场内lof": "etf",
+            "场内联接": "etf",
             "stock": "stock",
             "equity": "stock",
             "股票": "stock",
-            "鑲＄エ": "stock",
+            "证券": "stock",
             "other": "other",
             "其他": "other",
-            "鍏朵粬": "other",
+            "其它": "other",
         }
         return alias_map.get(raw)
 
@@ -379,7 +379,7 @@ class UserAssetService:
         name = str(asset_name or "").upper()
         if not normalized.isdigit() or len(normalized) != 6:
             return False
-        if "联接" in name or "鑱旀帴" in name:
+        if "联接" in name or "场外" in name:
             return False
         if normalized.startswith(("15", "50", "51", "56", "58")):
             return True
@@ -392,21 +392,19 @@ class UserAssetService:
             return False
         fund_keywords = (
             "基金",
-            "鍩洪噾",
             "联接",
-            "鑱旀帴",
+            "场外",
             "债",
-            "鍊?",
+            "债基",
             "债券",
-            "鍊哄埜",
+            "债券型",
             "货币",
-            "璐у竵",
+            "现金宝",
             "滚动持有",
-            "婊氬姩鎸佹湁",
+            "短债",
             "中短债",
-            "涓煭鍊?",
             "理财",
-            "鐞嗚储",
+            "储蓄",
         )
         return any(keyword in name for keyword in fund_keywords)
 
@@ -954,6 +952,57 @@ class UserAssetService:
             return None
         return float(exact_matches.iloc[-1])
 
+    def _infer_opening_reset_state(
+        self,
+        transactions: Iterable[Dict[str, Any]],
+        start_date: dt.date,
+        end_date: dt.date,
+    ) -> Optional[Dict[str, Any]]:
+        """Infer an opening position from a RESET transaction inside the period window.
+
+        This keeps imported holdings from being treated as fresh period profit when the user
+        initializes current positions with a RESET entry and then adds real trades later.
+        """
+        earliest_reset: Optional[Dict[str, Any]] = None
+        has_activity_before_period = False
+
+        for tx in transactions:
+            trade_date = self._transaction_date(tx)
+            if trade_date is None:
+                continue
+
+            if trade_date <= start_date:
+                has_activity_before_period = True
+
+            if str(tx.get("transaction_type") or "").upper() != "RESET":
+                continue
+            if trade_date > end_date:
+                continue
+
+            if earliest_reset is None:
+                earliest_reset = tx
+                continue
+
+            previous_date = self._transaction_date(earliest_reset)
+            previous_id = int(earliest_reset.get("id") or 0)
+            current_id = int(tx.get("id") or 0)
+            if previous_date is None or trade_date < previous_date or (trade_date == previous_date and current_id < previous_id):
+                earliest_reset = tx
+
+        if has_activity_before_period or earliest_reset is None:
+            return None
+
+        reset_units = max(0.0, self._to_float(earliest_reset.get("quantity"), 0.0))
+        reset_price = max(0.0, self._to_float(earliest_reset.get("price"), 0.0))
+        if reset_units <= 0 or reset_price <= 0:
+            return None
+
+        return {
+            "units": reset_units,
+            "price": reset_price,
+            "trade_date": self._transaction_date(earliest_reset),
+        }
+
     def _calculate_period_changes(
         self,
         user_id: int,
@@ -1008,11 +1057,14 @@ class UserAssetService:
         for name, ref_date in periods.items():
             net_flow = self._calculate_period_net_flow(transactions, ref_date, resolved_flow_end_date)
             ref_market_value = self._snapshot_change_value(user_id, ticker, ref_date)
+            opening_reset = self._infer_opening_reset_state(transactions, ref_date, resolved_flow_end_date)
             if ref_market_value is None or ref_market_value <= 0:
                 ref_state = self._calculate_position_state(transactions, as_of=ref_date)
                 ref_units = ref_state["units"]
                 if ref_units <= 0 and abs(net_flow) <= 1e-10:
                     ref_units = units
+                elif ref_units <= 0 and opening_reset is not None:
+                    ref_units = self._to_float(opening_reset.get("units"), 0.0)
 
                 if ref_units > 0:
                     ref_price = self._reference_price(series, ref_date)

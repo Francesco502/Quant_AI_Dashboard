@@ -71,6 +71,8 @@ DEFAULT_DEV_CORS_ORIGINS = [
     "http://127.0.0.1:8685",
     "http://localhost:8687",
     "http://127.0.0.1:8687",
+    "http://localhost:8786",
+    "http://127.0.0.1:8786",
 ]
 STRICT_TRUE_VALUES = {"1", "true", "yes", "on"}
 PRODUCTION_ENV_VALUES = {"prod", "production"}

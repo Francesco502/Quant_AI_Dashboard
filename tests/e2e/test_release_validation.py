@@ -164,7 +164,7 @@ def test_login_ui_stores_token() -> None:
         page.fill('input[id="username"]', username)
         page.fill('input[id="password"]', password)
         page.click('button[type="submit"]')
-        page.wait_for_timeout(1500)
+        page.wait_for_function("() => !!localStorage.getItem('token')", timeout=15000)
 
         token = page.evaluate("localStorage.getItem('token')")
         assert token is not None

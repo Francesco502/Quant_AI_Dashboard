@@ -84,6 +84,7 @@ class Position:
         shares: int,
         available_shares: int,
         avg_cost: float,
+        current_price: float = 0.0,
         market_value: float = 0.0,
         unrealized_pnl: float = 0.0,
         updated_at: Optional[datetime] = None
@@ -93,6 +94,7 @@ class Position:
         self.shares = shares
         self.available_shares = available_shares
         self.avg_cost = avg_cost
+        self.current_price = current_price
         self.market_value = market_value
         self.unrealized_pnl = unrealized_pnl
         self.updated_at = updated_at
@@ -116,6 +118,7 @@ class Position:
             shares=row["shares"],
             available_shares=row["available_shares"] if "available_shares" in row.keys() else row["shares"],
             avg_cost=row["avg_cost"],
+            current_price=0,
             market_value=row["market_value"] if "market_value" in row.keys() else 0,
             unrealized_pnl=row["unrealized_pnl"] if "unrealized_pnl" in row.keys() else 0,
             updated_at=row["updated_at"] if "updated_at" in row.keys() else None
@@ -236,10 +239,15 @@ class AccountManager:
                                 current_price = float(valid_prices.iloc[-1])
                                 # 验证价格有效性
                                 if current_price and current_price > 0:
+                                    p.current_price = current_price
                                     p.market_value = current_price * p.shares
                                     p.unrealized_pnl = (current_price - p.avg_cost) * p.shares
             except Exception as e:
                 logger.error(f"获取价格失败: {e}")
+
+        for p in positions:
+            if p.current_price <= 0 and p.shares > 0 and p.market_value > 0:
+                p.current_price = p.market_value / p.shares
 
         return positions
 

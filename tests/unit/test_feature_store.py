@@ -45,6 +45,44 @@ class TestFeatureStore:
         assert isinstance(df, pd.DataFrame)
         assert not df.empty
 
+    @patch('core.feature_store.EfficiencyFeatures.compute_all')
+    @patch('core.feature_store.MeanReversionFeatures.compute_all')
+    @patch('core.feature_store.MomentumFeatures.compute_all')
+    @patch('core.feature_store.TrendFeatures.compute_all')
+    @patch('core.feature_store.VolatilityFeatures.compute_all')
+    def test_compute_features_deduplicates_overlapping_columns(
+        self,
+        mock_volatility,
+        mock_trend,
+        mock_momentum,
+        mock_mean_reversion,
+        mock_efficiency,
+        feature_store,
+    ):
+        index = pd.date_range('2023-01-01', periods=3)
+        price_series = pd.Series([10, 11, 12], index=index)
+        feature_store.feature_engineer.add_enhanced_features.return_value = pd.DataFrame(
+            {
+                'price': [10, 11, 12],
+                'realized_vol_20': [0.1, 0.2, 0.3],
+                'momentum_5': [0.0, 0.1, 0.2],
+                'zscore_20': [0.5, 0.6, 0.7],
+            },
+            index=index,
+        )
+        mock_volatility.return_value = pd.DataFrame({'realized_vol_20': [1.0, 1.1, 1.2]}, index=index)
+        mock_trend.return_value = pd.DataFrame({'adx_14': [20, 21, 22]}, index=index)
+        mock_momentum.return_value = pd.DataFrame({'momentum_5': [0.3, 0.4, 0.5], 'streak': [1, 2, 3]}, index=index)
+        mock_mean_reversion.return_value = pd.DataFrame({'zscore_20': [0.8, 0.9, 1.0]}, index=index)
+        mock_efficiency.return_value = pd.DataFrame({'efficiency_ratio_10': [0.2, 0.3, 0.4]}, index=index)
+
+        df = feature_store.compute_features(price_series)
+
+        assert not df.columns.duplicated().any()
+        assert df['realized_vol_20'].tolist() == [1.0, 1.1, 1.2]
+        assert df['momentum_5'].tolist() == [0.3, 0.4, 0.5]
+        assert df['zscore_20'].tolist() == [0.8, 0.9, 1.0]
+
     @patch('core.feature_store.pd.DataFrame.to_parquet')
     @patch('core.feature_store.save_feature_meta')
     @patch('core.feature_store._ensure_dirs')

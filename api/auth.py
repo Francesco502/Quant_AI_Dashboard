@@ -716,6 +716,16 @@ def _delete_user_data(username: str) -> None:
     user_id = int(row["id"])
     cursor.execute("SELECT id FROM accounts WHERE user_id = ?", (user_id,))
     account_ids = [int(item["id"]) for item in cursor.fetchall()]
+    user_scoped_tables = [
+        "user_asset_snapshots",
+        "user_asset_dca_rules",
+        "user_asset_transactions",
+        "user_asset_holdings",
+        "backtest_history",
+        "strategy_templates",
+        "user_assets",
+        "user_strategies",
+    ]
 
     for account_id in account_ids:
         cursor.execute("DELETE FROM fills WHERE account_id = ?", (account_id,))
@@ -725,8 +735,8 @@ def _delete_user_data(username: str) -> None:
         cursor.execute("DELETE FROM positions WHERE account_id = ?", (account_id,))
 
     cursor.execute("DELETE FROM accounts WHERE user_id = ?", (user_id,))
-    cursor.execute("DELETE FROM user_assets WHERE user_id = ?", (user_id,))
-    cursor.execute("DELETE FROM user_strategies WHERE user_id = ?", (user_id,))
+    for table_name in user_scoped_tables:
+        cursor.execute(f"DELETE FROM {table_name} WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
     db.conn.commit()
 

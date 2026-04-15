@@ -22,3 +22,19 @@ async def test_natural_query_falls_back_to_heuristic_ticker_when_llm_parse_is_in
     assert response["parsed"]["ticker"] == "159755"
     assert response["parsed"]["intent"] == "decision"
     assert response["analysis"]["results"][0]["ticker"] == "159755"
+
+
+def test_parse_query_heuristically_maps_recent_valuation_question_to_decision():
+    parsed = llm_analysis._parse_query_heuristically("请分析 600519 最近估值和资金流，值不值得继续持有？")
+
+    assert parsed["ticker"] == "600519"
+    assert parsed["intent"] == "decision"
+    assert parsed["days"] == 20
+
+
+def test_parse_query_heuristically_maps_quarter_language_to_60_days():
+    parsed = llm_analysis._parse_query_heuristically("帮我看下 159755 近三个月走势")
+
+    assert parsed["ticker"] == "159755"
+    assert parsed["intent"] == "price_trend"
+    assert parsed["days"] == 60

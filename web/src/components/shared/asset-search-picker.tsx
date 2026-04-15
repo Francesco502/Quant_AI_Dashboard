@@ -46,7 +46,7 @@ export function AssetSearchPicker({
   const showResults = query.trim().length > 0
 
   return (
-    <div className="space-y-4 rounded-2xl border border-black/[0.06] bg-white/80 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
+    <div className="data-panel space-y-4 rounded-2xl p-5">
       <div className="space-y-1">
         <div className="text-sm font-medium text-foreground">搜索并确认资产</div>
         <p className="text-xs leading-5 text-muted-foreground">{description}</p>
@@ -63,9 +63,9 @@ export function AssetSearchPicker({
       </div>
 
       {showResults ? (
-        <div className="overflow-hidden rounded-2xl border border-black/[0.06] bg-[rgba(248,245,238,0.78)]">
+        <div className="data-panel-muted overflow-hidden rounded-2xl">
           {loading ? (
-            <div className="px-4 py-5 text-sm text-muted-foreground">正在搜索可用资产...</div>
+            <div className="px-4 py-5 text-sm text-muted-foreground">正在搜索可用资产…</div>
           ) : results.length === 0 ? (
             <div className="px-4 py-5 text-sm text-muted-foreground">{emptyText}</div>
           ) : (
@@ -78,8 +78,8 @@ export function AssetSearchPicker({
                     type="button"
                     onClick={() => onSelect(item)}
                     className={cn(
-                      "flex w-full items-start justify-between gap-3 border-b border-black/[0.05] px-4 py-3 text-left transition-colors last:border-b-0",
-                      selected ? "bg-black/[0.05]" : "hover:bg-black/[0.03]",
+                      "flex w-full items-start justify-between gap-3 border-b border-border/60 px-4 py-3 text-left transition-colors last:border-b-0",
+                      selected ? "bg-foreground/[0.045]" : "hover:bg-foreground/[0.025]",
                     )}
                   >
                     <div className="space-y-1">
@@ -99,7 +99,7 @@ export function AssetSearchPicker({
           )}
         </div>
       ) : (
-        <div className="rounded-2xl border border-dashed border-black/[0.08] bg-[rgba(248,245,238,0.6)] px-4 py-3 text-xs leading-5 text-muted-foreground">
+        <div className="data-empty data-empty-compact text-xs leading-5 text-muted-foreground">
           支持输入基金代码、股票代码、ETF 名称或关键词。系统会优先展示最接近的候选资产，避免把同名或联接基金选错。
         </div>
       )}

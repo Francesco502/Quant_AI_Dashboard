@@ -43,6 +43,8 @@ daemon_status.json
 # Logs and reports
 logs/
 output/
+.playwright-cli/
+tmp/
 *.log
 htmlcov/
 .benchmarks/
@@ -50,6 +52,7 @@ htmlcov/
 .coverage
 coverage.xml
 evals/reports/
+release_check_report.txt
 
 # Frontend build outputs
 web/.next/

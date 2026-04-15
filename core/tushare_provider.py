@@ -106,6 +106,13 @@ def _safe_float(value: Any) -> Optional[float]:
         return None
 
 
+def _safe_billion_from_wan(value: Any) -> Optional[float]:
+    amount = _safe_float(value)
+    if amount is None:
+        return None
+    return round(amount / 10000.0, 2)
+
+
 @lru_cache(maxsize=512)
 def get_cn_security_name(ticker: str) -> Optional[str]:
     """Resolve A-share / ETF / fund display name from Tushare."""
@@ -204,24 +211,125 @@ def get_cn_security_profile(ticker: str) -> Dict[str, Any]:
                 ts_code=ts_code,
                 start_date=start_date,
                 end_date=end_date,
-                fields="ts_code,trade_date,pe_ttm,pb,total_mv,circ_mv,turnover_rate,volume_ratio",
+                fields=(
+                    "ts_code,trade_date,close,turnover_rate,turnover_rate_f,volume_ratio,"
+                    "pe,pe_ttm,pb,ps_ttm,dv_ratio,dv_ttm,total_mv,circ_mv"
+                ),
             )
             if df is not None and not df.empty:
                 df = df.sort_values("trade_date", ascending=False).reset_index(drop=True)
                 row = df.iloc[0]
                 profile["valuation"] = {
                     "trade_date": row.get("trade_date"),
+                    "close": _safe_float(row.get("close")),
+                    "pe": _safe_float(row.get("pe")),
                     "pe_ttm": _safe_float(row.get("pe_ttm")),
                     "pb": _safe_float(row.get("pb")),
+                    "ps_ttm": _safe_float(row.get("ps_ttm")),
+                    "dv_ratio": _safe_float(row.get("dv_ratio")),
+                    "dv_ttm": _safe_float(row.get("dv_ttm")),
                     "total_mv": _safe_float(row.get("total_mv")),
                     "circ_mv": _safe_float(row.get("circ_mv")),
                     "turnover_rate": _safe_float(row.get("turnover_rate")),
+                    "turnover_rate_f": _safe_float(row.get("turnover_rate_f")),
                     "volume_ratio": _safe_float(row.get("volume_ratio")),
                 }
         except Exception as exc:
             logger.debug("Tushare daily_basic lookup failed for %s: %s", ts_code, exc)
 
     return profile
+
+
+@lru_cache(maxsize=512)
+def get_cn_security_moneyflow(ticker: str) -> Dict[str, Any]:
+    """Resolve recent money-flow summary for A-share stocks when Tushare is configured."""
+    pro = _get_configured_pro_api()
+    ts_code = normalize_cn_ticker(ticker)
+    if pro is None or ts_code is None:
+        return {}
+
+    profile = get_cn_security_profile(ticker)
+    if profile.get("asset_type") != "stock":
+        return {}
+
+    method = getattr(pro, "moneyflow", None)
+    if method is None:
+        return {}
+
+    start_date = _date_str(dt.date.today() - dt.timedelta(days=40))
+    end_date = _date_str(dt.date.today())
+    try:
+        df = method(
+            ts_code=ts_code,
+            start_date=start_date,
+            end_date=end_date,
+            fields=(
+                "ts_code,trade_date,net_mf_amount,"
+                "buy_lg_amount,sell_lg_amount,buy_elg_amount,sell_elg_amount,"
+                "buy_md_amount,sell_md_amount,buy_sm_amount,sell_sm_amount"
+            ),
+        )
+    except TypeError:
+        try:
+            df = method(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        except Exception as exc:
+            logger.debug("Tushare moneyflow lookup failed for %s: %s", ts_code, exc)
+            return {}
+    except Exception as exc:
+        logger.debug("Tushare moneyflow lookup failed for %s: %s", ts_code, exc)
+        return {}
+
+    if df is None or df.empty:
+        return {}
+
+    if "trade_date" in df.columns:
+        df = df.sort_values("trade_date", ascending=False).reset_index(drop=True)
+
+    latest = df.iloc[0]
+
+    def _series_sum(column: str, window: int) -> Optional[float]:
+        if column not in df.columns:
+            return None
+        values = df[column].head(window).apply(_safe_float).dropna()
+        if values.empty:
+            return None
+        return float(values.sum())
+
+    latest_net_amount = _safe_float(latest.get("net_mf_amount"))
+    large_net_amount = None
+    if {"buy_lg_amount", "sell_lg_amount", "buy_elg_amount", "sell_elg_amount"}.issubset(df.columns):
+        large_buy = (_safe_float(latest.get("buy_lg_amount")) or 0.0) + (_safe_float(latest.get("buy_elg_amount")) or 0.0)
+        large_sell = (_safe_float(latest.get("sell_lg_amount")) or 0.0) + (_safe_float(latest.get("sell_elg_amount")) or 0.0)
+        large_net_amount = large_buy - large_sell
+
+    medium_net_amount = None
+    if {"buy_md_amount", "sell_md_amount"}.issubset(df.columns):
+        medium_net_amount = (_safe_float(latest.get("buy_md_amount")) or 0.0) - (_safe_float(latest.get("sell_md_amount")) or 0.0)
+
+    small_net_amount = None
+    if {"buy_sm_amount", "sell_sm_amount"}.issubset(df.columns):
+        small_net_amount = (_safe_float(latest.get("buy_sm_amount")) or 0.0) - (_safe_float(latest.get("sell_sm_amount")) or 0.0)
+
+    latest_net_billion = _safe_billion_from_wan(latest_net_amount)
+    flow: Dict[str, Any] = {
+        "trade_date": latest.get("trade_date"),
+        "net_mf_amount": latest_net_amount,
+        "net_mf_amount_billion": latest_net_billion,
+        "net_mf_5d_amount_billion": _safe_billion_from_wan(_series_sum("net_mf_amount", 5)),
+        "net_mf_20d_amount_billion": _safe_billion_from_wan(_series_sum("net_mf_amount", 20)),
+        "large_order_net_amount_billion": _safe_billion_from_wan(large_net_amount),
+        "medium_order_net_amount_billion": _safe_billion_from_wan(medium_net_amount),
+        "small_order_net_amount_billion": _safe_billion_from_wan(small_net_amount),
+        "unit": "亿元",
+    }
+
+    latest_text = "暂无净流入数据"
+    if latest_net_billion is not None:
+        direction = "净流入" if latest_net_billion >= 0 else "净流出"
+        latest_text = f"最新主力资金{direction} {abs(latest_net_billion):.2f} 亿元"
+    flow["description"] = latest_text
+
+    return flow
 
 
 def is_a_share_trading_day(date: Optional[dt.date] = None) -> Optional[bool]:

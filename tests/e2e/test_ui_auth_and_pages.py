@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 import os
 import uuid
 
 import pytest
 from playwright.sync_api import Page, expect
+
+from api.auth import create_access_token, create_user, get_user_by_username
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_external]
@@ -28,9 +31,38 @@ def _login(page: Page, username: str, password: str) -> None:
     page.wait_for_load_state("networkidle")
     page.locator("#username").fill(username)
     page.locator("#password").fill(password)
-    page.get_by_role("button", name="Login").click()
-    page.wait_for_load_state("networkidle")
-    expect(page).to_have_url(f"{BASE_URL}/")
+    page.locator('button[type="submit"]').click()
+    page.wait_for_function("() => !!localStorage.getItem('token')", timeout=15000)
+    page.wait_for_function("() => window.location.pathname === '/'", timeout=30000)
+
+
+@lru_cache(maxsize=8)
+def _fetch_session(username: str, password: str) -> tuple[str, str, str]:
+    user = get_user_by_username(username)
+    if not user:
+        create_user(
+            username=username,
+            password=password,
+            role="admin" if username == ADMIN_USERNAME else "viewer",
+        )
+        user = get_user_by_username(username)
+
+    role = getattr(user, "role", None) or ("admin" if username == ADMIN_USERNAME else "viewer")
+    token = create_access_token({"sub": username, "role": role})
+    return token, username, role
+
+
+def _seed_auth_session(page: Page, username: str, password: str) -> None:
+    token, resolved_username, resolved_role = _fetch_session(username, password)
+    page.goto(f"{BASE_URL}/login")
+    page.evaluate(
+        """([nextToken, nextUsername, nextRole]) => {
+            localStorage.setItem("token", nextToken);
+            localStorage.setItem("user", nextUsername);
+            localStorage.setItem("userRole", nextRole || "viewer");
+        }""",
+        [token, resolved_username, resolved_role],
+    )
 
 
 def test_register_then_login_new_user(page: Page) -> None:
@@ -38,14 +70,12 @@ def test_register_then_login_new_user(page: Page) -> None:
     password = "StrongPass123!"
 
     page.goto(f"{BASE_URL}/register")
-    page.wait_for_load_state("networkidle")
+    page.wait_for_load_state("domcontentloaded")
     page.locator("#username").fill(username)
     page.locator("#password").fill(password)
     page.locator("#confirmPassword").fill(password)
-    page.get_by_role("button", name="注册").click()
-
-    expect(page.get_by_text("注册成功! 正在跳转到登录页面...")).to_be_visible()
-    page.wait_for_url(f"{BASE_URL}/login", timeout=5000)
+    page.locator('button[type="submit"]').click()
+    page.wait_for_function("() => window.location.pathname === '/login'", timeout=15000)
 
     _login(page, username, password)
 
@@ -54,29 +84,31 @@ def test_admin_login_and_settings_health(page: Page) -> None:
     _login(page, ADMIN_USERNAME, ADMIN_PASSWORD)
 
     page.goto(f"{BASE_URL}/settings")
-    page.wait_for_load_state("networkidle")
+    page.wait_for_load_state("domcontentloaded")
+    page.get_by_role("tab", name="后台任务").click()
 
-    expect(page.get_by_text("系统健康 (System Health)")).to_be_visible()
-    expect(page.get_by_text("API 服务 (API Server)")).to_be_visible()
-    expect(page.get_by_text("离线 (Offline)")).not_to_be_visible()
+    expect(page.locator("body")).to_contain_text("系统设置")
+    expect(page.locator("body")).to_contain_text("API 服务")
+    expect(page.locator("body")).to_contain_text("发布安全")
+    expect(page.locator("body")).not_to_contain_text("离线")
 
 
 @pytest.mark.parametrize(
     "route,expected_text",
     [
-        ("/", "市场概览"),
-        ("/market", "市场"),
-        ("/trading", "Trading"),
-        ("/backtest", "Backtest"),
-        ("/portfolio", "Portfolio"),
-        ("/strategies", "Strategies"),
+        ("/", "今日状态"),
+        ("/market", "技术与风险分析"),
+        ("/trading", "模拟交易工作台"),
+        ("/backtest", "回测中心"),
+        ("/portfolio", "个人资产"),
+        ("/strategies", "量化策略工作台"),
     ],
 )
 def test_main_pages_render_without_fatal_error(page: Page, route: str, expected_text: str) -> None:
-    _login(page, ADMIN_USERNAME, ADMIN_PASSWORD)
+    _seed_auth_session(page, ADMIN_USERNAME, ADMIN_PASSWORD)
 
     page.goto(f"{BASE_URL}{route}")
-    page.wait_for_load_state("networkidle")
+    page.wait_for_load_state("domcontentloaded")
 
     expect(page.locator("body")).to_contain_text(expected_text)
     expect(page.locator("body")).not_to_contain_text("Application error")

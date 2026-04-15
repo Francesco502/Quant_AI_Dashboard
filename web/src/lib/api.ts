@@ -1,4 +1,6 @@
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8685/api"
+const RETRYABLE_STATUS_CODES = new Set([502, 503, 504])
+const GET_RETRY_DELAYS_MS = [700, 1400, 2400]
 
 function normalizeBaseUrl(base: string): string {
   // Remove trailing slashes to avoid `.../api//path`.
@@ -29,6 +31,33 @@ function harmonizeLocalDevBaseUrl(base: string): string {
 function normalizeEndpoint(endpoint: string): string {
   if (!endpoint) return "/"
   return endpoint.startsWith("/") ? endpoint : `/${endpoint}`
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function getRequestMethod(options: RequestInit): string {
+  return (options.method ?? "GET").toUpperCase()
+}
+
+function isRetryableMethod(method: string) {
+  return method === "GET" || method === "HEAD"
+}
+
+async function readApiErrorMessage(response: Response): Promise<string> {
+  const text = await response.text().catch(() => "")
+  if (text.trim()) {
+    try {
+      const jsonData = JSON.parse(text) as Record<string, unknown>
+      const detail = jsonData.detail
+      if (typeof detail === "string" && detail.trim()) return detail
+    } catch {
+      return text
+    }
+  }
+
+  return `API Request failed: ${response.statusText}`
 }
 
 /**
@@ -513,44 +542,66 @@ function getAuthHeaders(): Record<string, string> {
 export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const base = resolveApiBaseUrl()
   const url = `${base}${normalizeEndpoint(endpoint)}`
+  const method = getRequestMethod(options)
   
   const headers = {
     ...getAuthHeaders(),
     ...options.headers,
   };
+  const attempts = isRetryableMethod(method) ? GET_RETRY_DELAYS_MS.length + 1 : 1
+  let lastNetworkError: Error | null = null
 
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      ...options,
-      headers,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw error;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    let response: Response
+
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+      })
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw error
+      }
+
+      lastNetworkError =
+        error instanceof Error ? error : new Error("Unknown network error")
+
+      if (attempt < attempts - 1) {
+        await delay(GET_RETRY_DELAYS_MS[attempt])
+        continue
+      }
+
+      throw new Error(`Cannot reach API service (${url}). ${lastNetworkError.message}`)
     }
-    const message =
-      error instanceof Error && error.message
-        ? error.message
-        : "Unknown network error";
-    throw new Error(`Cannot reach API service (${url}). ${message}`);
-  }
 
-  // Redirect to login when token is missing/expired.
-  if (response.status === 401) {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      window.location.href = "/login";
+    // Redirect to login when token is missing/expired.
+    if (response.status === 401) {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("token")
+        localStorage.removeItem("user")
+        window.location.href = "/login"
+      }
+      throw new Error("Authentication expired. Please sign in again.")
     }
-    throw new Error("Authentication expired. Please sign in again.");
-  }
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || `API Request failed: ${response.statusText}`);
+
+    if (!response.ok) {
+      if (attempt < attempts - 1 && isRetryableMethod(method) && RETRYABLE_STATUS_CODES.has(response.status)) {
+        await delay(GET_RETRY_DELAYS_MS[attempt])
+        continue
+      }
+
+      throw new Error(await readApiErrorMessage(response))
+    }
+
+    return response.json()
   }
 
-  return response.json();
+  throw new Error(
+    lastNetworkError
+      ? `Cannot reach API service (${url}). ${lastNetworkError.message}`
+      : `API Request failed: ${url}`,
+  )
 }
 
 function toNumber(value: unknown, fallback = 0): number {

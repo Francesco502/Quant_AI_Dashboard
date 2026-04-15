@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
+import inspect
 import logging
 import math
 
@@ -252,7 +253,7 @@ def _resolve_universe_mode(trading_cfg: Dict[str, Any]) -> str:
     return UNIVERSE_MODE_ASSET_POOL
 
 
-def resolve_auto_trading_universe(cfg: Dict[str, Any]) -> UniverseResolution:
+def resolve_auto_trading_universe(cfg: Dict[str, Any], *, user_id: Optional[int] = None) -> UniverseResolution:
     trading_cfg = cfg.get("trading", {})
     mode = _resolve_universe_mode(trading_cfg)
     limit = int(trading_cfg.get("universe_limit", 0) or 0)
@@ -260,7 +261,10 @@ def resolve_auto_trading_universe(cfg: Dict[str, Any]) -> UniverseResolution:
     if mode == UNIVERSE_MODE_MANUAL:
         tickers = _normalize_ticker_list(trading_cfg.get("universe") or cfg.get("universe") or [])
     elif mode == UNIVERSE_MODE_ASSET_POOL:
-        tickers = _normalize_ticker_list(get_asset_pool_tickers(limit=limit or None))
+        if user_id is None:
+            tickers = _normalize_ticker_list(get_asset_pool_tickers(limit=limit or None))
+        else:
+            tickers = _normalize_ticker_list(get_asset_pool_tickers(limit=limit or None, user_id=user_id))
     else:
         tickers = _normalize_ticker_list(list_cn_a_share_tickers(limit=limit or None))
 
@@ -382,17 +386,21 @@ def run_auto_trading_cycle(cfg: Dict[str, Any], trading_service) -> Dict[str, An
     max_drawdown = float(trading_cfg.get("max_drawdown", 0.35))
     top_n_strategies = int(trading_cfg.get("top_n_strategies", 3))
     strategy_ids = list(trading_cfg.get("strategy_ids") or [])
-    universe = resolve_auto_trading_universe(cfg)
-    tickers = universe.tickers
 
     if not strategy_ids:
         raise ValueError("No auto-trading strategies configured")
-    if not tickers:
-        raise ValueError(f"No trading universe configured for mode: {universe.mode}")
 
     user_id = _resolve_user_id(trading_service.db, username)
     if user_id is None:
         raise ValueError(f"User not found: {username}")
+
+    if user_id is None or "user_id" not in inspect.signature(resolve_auto_trading_universe).parameters:
+        universe = resolve_auto_trading_universe(cfg)
+    else:
+        universe = resolve_auto_trading_universe(cfg, user_id=user_id)
+    tickers = universe.tickers
+    if not tickers:
+        raise ValueError(f"No trading universe configured for mode: {universe.mode}")
 
     account = _ensure_account(trading_service.account_mgr, user_id, account_name, initial_capital)
 

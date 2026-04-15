@@ -120,6 +120,9 @@ class FeatureStore:
         # 新增特征工程（阶段二）
         df = self._add_comprehensive_features(df, price_series)
 
+        if df.columns.duplicated().any():
+            df = df.loc[:, ~df.columns.duplicated(keep="last")]
+
         return df
 
     def save_features(self, ticker: str, features_df: pd.DataFrame) -> bool:
@@ -251,6 +254,21 @@ class FeatureStore:
         """获取当前特征版本"""
         return self.meta.get("version", CURRENT_FEATURE_VERSION)
 
+    def _merge_feature_frame(
+        self,
+        base_df: pd.DataFrame,
+        feature_df: Optional[pd.DataFrame],
+    ) -> pd.DataFrame:
+        if feature_df is None or feature_df.empty:
+            return base_df
+
+        out = base_df.copy()
+        incoming = feature_df.copy()
+        duplicate_columns = [col for col in incoming.columns if col in out.columns]
+        if duplicate_columns:
+            out = out.drop(columns=duplicate_columns)
+        return pd.concat([out, incoming], axis=1)
+
     def _add_comprehensive_features(
         self, df: pd.DataFrame, price_series: pd.Series
     ) -> pd.DataFrame:
@@ -275,23 +293,23 @@ class FeatureStore:
         """
         # 波动率特征
         volatility_df = VolatilityFeatures.compute_all(price_series)
-        df = pd.concat([df, volatility_df], axis=1)
+        df = self._merge_feature_frame(df, volatility_df)
 
         # 趋势特征
         trend_df = TrendFeatures.compute_all(price_series)
-        df = pd.concat([df, trend_df], axis=1)
+        df = self._merge_feature_frame(df, trend_df)
 
         # 动量特征
         momentum_df = MomentumFeatures.compute_all(price_series)
-        df = pd.concat([df, momentum_df], axis=1)
+        df = self._merge_feature_frame(df, momentum_df)
 
         # 均值回归特征
         mean_reversion_df = MeanReversionFeatures.compute_all(price_series)
-        df = pd.concat([df, mean_reversion_df], axis=1)
+        df = self._merge_feature_frame(df, mean_reversion_df)
 
         # 价格效率特征
         efficiency_df = EfficiencyFeatures.compute_all(price_series)
-        df = pd.concat([df, efficiency_df], axis=1)
+        df = self._merge_feature_frame(df, efficiency_df)
 
         return df
 
@@ -306,4 +324,3 @@ def get_feature_store() -> FeatureStore:
     if _feature_store_instance is None:
         _feature_store_instance = FeatureStore()
     return _feature_store_instance
-

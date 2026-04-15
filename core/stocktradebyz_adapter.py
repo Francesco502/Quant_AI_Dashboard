@@ -330,6 +330,7 @@ def run_selectors_for_market(
     selector_params: Optional[Dict[str, Dict[str, Any]]] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     market: str = "CN",
+    universe_limit: Optional[int] = None,
 ) -> pd.DataFrame:
     _ensure_available()
     trade_ts = pd.to_datetime(trade_date)
@@ -421,12 +422,23 @@ def run_selectors_for_market(
         _report(0.0, f"No tickers found for market={market}")
         return _empty_result_df()
 
+    total_universe_size = len(tickers)
+    if universe_limit is not None:
+        try:
+            safe_limit = max(1, int(universe_limit))
+            tickers = tickers[:safe_limit]
+        except Exception:
+            pass
+
     scan_lookback_days = int(os.getenv("MARKET_SCAN_LOOKBACK_DAYS", "730"))
     scan_lookback_days = max(180, min(scan_lookback_days, 3650))
 
     _report(
         0.05,
-        f"Loading OHLCV for {len(tickers)} symbols from market={market}, lookback_days={scan_lookback_days}...",
+        (
+            f"Loading OHLCV for {len(tickers)} symbols from market={market}, "
+            f"universe={len(tickers)}/{total_universe_size}, lookback_days={scan_lookback_days}..."
+        ),
     )
     ohlcv_map = load_ohlcv_data(tickers=tickers, days=scan_lookback_days)
     if not ohlcv_map:

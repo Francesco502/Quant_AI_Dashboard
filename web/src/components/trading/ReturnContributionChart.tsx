@@ -55,14 +55,14 @@ export function ReturnContributionChart({ holdings, contributions }: ReturnContr
 
       <div className="mb-4 flex gap-4">
         <div className="flex items-center gap-2">
-          <TrendingUp className="h-4 w-4 text-[#B6453C]" />
+          <TrendingUp className="text-tone-cinnabar h-4 w-4" />
           <span className="text-xs text-muted-foreground">正贡献</span>
-          <span className="text-sm font-medium text-[#B6453C]">+{totalPositive.toFixed(2)}%</span>
+          <span className="text-tone-cinnabar text-sm font-medium">+{totalPositive.toFixed(2)}%</span>
         </div>
         <div className="flex items-center gap-2">
-          <TrendingDown className="h-4 w-4 text-[#4D7358]" />
+          <TrendingDown className="text-tone-celadon h-4 w-4" />
           <span className="text-xs text-muted-foreground">负贡献</span>
-          <span className="text-sm font-medium text-[#4D7358]">{totalNegative.toFixed(2)}%</span>
+          <span className="text-tone-celadon text-sm font-medium">{totalNegative.toFixed(2)}%</span>
         </div>
       </div>
 
@@ -91,11 +91,11 @@ export function ReturnContributionChart({ holdings, contributions }: ReturnContr
 
       <div className="mt-2 flex items-center justify-center gap-4 text-xs">
         <div className="flex items-center gap-1">
-          <div className="h-3 w-3 rounded bg-[#B6453C]" />
+          <div className="h-3 w-3 rounded bg-[rgb(var(--rgb-cinnabar))]" />
           <span>正贡献</span>
         </div>
         <div className="flex items-center gap-1">
-          <div className="h-3 w-3 rounded bg-[#4D7358]" />
+          <div className="h-3 w-3 rounded bg-[rgb(var(--rgb-celadon))]" />
           <span>负贡献</span>
         </div>
       </div>

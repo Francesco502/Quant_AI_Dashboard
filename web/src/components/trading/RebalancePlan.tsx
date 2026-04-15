@@ -31,11 +31,10 @@ import {
   Scale,
   PieChart,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
 } from "lucide-react"
 import { toast } from "sonner"
 
-// 调仓计划接口
 interface RebalanceItem {
   ticker: string
   name?: string
@@ -67,7 +66,6 @@ interface RebalancePlanProps {
   onExecute?: (orders: Array<{ ticker: string; action: "BUY" | "SELL"; shares: number }>) => void
 }
 
-// 分配策略类型
 type AllocationStrategy = "equal" | "market_cap" | "custom" | "risk_parity"
 
 export function RebalancePlan({
@@ -76,7 +74,7 @@ export function RebalancePlan({
   cash,
   currentPositions,
   selectedStocks = [],
-  onExecute
+  onExecute,
 }: RebalancePlanProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [strategy, setStrategy] = useState<AllocationStrategy>("equal")
@@ -84,70 +82,58 @@ export function RebalancePlan({
   const [rebalanceItems, setRebalanceItems] = useState<RebalanceItem[]>([])
   const [showPreview, setShowPreview] = useState(false)
 
-  // 合并当前持仓和选股结果
   const allStocks = useMemo(() => {
     const stockMap = new Map<string, { ticker: string; name?: string; price: number }>()
 
-    // 添加当前持仓
-    currentPositions.forEach(pos => {
-      stockMap.set(pos.ticker, {
-        ticker: pos.ticker,
-        price: pos.current_price || 0
+    currentPositions.forEach((position) => {
+      stockMap.set(position.ticker, {
+        ticker: position.ticker,
+        price: position.current_price || 0,
       })
     })
 
-    // 添加选股结果
-    selectedStocks.forEach(stock => {
+    selectedStocks.forEach((stock) => {
       stockMap.set(stock.ticker, stock)
     })
 
     return Array.from(stockMap.values())
   }, [currentPositions, selectedStocks])
 
-  // 计算目标权重
   const calculateTargetWeights = (): Record<string, number> => {
     const stockCount = allStocks.length
     if (stockCount === 0) return {}
 
     switch (strategy) {
-      case "equal":
-        // 等权重分配
+      case "equal": {
         const equalWeight = 1 / stockCount
         return allStocks.reduce((weights, stock) => {
           weights[stock.ticker] = equalWeight
           return weights
         }, {} as Record<string, number>)
-
+      }
       case "custom":
-        // 自定义权重
         return customWeights
-
       case "risk_parity":
-        // 风险平价（简化版：根据价格波动性反向分配）
-        // 实际应用中应该计算历史波动率
         return allStocks.reduce((weights, stock) => {
           weights[stock.ticker] = 1 / stockCount
           return weights
         }, {} as Record<string, number>)
-
       default:
         return {}
     }
   }
 
-  // 生成调仓计划
   const generatePlan = () => {
     const targetWeights = calculateTargetWeights()
-    const totalValue = totalAssets
-    const investableCash = Math.min(cash, totalValue * 0.95) // 保留5%现金
+    const investableCash = Math.min(cash, totalAssets * 0.95)
 
-    const items: RebalanceItem[] = allStocks.map(stock => {
-      const currentPos = currentPositions.find(p => p.ticker === stock.ticker)
+    const items: RebalanceItem[] = allStocks.map((stock) => {
+      const currentPos = currentPositions.find((position) => position.ticker === stock.ticker)
       const currentShares = currentPos?.shares || 0
       const currentPrice = stock.price || currentPos?.current_price || 0
       const currentValue = currentShares * currentPrice
       const targetWeight = targetWeights[stock.ticker] || 0
-      const targetValue = totalValue * targetWeight
+      const targetValue = totalAssets * targetWeight
       const valueDiff = targetValue - currentValue
       const sharesDiff = currentPrice > 0 ? Math.round(valueDiff / currentPrice) : 0
       const suggestedShares = currentShares + sharesDiff
@@ -166,19 +152,17 @@ export function RebalancePlan({
         targetValue,
         suggestedShares,
         action,
-        sharesDiff
+        sharesDiff,
       }
     })
 
-    // 根据可用现金调整买入计划
     const neededCash = items
-      .filter(i => i.action === "BUY")
-      .reduce((sum, i) => sum + i.sharesDiff * i.currentPrice, 0)
+      .filter((item) => item.action === "BUY")
+      .reduce((sum, item) => sum + item.sharesDiff * item.currentPrice, 0)
 
     if (neededCash > investableCash) {
-      // 按比例缩减买入
       const ratio = investableCash / neededCash
-      items.forEach(item => {
+      items.forEach((item) => {
         if (item.action === "BUY") {
           item.sharesDiff = Math.floor(item.sharesDiff * ratio)
           item.suggestedShares = item.currentShares + item.sharesDiff
@@ -192,155 +176,141 @@ export function RebalancePlan({
     setShowPreview(true)
   }
 
-  // 计算调仓后的预估状态
   const previewSummary = useMemo(() => {
     if (rebalanceItems.length === 0) return null
 
     const totalBuyValue = rebalanceItems
-      .filter(i => i.action === "BUY")
-      .reduce((sum, i) => sum + i.sharesDiff * i.currentPrice, 0)
+      .filter((item) => item.action === "BUY")
+      .reduce((sum, item) => sum + item.sharesDiff * item.currentPrice, 0)
 
     const totalSellValue = rebalanceItems
-      .filter(i => i.action === "SELL")
-      .reduce((sum, i) => sum + Math.abs(i.sharesDiff) * i.currentPrice, 0)
-
-    const buyCount = rebalanceItems.filter(i => i.action === "BUY").length
-    const sellCount = rebalanceItems.filter(i => i.action === "SELL").length
-    const holdCount = rebalanceItems.filter(i => i.action === "HOLD").length
+      .filter((item) => item.action === "SELL")
+      .reduce((sum, item) => sum + Math.abs(item.sharesDiff) * item.currentPrice, 0)
 
     return {
       totalBuyValue,
       totalSellValue,
       netCashFlow: totalSellValue - totalBuyValue,
-      buyCount,
-      sellCount,
-      holdCount
+      buyCount: rebalanceItems.filter((item) => item.action === "BUY").length,
+      sellCount: rebalanceItems.filter((item) => item.action === "SELL").length,
+      holdCount: rebalanceItems.filter((item) => item.action === "HOLD").length,
     }
   }, [rebalanceItems])
 
-  // 执行调仓
   const handleExecute = () => {
     const orders = rebalanceItems
-      .filter((item): item is RebalanceItem & { action: "BUY" | "SELL" } => item.action === "BUY" || item.action === "SELL")
-      .map(item => ({
+      .filter(
+        (item): item is RebalanceItem & { action: "BUY" | "SELL" } =>
+          item.action === "BUY" || item.action === "SELL",
+      )
+      .map((item) => ({
         ticker: item.ticker,
         action: item.action,
-        shares: Math.abs(item.sharesDiff)
+        shares: Math.abs(item.sharesDiff),
       }))
 
     if (orders.length === 0) {
-      toast.error("没有需要执行的交易")
+      toast.error("没有需要执行的交易。")
       return
     }
 
     onExecute?.(orders)
-    toast.success(`已生成 ${orders.length} 笔交易订单`)
+    toast.success(`已生成 ${orders.length} 笔交易委托。`)
     setIsOpen(false)
     setShowPreview(false)
   }
 
-  // 更新自定义权重
   const handleWeightChange = (ticker: string, weight: number) => {
-    setCustomWeights(prev => ({
+    setCustomWeights((prev) => ({
       ...prev,
-      [ticker]: weight / 100
+      [ticker]: weight / 100,
     }))
   }
 
-  // 权重总和检查
   const totalCustomWeight = useMemo(() => {
-    return Object.values(customWeights).reduce((sum, w) => sum + w, 0)
+    return Object.values(customWeights).reduce((sum, weight) => sum + weight, 0)
   }, [customWeights])
+
+  const summaryTone = previewSummary?.netCashFlow != null && previewSummary.netCashFlow < 0 ? "text-tone-positive" : "text-tone-negative"
 
   return (
     <>
-      <Button
-        variant="outline"
-        className="gap-2"
-        onClick={() => setIsOpen(true)}
-      >
-        <Scale className="w-4 h-4" />
+      <Button variant="outline" className="gap-2" onClick={() => setIsOpen(true)}>
+        <Scale className="h-4 w-4" />
         生成调仓计划
       </Button>
 
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Calculator className="w-5 h-5" />
+              <Calculator className="h-5 w-5" />
               智能调仓计划
             </DialogTitle>
             <DialogDescription>
-              根据目标权重自动计算买卖数量，优化投资组合配置
+              根据目标权重自动计算买卖数量，帮助你更平稳地完成组合调整。
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6 py-4">
-            {/* 账户概览 */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-muted/50 rounded-lg p-3">
-                <div className="text-xs text-muted-foreground">总资产</div>
-                <div className="text-lg font-bold">¥{totalAssets.toLocaleString()}</div>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+              <div className="data-panel-muted rounded-lg p-3">
+                <div className="data-metric-label">总资产</div>
+                <div className="mt-2 text-lg font-bold">¥{totalAssets.toLocaleString()}</div>
               </div>
-              <div className="bg-muted/50 rounded-lg p-3">
-                <div className="text-xs text-muted-foreground">可用现金</div>
-                <div className="text-lg font-bold text-market-up">
-                  ¥{cash.toLocaleString()}
-                </div>
+              <div className="surface-tone-negative rounded-lg border p-3">
+                <div className="data-metric-label">可用现金</div>
+                <div className="mt-2 text-lg font-bold">¥{cash.toLocaleString()}</div>
               </div>
-              <div className="bg-muted/50 rounded-lg p-3">
-                <div className="text-xs text-muted-foreground">涉及标的</div>
-                <div className="text-lg font-bold">{allStocks.length} 只</div>
+              <div className="data-panel-muted rounded-lg p-3">
+                <div className="data-metric-label">涉及标的</div>
+                <div className="mt-2 text-lg font-bold">{allStocks.length} 只</div>
               </div>
-              <div className="bg-muted/50 rounded-lg p-3">
-                <div className="text-xs text-muted-foreground">账户ID</div>
-                <div className="text-lg font-bold">{accountId}</div>
+              <div className="data-panel-muted rounded-lg p-3">
+                <div className="data-metric-label">账户 ID</div>
+                <div className="mt-2 text-lg font-bold">{accountId}</div>
               </div>
             </div>
 
-            {/* 分配策略选择 */}
             <div className="space-y-3">
-              <Label>目标权重分配策略</Label>
+              <Label>目标权重分配方式</Label>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => setStrategy("equal")}
-                  className={`p-3 rounded-lg border text-left transition-colors ${
+                  className={`rounded-lg border p-3 text-left transition-colors ${
                     strategy === "equal"
-                      ? "border-primary bg-primary/5"
+                      ? "border-[rgba(var(--rgb-ochre),0.18)] bg-[rgba(var(--rgb-ochre),0.08)]"
                       : "border-border hover:bg-muted/50"
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <PieChart className="w-4 h-4" />
-                    <span className="font-medium">等权重分配</span>
+                    <PieChart className="h-4 w-4" />
+                    <span className="font-medium">等权分配</span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    所有标的均分资金，每只 {(100 / allStocks.length).toFixed(1)}%
+                  <p className="mt-1 text-xs text-foreground/68">
+                    所有标的均分资金，每只约 {(allStocks.length > 0 ? 100 / allStocks.length : 0).toFixed(1)}%
                   </p>
                 </button>
 
                 <button
                   onClick={() => setStrategy("custom")}
-                  className={`p-3 rounded-lg border text-left transition-colors ${
+                  className={`rounded-lg border p-3 text-left transition-colors ${
                     strategy === "custom"
-                      ? "border-primary bg-primary/5"
+                      ? "border-[rgba(var(--rgb-ochre),0.18)] bg-[rgba(var(--rgb-ochre),0.08)]"
                       : "border-border hover:bg-muted/50"
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <Target className="w-4 h-4" />
+                    <Target className="h-4 w-4" />
                     <span className="font-medium">自定义权重</span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    手动设置每只标的的目标权重
-                  </p>
+                  <p className="mt-1 text-xs text-foreground/68">手动设置每只标的的目标权重。</p>
                 </button>
               </div>
             </div>
 
-            {/* 自定义权重设置 */}
             <AnimatePresence>
-              {strategy === "custom" && (
+              {strategy === "custom" ? (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
@@ -349,17 +319,17 @@ export function RebalancePlan({
                 >
                   <div className="flex items-center justify-between">
                     <Label>自定义目标权重</Label>
-                    <Badge variant={Math.abs(totalCustomWeight - 1) < 0.01 ? "default" : "destructive"}>
-                      总计: {(totalCustomWeight * 100).toFixed(1)}%
+                    <Badge variant={Math.abs(totalCustomWeight - 1) < 0.01 ? "success" : "destructive"}>
+                      合计：{(totalCustomWeight * 100).toFixed(1)}%
                     </Badge>
                   </div>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {allStocks.map(stock => (
-                      <div key={stock.ticker} className="flex items-center gap-3 p-2 bg-muted/30 rounded-lg">
-                        <span className="font-mono text-sm w-20">{stock.ticker}</span>
+                  <div className="max-h-60 space-y-2 overflow-y-auto">
+                    {allStocks.map((stock) => (
+                      <div key={stock.ticker} className="flex items-center gap-3 rounded-lg bg-muted/30 p-2">
+                        <span className="w-20 font-mono text-sm">{stock.ticker}</span>
                         <Slider
                           value={[(customWeights[stock.ticker] || 0) * 100]}
-                          onValueChange={([v]) => handleWeightChange(stock.ticker, v)}
+                          onValueChange={([value]) => handleWeightChange(stock.ticker, value)}
                           max={100}
                           step={1}
                           className="flex-1"
@@ -367,78 +337,64 @@ export function RebalancePlan({
                         <Input
                           type="number"
                           value={((customWeights[stock.ticker] || 0) * 100).toFixed(0)}
-                          onChange={(e) => handleWeightChange(stock.ticker, parseFloat(e.target.value) || 0)}
-                          className="w-16 h-8 text-sm"
+                          onChange={(event) => handleWeightChange(stock.ticker, parseFloat(event.target.value) || 0)}
+                          className="h-8 w-16 text-sm"
                         />
-                        <span className="text-sm text-muted-foreground">%</span>
+                        <span className="text-sm text-foreground/64">%</span>
                       </div>
                     ))}
                   </div>
-                  {Math.abs(totalCustomWeight - 1) > 0.01 && (
-                    <p className="text-xs text-red-500 flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" />
-                      权重总和必须等于 100%
+                  {Math.abs(totalCustomWeight - 1) > 0.01 ? (
+                    <p className="flex items-center gap-1 text-xs text-tone-positive">
+                      <AlertCircle className="h-3 w-3" />
+                      权重总和必须等于 100%。
                     </p>
-                  )}
+                  ) : null}
                 </motion.div>
-              )}
+              ) : null}
             </AnimatePresence>
 
-            {/* 生成按钮 */}
             <Button
               className="w-full"
               onClick={generatePlan}
               disabled={allStocks.length === 0 || (strategy === "custom" && Math.abs(totalCustomWeight - 1) > 0.01)}
             >
-              <Calculator className="w-4 h-4 mr-2" />
+              <Calculator className="mr-2 h-4 w-4" />
               生成调仓计划
             </Button>
 
-            {/* 调仓预览 */}
             <AnimatePresence>
-              {showPreview && rebalanceItems.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="space-y-4"
-                >
+              {showPreview && rebalanceItems.length > 0 ? (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-market-up" />
+                    <CheckCircle2 className="h-5 w-5 text-tone-negative" />
                     <h4 className="font-semibold">调仓方案预览</h4>
                   </div>
 
-                  {/* 汇总信息 */}
-                  {previewSummary && (
+                  {previewSummary ? (
                     <div className="grid grid-cols-4 gap-3">
-                      <div className="rounded-lg border border-market-up-soft bg-market-up-soft p-3">
-                        <div className="text-xs text-market-up">需买入</div>
-                        <div className="font-bold text-market-up">
-                          ¥{previewSummary.totalBuyValue.toLocaleString()}
-                        </div>
-                        <div className="text-xs text-market-up">{previewSummary.buyCount} 只</div>
+                      <div className="surface-tone-ochre rounded-lg border p-3">
+                        <div className="data-metric-label">需买入</div>
+                        <div className="mt-2 font-bold">¥{previewSummary.totalBuyValue.toLocaleString()}</div>
+                        <div className="text-[0.84rem] text-foreground/70">{previewSummary.buyCount} 只</div>
                       </div>
-                      <div className="rounded-lg border border-market-down-soft bg-market-down-soft p-3">
-                        <div className="text-xs text-market-down">需卖出</div>
-                        <div className="font-bold text-market-down">
-                          ¥{previewSummary.totalSellValue.toLocaleString()}
-                        </div>
-                        <div className="text-xs text-market-down">{previewSummary.sellCount} 只</div>
+                      <div className="surface-tone-celadon rounded-lg border p-3">
+                        <div className="data-metric-label">需卖出</div>
+                        <div className="mt-2 font-bold">¥{previewSummary.totalSellValue.toLocaleString()}</div>
+                        <div className="text-[0.84rem] text-foreground/70">{previewSummary.sellCount} 只</div>
                       </div>
-                      <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 border border-blue-200 dark:border-blue-800">
-                        <div className="text-xs text-blue-600">净现金流</div>
-                        <div className={`font-bold ${previewSummary.netCashFlow >= 0 ? 'text-market-up' : 'text-market-down'}`}>
-                          ¥{previewSummary.netCashFlow.toLocaleString()}
-                        </div>
+                      <div className="surface-tone-indigo rounded-lg border p-3">
+                        <div className="data-metric-label">净现金流</div>
+                        <div className={`mt-2 font-bold ${summaryTone}`}>¥{previewSummary.netCashFlow.toLocaleString()}</div>
                       </div>
-                      <div className="bg-gray-50 dark:bg-gray-900/20 rounded-lg p-3 border border-gray-200 dark:border-gray-800">
-                        <div className="text-xs text-gray-600">保持不变</div>
-                        <div className="font-bold text-gray-700">{previewSummary.holdCount} 只</div>
+                      <div className="data-panel-muted rounded-lg p-3">
+                        <div className="data-metric-label">保持不变</div>
+                        <div className="mt-2 font-bold">{previewSummary.holdCount} 只</div>
                       </div>
                     </div>
-                  )}
+                  ) : null}
 
-                  {/* 详细调仓表 */}
-                  <div className="border rounded-lg overflow-hidden">
+                  <div className="overflow-hidden rounded-lg border">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -450,45 +406,42 @@ export function RebalancePlan({
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {rebalanceItems.map(item => (
+                        {rebalanceItems.map((item) => (
                           <TableRow key={item.ticker}>
                             <TableCell>
                               <div className="font-mono font-medium">{item.ticker}</div>
-                              {item.name && <div className="text-xs text-muted-foreground">{item.name}</div>}
+                              {item.name ? <div className="text-[0.84rem] text-foreground/64">{item.name}</div> : null}
                             </TableCell>
                             <TableCell className="text-right">
                               <div>{item.currentShares} 股</div>
-                              <div className="text-xs text-muted-foreground">
-                                ¥{item.currentValue.toLocaleString()}
-                              </div>
+                               <div className="text-[0.84rem] text-foreground/64">¥{item.currentValue.toLocaleString()}</div>
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="font-medium">{(item.targetWeight * 100).toFixed(1)}%</div>
-                              <div className="text-xs text-muted-foreground">
-                                ¥{item.targetValue.toLocaleString()}
-                              </div>
+                               <div className="text-[0.84rem] text-foreground/64">¥{item.targetValue.toLocaleString()}</div>
                             </TableCell>
                             <TableCell className="text-right">
                               {item.action === "BUY" ? (
-                                <Badge className="bg-market-up hover:opacity-90">
-                                  <TrendingUp className="w-3 h-3 mr-1" />
+                                <Badge className="surface-tone-positive border">
+                                  <TrendingUp className="mr-1 h-3 w-3" />
                                   买入
                                 </Badge>
                               ) : item.action === "SELL" ? (
-                                <Badge className="bg-market-down hover:opacity-90">
-                                  <TrendingDown className="w-3 h-3 mr-1" />
+                                <Badge className="surface-tone-negative border">
+                                  <TrendingDown className="mr-1 h-3 w-3" />
                                   卖出
                                 </Badge>
                               ) : (
-                                <Badge variant="secondary">持有</Badge>
+                                <Badge variant="outline">持有</Badge>
                               )}
                             </TableCell>
                             <TableCell className="text-right">
-                              {item.sharesDiff !== 0 && (
-                                <div className={`font-mono ${item.sharesDiff > 0 ? 'text-market-up' : 'text-market-down'}`}>
-                                  {item.sharesDiff > 0 ? '+' : ''}{item.sharesDiff} 股
+                              {item.sharesDiff !== 0 ? (
+                                <div className={`font-mono ${item.sharesDiff > 0 ? "text-tone-positive" : "text-tone-negative"}`}>
+                                  {item.sharesDiff > 0 ? "+" : ""}
+                                  {item.sharesDiff} 股
                                 </div>
-                              )}
+                              ) : null}
                             </TableCell>
                           </TableRow>
                         ))}
@@ -496,7 +449,7 @@ export function RebalancePlan({
                     </Table>
                   </div>
                 </motion.div>
-              )}
+              ) : null}
             </AnimatePresence>
           </div>
 
@@ -504,12 +457,12 @@ export function RebalancePlan({
             <Button variant="outline" onClick={() => setIsOpen(false)}>
               取消
             </Button>
-            {showPreview && (
+            {showPreview ? (
               <Button onClick={handleExecute}>
-                <CheckCircle2 className="w-4 h-4 mr-2" />
+                <CheckCircle2 className="mr-2 h-4 w-4" />
                 确认执行调仓
               </Button>
-            )}
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -721,11 +721,16 @@ def detect_market_state(price_series: pd.Series, window: int = 20) -> str:
     return "range"
 
 
-def _load_ticker_price_series(ticker: str, days: int = 365 * 2) -> pd.Series:
+def _load_ticker_price_series(
+    ticker: str,
+    days: int = 365 * 2,
+    *,
+    refresh_stale: bool = True,
+) -> pd.Series:
     from .data_service import load_price_data
     from .data_store import load_local_price_history
     try:
-        df = load_price_data([ticker], days=days)
+        df = load_price_data([ticker], days=days, refresh_stale=refresh_stale)
         if isinstance(df, pd.DataFrame) and not df.empty and ticker in df.columns:
             return df[ticker].dropna()
     except Exception:
@@ -833,7 +838,6 @@ def advanced_price_forecast(price_df: pd.DataFrame, horizon: int = 5, model_type
 
 
 def quick_predict(ticker: str, horizon: int = 5, model_type: str = "xgboost", use_production_model: bool = True, save_signal: bool = True, lookback_days: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    from .data_store import load_local_price_history
     from .signal_store import get_signal_store
     mt = _normalize_model_type(model_type)
     manager = ModelManager()
@@ -847,8 +851,14 @@ def quick_predict(ticker: str, horizon: int = 5, model_type: str = "xgboost", us
             info = registry.get_model_info(model_id)
             if info and _normalize_model_type(info.get("model_type", "")) == mt:
                 model = manager.load_model_by_id(model_id)
-    series = load_local_price_history(ticker)
-    if series is None or series.empty:
+    try:
+        requested_days = int(max(lookback_days or (365 * 2), 10))
+        series = _load_ticker_price_series(
+            ticker,
+            days=requested_days,
+            refresh_stale=True,
+        )
+    except Exception:
         return None
     if lookback_days is not None:
         series = series.tail(int(max(lookback_days, 10)))

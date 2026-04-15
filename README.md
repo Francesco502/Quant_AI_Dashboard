@@ -2,34 +2,27 @@
 
 Personal quantitative analysis, paper trading, strategy research, and decision-support workspace.
 
-Current release: **v2.1.4**
+Current release line: **v2.2.0**
 
-## What This Repo Contains
+## Repository Layout
 
 - `api/`: FastAPI backend
-- `core/`: trading, data, strategy, and system services
+- `core/`: trading, data, strategy, daemon, and monitoring services
 - `web/`: Next.js frontend
-- `tests/`: unit, integration, and end-to-end coverage
-- `docs/current/`: current operating guides
-- `docs/releases/`: release notes, upgrade guides, and release status history
-- `docs/archive/`: historical plans, legacy guides, and superseded material
+- `tests/`: unit, integration, smoke, and end-to-end validation
+- `docs/current/`: active operating guides
+- `docs/releases/`: versioned release notes and upgrade history
+- `docs/archive/`: historical plans and superseded material
 
-## Current Entry Points
+## Start Here
 
-- Local development startup: [`start.ps1`](./start.ps1)
-- Local development quickstart: [`docs/current/quickstart.md`](./docs/current/quickstart.md)
-- Canonical deployment guide: [`docs/current/deployment.md`](./docs/current/deployment.md)
+- Local quickstart: [`docs/current/quickstart.md`](./docs/current/quickstart.md)
+- Deployment guide: [`docs/current/deployment.md`](./docs/current/deployment.md)
+- Release guide: [`docs/current/release.md`](./docs/current/release.md)
+- Development guide: [`docs/current/development.md`](./docs/current/development.md)
 - Documentation index: [`docs/README.md`](./docs/README.md)
 
 ## Local Development
-
-### PowerShell launcher
-
-```powershell
-.\start.ps1
-```
-
-### Manual startup
 
 Backend:
 
@@ -55,13 +48,14 @@ python -m core.daemon
 
 - Frontend: [http://localhost:8686](http://localhost:8686)
 - API docs: [http://localhost:8685/docs](http://localhost:8685/docs)
-- Health check: [http://localhost:8685/api/health](http://localhost:8685/api/health)
+- Health: [http://localhost:8685/api/health](http://localhost:8685/api/health)
 
 ## Validation
 
-Backend tests:
+Core checks:
 
 ```powershell
+python -m compileall -q api core tests
 python -m pytest tests/unit -q
 python -m pytest tests/integration -q
 python -m pytest tests/test_v3_smoke.py -q
@@ -75,8 +69,26 @@ npm run lint
 npm run build
 ```
 
+Release validation against running frontend/backend services:
+
+```powershell
+python scripts/release_check.py
+```
+
+The generated release report is written to `output/reports/release_check_report.txt`.
+
+## Deployment
+
+Canonical production deployment is Docker Compose:
+
+```powershell
+docker compose up -d --build
+```
+
+See [`docs/current/deployment.md`](./docs/current/deployment.md) for runtime environment, volumes, published ports, and post-deploy checks.
+
 ## Notes
 
-- This repository keeps primary runtime state under `data/`; generated logs, caches, and scratch output are intentionally excluded from source control.
-- Production deployment is standardized on [`docker-compose.yml`](./docker-compose.yml), which builds [`Dockerfile.optimized`](./Dockerfile.optimized).
-- Historical duplicated guides were moved under [`docs/archive/`](./docs/archive/).
+- Runtime state under `data/` is not source material.
+- Generated output such as `output/`, coverage reports, Playwright traces, and temporary scratch files should stay out of source control.
+- Automatic trading remains disabled by default and must be explicitly enabled through runtime configuration.

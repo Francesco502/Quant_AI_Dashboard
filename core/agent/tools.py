@@ -128,11 +128,15 @@ class TradingContextTool(BaseTool):
     def run(self, *, ticker: str, market: str = "cn") -> ToolResult:
         args = {"ticker": ticker, "market": market}
         try:
+            profile = tushare_provider.get_cn_security_profile(ticker) if market == "cn" else {}
+            capital_flow = tushare_provider.get_cn_security_moneyflow(ticker) if market == "cn" else {}
             data = {
                 "ticker": ticker,
                 "market": market,
-                "name": tushare_provider.get_cn_security_name(ticker) or ticker,
+                "name": (profile.get("name") if isinstance(profile, dict) else None) or tushare_provider.get_cn_security_name(ticker) or ticker,
                 "market_context": tushare_provider.get_cn_market_context() if market == "cn" else {},
+                "profile": profile,
+                "capital_flow": capital_flow,
             }
         except Exception as exc:  # noqa: BLE001
             logger.warning("TradingContextTool failed: %s", exc)

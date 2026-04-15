@@ -148,7 +148,7 @@ jobs:
       - name: Start frontend service
         working-directory: web
         run: |
-          nohup npm run dev > ../frontend.log 2>&1 &
+          nohup npm run start > ../frontend.log 2>&1 &
           echo $! > ../frontend.pid
 
       - name: Wait for services
@@ -168,12 +168,8 @@ jobs:
           exit 1
 
       - name: Run external release validation tests
-        env:
-          RUN_EXTERNAL_E2E: "1"
-          API_URL: "http://127.0.0.1:8685/api"
-          FRONTEND_URL: "http://127.0.0.1:8686"
         run: |
-          python -m pytest tests/e2e/test_release_validation.py -o addopts="--strict-markers --tb=short --disable-warnings" -m "e2e_external" -v --timeout=180
+          python scripts/release_check.py
 
       - name: Upload release validation logs
         if: always()
@@ -183,6 +179,7 @@ jobs:
           path: |
             backend.log
             frontend.log
+            output/reports/release_check_report.txt
           retention-days: 7
 
       - name: Stop services

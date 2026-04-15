@@ -18,13 +18,13 @@ const Checkbox = React.forwardRef<
     className={cn(
       "peer h-4 w-4 shrink-0 rounded-[5px]",
       "border border-black/[0.12] dark:border-white/[0.15]",
-      "bg-white/50 dark:bg-white/[0.04]",
+      "bg-[rgba(250,246,239,0.50)] dark:bg-white/[0.04]",
       "shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)]",
       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:ring-offset-1",
       "disabled:cursor-not-allowed disabled:opacity-40",
       "data-[state=checked]:bg-foreground data-[state=checked]:text-background",
       "data-[state=checked]:border-transparent",
-      "transition-all duration-200",
+      "transition-[background-color,border-color,color,box-shadow,transform] duration-200",
       className
     )}
     {...props}

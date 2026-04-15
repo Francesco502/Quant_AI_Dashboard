@@ -44,16 +44,16 @@ const HelpTooltip = ({ content, className }: { content: string, className?: stri
         <TooltipTrigger asChild>
           <span
             className={cn(
-              "inline-flex items-center justify-center w-3.5 h-3.5 rounded-full",
-              "border border-foreground/15 text-foreground/30",
-              "text-[9px] cursor-help",
-              "hover:bg-black/[0.04] dark:hover:bg-white/[0.06]",
-              "hover:text-foreground/50 hover:border-foreground/25",
-              "transition-all duration-150 ml-1",
+              "ml-1 inline-flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full",
+              "border border-foreground/12 bg-[rgba(var(--rgb-xuan),0.82)] text-foreground/32",
+              "hover:bg-black/[0.03] dark:hover:bg-white/[0.06]",
+              "hover:text-foreground/48 hover:border-foreground/20",
+              "transition-[background-color,border-color,color,box-shadow,transform] duration-150",
               className
             )}
           >
-            ?
+            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+            <span className="sr-only">查看说明</span>
           </span>
         </TooltipTrigger>
         <TooltipContent>

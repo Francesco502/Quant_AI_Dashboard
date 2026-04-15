@@ -59,7 +59,7 @@ export function MultiAssetPicker({
         <Button
           variant="outline"
           className={cn(
-            "h-10 w-full justify-between rounded-2xl border-black/[0.07] bg-white/55 px-3 text-left text-sm",
+            "h-10 w-full justify-between rounded-2xl border-border/70 bg-background/85 px-3 text-left text-sm",
             className,
           )}
         >
@@ -68,7 +68,7 @@ export function MultiAssetPicker({
             <span className="truncate text-foreground/80">{previewText}</span>
           </span>
           <span className="ml-3 flex shrink-0 items-center gap-2">
-            <Badge variant="outline" className="rounded-full border-black/[0.07] bg-white/70 px-2 py-0.5 text-[11px]">
+            <Badge variant="outline" className="surface-tone-ochre rounded-full px-2 py-0.5 text-[11px]">
               {selectedAssets.length}
             </Badge>
             <ChevronDown className="h-4 w-4 text-foreground/40" />
@@ -102,7 +102,7 @@ export function MultiAssetPicker({
         <button
           type="button"
           onClick={() => onChange([])}
-          className="w-full rounded-xl px-3 py-2 text-left text-xs text-muted-foreground transition hover:bg-black/[0.03] hover:text-foreground/75"
+          className="w-full rounded-xl px-3 py-2 text-left text-xs text-muted-foreground transition hover:bg-foreground/[0.04] hover:text-foreground/75"
         >
           清空选择
         </button>

@@ -404,7 +404,7 @@ export function StrategyTemplateSelector({
               取消
             </Button>
             <Button onClick={() => void handleSaveTemplate()} disabled={saving || !templateName.trim()}>
-              {saving ? "保存中..." : "保存"}
+              {saving ? "保存中…" : "保存"}
             </Button>
           </DialogFooter>
         </DialogContent>

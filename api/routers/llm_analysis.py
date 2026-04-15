@@ -229,6 +229,15 @@ def _parse_query_heuristically(query: str) -> Dict[str, Any]:
 
     days_match = re.search(r"(\d+)\s*(?:day|days|d|\u5929)", lower)
     days = int(days_match.group(1)) if days_match else 60
+    if not days_match:
+        if any(token in query for token in ["最近", "近期", "近一个月"]):
+            days = 20
+        elif any(token in query for token in ["近三个月", "近3个月", "近一季度"]):
+            days = 60
+        elif any(token in query for token in ["近半年", "近6个月"]):
+            days = 120
+        elif any(token in query for token in ["近一年", "近1年"]):
+            days = 240
 
     if any(token in lower for token in ["price trend", "trend", "price", "chart"]) or any(
         token in query for token in ["\u8d70\u52bf", "\u4ef7\u683c", "\u8d8b\u52bf", "\u66f2\u7ebf"]
@@ -244,6 +253,20 @@ def _parse_query_heuristically(query: str) -> Dict[str, Any]:
         ]
     ):
         intent = "market_review"
+    elif any(
+        token in query
+        for token in [
+            "强不强",
+            "值不值得",
+            "能买吗",
+            "适合定投",
+            "资金流",
+            "估值",
+            "活跃度",
+            "风险",
+        ]
+    ):
+        intent = "decision"
     else:
         intent = "decision"
 
@@ -294,8 +317,10 @@ async def natural_query(req: NaturalQueryRequest) -> Dict[str, Any]:
             {
                 "role": "system",
                 "content": (
-                    "Convert user query into JSON with keys: ticker, market, intent, days. "
-                    "intent must be one of decision, price_trend, market_review."
+                    "Convert the user query into JSON with keys: ticker, market, intent, days. "
+                    "intent must be one of decision, price_trend, market_review. "
+                    "Use decision for requests about strength, valuation, capital flow, whether to buy, risk, or whether the asset is worth attention. "
+                    "Interpret recent/short-term as roughly 20 trading days, quarter as 60, half-year as 120, and year as 240 when the user does not specify days."
                 ),
             },
             {"role": "user", "content": query},

@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { fetchApi } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
+import { formatDateTimeInBeijing } from "@/lib/time"
 
 type UserRow = {
   id: number
@@ -143,7 +144,7 @@ export default function UsersPage() {
       <div className="flex min-h-[calc(100vh-220px)] items-center justify-center">
         <GlassCard className="max-w-md p-8 text-center">
           <AlertCircle className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
-          <h1 className="mb-2 text-xl font-semibold">无权访问</h1>
+          <h1 className="section-title mb-2">无权访问</h1>
           <p className="text-sm text-muted-foreground">只有管理员可以查看和管理系统用户。</p>
         </GlassCard>
       </div>
@@ -154,8 +155,8 @@ export default function UsersPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground/90">用户管理</h1>
-          <p className="text-sm text-muted-foreground">查看用户、调整角色并清理无效账号。</p>
+          <h1 className="page-title">用户管理</h1>
+          <p className="page-subtitle">查看用户、调整角色并清理无效账号。</p>
         </div>
         <Button onClick={() => void loadUsers()} variant="outline" disabled={loading}>
           <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
@@ -197,7 +198,7 @@ export default function UsersPage() {
               {loading ? (
                 <TableRow>
                   <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
-                    正在加载用户列表...
+                    正在加载用户列表…
                   </TableCell>
                 </TableRow>
               ) : sortedUsers.length === 0 ? (
@@ -217,7 +218,7 @@ export default function UsersPage() {
                       </span>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {user.assigned_at ? new Date(user.assigned_at).toLocaleString("zh-CN") : "-"}
+                      {user.assigned_at ? formatDateTimeInBeijing(user.assigned_at, {}, user.assigned_at) : "-"}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{user.assigned_by || "系统"}</TableCell>
                     <TableCell className="text-right">

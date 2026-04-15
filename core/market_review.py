@@ -14,8 +14,9 @@
 
 from __future__ import annotations
 
+import io
 import os
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
@@ -440,7 +441,121 @@ def _cn_overview_and_sectors() -> Dict[str, Any]:
     except Exception as e:
         logger.warning("获取板块/涨跌概况失败: %s", e)
 
+    breadth_overview = _cn_breadth_overview_from_spot()
+    for key, value in breadth_overview.items():
+        if value is not None:
+            overview[key] = value
+
     return {"overview": overview, "sectors": sectors}
+
+
+def _call_akshare_quietly(func: Any) -> Any:
+    with _bypass_proxy(), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        return func()
+
+
+def _calc_limit_band_pct(code: str, name: str) -> float:
+    digits = "".join(ch for ch in str(code or "") if ch.isdigit())
+    upper_name = str(name or "").upper()
+    if upper_name.startswith(("ST", "*ST", "S*ST", "SST")):
+        return 5.0
+    if digits.startswith(("300", "301", "688", "689")):
+        return 20.0
+    if digits.startswith(("4", "8")):
+        return 30.0
+    return 10.0
+
+
+def _cn_breadth_overview_from_df(df: Any) -> Dict[str, Any]:
+    overview: Dict[str, Any] = {
+        "up": None,
+        "down": None,
+        "limit_up": None,
+        "limit_down": None,
+        "amplitude": None,
+        "turn_rate": None,
+    }
+    if not PD_AVAILABLE or df is None or getattr(df, "empty", True):
+        return overview
+
+    pct_col = "涨跌幅" if "涨跌幅" in df.columns else None
+    code_col = "代码" if "代码" in df.columns else None
+    name_col = "名称" if "名称" in df.columns else None
+    amplitude_col = "振幅" if "振幅" in df.columns else None
+    turnover_col = "换手率" if "换手率" in df.columns else None
+
+    pct_series = pd.to_numeric(df[pct_col], errors="coerce") if pct_col else pd.Series(dtype=float)
+    if not pct_series.empty:
+        overview["up"] = int((pct_series > 0).sum())
+        overview["down"] = int((pct_series < 0).sum())
+
+    if amplitude_col:
+        amplitude_series = pd.to_numeric(df[amplitude_col], errors="coerce").dropna()
+        if not amplitude_series.empty:
+            overview["amplitude"] = round(float(amplitude_series.mean()), 2)
+    elif all(col in df.columns for col in ["最高", "最低", "昨收"]):
+        high = pd.to_numeric(df["最高"], errors="coerce")
+        low = pd.to_numeric(df["最低"], errors="coerce")
+        prev_close = pd.to_numeric(df["昨收"], errors="coerce")
+        amplitude_series = ((high - low) / prev_close * 100.0).replace([float("inf"), float("-inf")], pd.NA).dropna()
+        amplitude_series = amplitude_series[amplitude_series >= 0]
+        if not amplitude_series.empty:
+            overview["amplitude"] = round(float(amplitude_series.mean()), 2)
+
+    if turnover_col:
+        turnover_series = pd.to_numeric(df[turnover_col], errors="coerce").dropna()
+        if not turnover_series.empty:
+            overview["turn_rate"] = round(float(turnover_series.mean()), 2)
+
+    if pct_col and code_col and name_col:
+        limit_up = 0
+        limit_down = 0
+        tolerance = 0.35
+        ranked_rows = df[[code_col, name_col, pct_col]].dropna(subset=[pct_col])
+        for _, row in ranked_rows.iterrows():
+            limit_band = _calc_limit_band_pct(str(row[code_col]), str(row[name_col]))
+            pct_change = pd.to_numeric(pd.Series([row[pct_col]]), errors="coerce").iloc[0]
+            if pd.isna(pct_change):
+                continue
+            if float(pct_change) >= limit_band - tolerance:
+                limit_up += 1
+            if float(pct_change) <= -limit_band + tolerance:
+                limit_down += 1
+        overview["limit_up"] = limit_up
+        overview["limit_down"] = limit_down
+
+    return overview
+
+
+def _cn_breadth_overview_from_spot() -> Dict[str, Any]:
+    overview: Dict[str, Any] = {
+        "up": None,
+        "down": None,
+        "limit_up": None,
+        "limit_down": None,
+        "amplitude": None,
+        "turn_rate": None,
+    }
+    if not AK_AVAILABLE:
+        return overview
+
+    spot_functions = [
+        ("stock_zh_a_spot", getattr(ak, "stock_zh_a_spot", None)),
+        ("stock_zh_a_spot_em", getattr(ak, "stock_zh_a_spot_em", None)),
+    ]
+    for func_name, func in spot_functions:
+        if func is None:
+            continue
+        for attempt in range(2):
+            try:
+                df = _call_akshare_quietly(func)
+                parsed = _cn_breadth_overview_from_df(df)
+                if any(parsed.get(key) is not None for key in ("up", "down", "amplitude", "turn_rate")):
+                    return parsed
+            except Exception as exc:
+                logger.debug("Broad market spot fetch failed via %s (attempt %s): %s", func_name, attempt + 1, exc)
+
+    return overview
 
 
 def _cn_northbound() -> Dict[str, Any]:

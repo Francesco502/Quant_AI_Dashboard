@@ -52,8 +52,8 @@ export default function MarketReviewPage() {
           <Badge variant="outline" className="w-fit rounded-full px-3 py-1 text-xs">
             每日复盘
           </Badge>
-          <h1 className="text-3xl font-semibold tracking-[-0.03em] text-foreground/90">大盘复盘</h1>
-          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+          <h1 className="page-title">大盘复盘</h1>
+          <p className="page-subtitle">
             展示主要指数、行业强弱和资金流向。修复后，行业涨跌榜会按真实涨跌幅排序；市场广度只在拿到可靠聚合值时才展示，
             避免把错误口径误当成当日市场事实。
           </p>

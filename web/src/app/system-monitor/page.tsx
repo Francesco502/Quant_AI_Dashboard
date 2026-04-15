@@ -1,24 +1,53 @@
-﻿"use client"
+"use client"
 
-import { useState, useEffect, type ComponentType } from "react"
+import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
-import { SystemMetricsPanel } from "@/components/monitor/SystemMetricsPanel"
+import { ChevronDown, LayoutDashboard, RefreshCw, Settings } from "lucide-react"
+
 import { HealthStatus } from "@/components/monitor/HealthStatus"
 import { AlertHistory } from "@/components/monitor/AlertHistory"
+import { SystemMetricsPanel } from "@/components/monitor/SystemMetricsPanel"
+import { NoteBlock } from "@/components/data/note-block"
 import { GlassCard } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
-import { SONG_COLORS } from "@/lib/chart-theme"
-import { cn } from "@/lib/utils"
-import {
-  LayoutDashboard,
-  Activity,
-  Bell,
-  Settings,
-  RefreshCw,
-  Clock,
-  Database,
-} from "lucide-react"
+
+function StatTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="data-panel-muted rounded-[22px] px-4 py-3">
+      <div className="data-metric-label">{label}</div>
+      <div className="mt-2 text-[1.18rem] font-semibold tracking-tight text-foreground/90">{value}</div>
+    </div>
+  )
+}
+
+function SecondarySection({
+  title,
+  description,
+  children,
+  defaultOpen = false,
+}: {
+  title: string
+  description: string
+  children: React.ReactNode
+  defaultOpen?: boolean
+}) {
+  return (
+    <details
+      className="group overflow-hidden rounded-[28px] border border-black/[0.05] bg-[rgba(255,251,245,0.7)]"
+      open={defaultOpen}
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
+        <div className="space-y-1">
+          <div className="section-title">{title}</div>
+          <p className="text-[0.88rem] leading-6 text-foreground/64">{description}</p>
+        </div>
+        <ChevronDown className="h-4 w-4 shrink-0 text-foreground/50 transition-transform duration-200 group-open:rotate-180" />
+      </summary>
+      <div className="border-t border-black/[0.05] px-5 py-5">{children}</div>
+    </details>
+  )
+}
 
 export default function SystemMonitorPage() {
   const [uptime, setUptime] = useState(0)
@@ -70,122 +99,81 @@ export default function SystemMonitorPage() {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
-      className="space-y-6 max-w-7xl mx-auto pb-8"
+      className="mx-auto max-w-7xl space-y-6 pb-10"
     >
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground/90 flex items-center gap-2">
-            <LayoutDashboard className="w-6 h-6" />
-            系统监控
-          </h1>
-          <p className="text-[13px] text-foreground/40">查看运行健康、指标状态与告警记录，便于日常教学与维护。</p>
+      <GlassCard className="space-y-4 p-5 md:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-3xl space-y-2">
+            <h1 className="page-title flex items-center gap-2">
+              <LayoutDashboard className="h-6 w-6" />
+              系统监控
+            </h1>
+            <p className="page-subtitle">
+              把运行健康、资源指标与告警记录收在同一处，先判断系统是否平稳，再决定是否继续研究与执行。
+            </p>
+          </div>
+
+          <Button variant="outline" onClick={() => void loadStatus()}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            刷新状态
+          </Button>
         </div>
 
-        <div className="flex items-center gap-3">
-          <StatusBadge label="运行时长" value={formatUptime(uptime)} icon={Clock} color="ink" />
-          <StatusBadge label="指标数" value={metricsCount.toString()} icon={Activity} color="plum" />
-          <StatusBadge label="检查项" value={healthChecksCount.toString()} icon={Database} color="celadon" />
-          <button
-            onClick={loadStatus}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-foreground/70 hover:text-foreground transition-colors bg-foreground/5 hover:bg-foreground/10 rounded-lg"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            刷新
-          </button>
+        <div className="grid gap-3 md:grid-cols-3">
+          <StatTile label="运行时长" value={formatUptime(uptime)} />
+          <StatTile label="指标数" value={metricsCount.toString()} />
+          <StatTile label="检查项" value={healthChecksCount.toString()} />
         </div>
+      </GlassCard>
+
+      <div className="grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">
+        <HealthStatus showDetailed={false} autoRefresh refreshInterval={30000} />
+
+        <section className="space-y-3">
+          <div className="space-y-1 px-1">
+            <h2 className="section-title">资源结论</h2>
+            <p className="text-[0.9rem] leading-7 text-foreground/66">
+              先看 CPU、内存与磁盘是否平稳，详细资源与业务延迟放到第二层，避免首屏变成监控数据墙。
+            </p>
+          </div>
+          <SystemMetricsPanel autoRefresh refreshInterval={15000} showHeader={false} showLatency={false} />
+        </section>
       </div>
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium text-foreground/90 flex items-center gap-2">
-            <Activity className="w-4 h-4 text-foreground/40" />
-            系统指标
-          </h2>
-          <Badge variant="outline" className="text-[11px]">
-            实时
-          </Badge>
-        </div>
-
-        <SystemMetricsPanel detailed autoRefresh refreshInterval={15000} />
-      </section>
-
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium text-foreground/90 flex items-center gap-2">
-            <Database className="w-4 h-4 text-foreground/40" />
-            健康检查
-          </h2>
-          <Badge variant="outline" className="text-[11px]">
-            {new Date().toLocaleTimeString("zh-CN", {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-            })}
-          </Badge>
-        </div>
-
-        <HealthStatus showDetailed autoRefresh refreshInterval={30000} />
-      </section>
-
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium text-foreground/90 flex items-center gap-2">
-            <Bell className="w-4 h-4 text-foreground/40" />
-            告警历史
-          </h2>
-          <Badge variant="outline" className="text-[11px]">
-            最近
-          </Badge>
-        </div>
-
-        <AlertHistory showFilters showStats autoRefresh refreshInterval={30000} />
-      </section>
-
-      <div className="pt-4">
-        <GlassCard className="p-4 border-[#6F7C8E]/12 bg-[rgba(111,124,142,0.06)]">
-          <div className="flex items-start gap-3">
-            <div className="mt-1">
-              <Settings className="w-4 h-4" style={{ color: SONG_COLORS.indigo }} />
-            </div>
-            <div className="space-y-1 flex-1">
-              <p className="text-sm font-medium text-foreground/80">告警通道配置</p>
-              <p className="text-xs text-foreground/60">
-                可通过环境变量配置邮件、Telegram 与飞书告警通道：
-                <code className="mx-1 bg-foreground/5 px-1 py-0.5 rounded text-[10px]">ALERT_EMAIL_SMTP_SERVER</code>
-                <code className="mx-1 bg-foreground/5 px-1 py-0.5 rounded text-[10px]">ALERT_TELEGRAM_BOT_TOKEN</code>
-                <code className="mx-1 bg-foreground/5 px-1 py-0.5 rounded text-[10px]">ALERT_FEISHU_WEBHOOK_URL</code>
-              </p>
-            </div>
+      <div className="space-y-4">
+        <SecondarySection
+          title="查看资源与健康明细"
+          description="需要进一步排查时，再展开完整健康检查、资源细项与业务延迟。"
+        >
+          <div className="grid gap-6 xl:grid-cols-2">
+            <HealthStatus showDetailed autoRefresh refreshInterval={30000} />
+            <SystemMetricsPanel detailed autoRefresh refreshInterval={15000} />
           </div>
-        </GlassCard>
+        </SecondarySection>
+
+        <SecondarySection
+          title="查看告警历史与通道说明"
+          description="把告警列表和通道配置一起折叠到底层，需要时再展开。"
+        >
+          <div className="space-y-6">
+            <AlertHistory showFilters showStats autoRefresh refreshInterval={30000} />
+
+            <GlassCard className="surface-tone-indigo p-4.5">
+              <NoteBlock
+                title="告警通道配置"
+                icon={<Settings className="h-4 w-4 text-tone-indigo" />}
+                tone="accent"
+                className="border-0 bg-transparent p-0 shadow-none"
+              >
+                可通过环境变量配置邮件、Telegram 与飞书告警通道：
+                <code className="mx-1 rounded bg-foreground/5 px-1.5 py-0.5 text-[0.76rem]">ALERT_EMAIL_SMTP_SERVER</code>
+                <code className="mx-1 rounded bg-foreground/5 px-1.5 py-0.5 text-[0.76rem]">ALERT_TELEGRAM_BOT_TOKEN</code>
+                <code className="mx-1 rounded bg-foreground/5 px-1.5 py-0.5 text-[0.76rem]">ALERT_FEISHU_WEBHOOK_URL</code>
+              </NoteBlock>
+            </GlassCard>
+          </div>
+        </SecondarySection>
       </div>
     </motion.div>
-  )
-}
-
-interface StatusBadgeProps {
-  label: string
-  value: string
-  icon: ComponentType<{ className?: string }>
-  color: "ink" | "plum" | "celadon" | "ochre" | "cinnabar"
-}
-
-function StatusBadge({ label, value, icon: Icon, color }: StatusBadgeProps) {
-  const colorClasses = {
-    ink: "border-[#4D4742]/16 bg-[rgba(77,71,66,0.08)] text-[#4D4742]",
-    plum: "border-[#7A6973]/18 bg-[rgba(122,105,115,0.10)] text-[#7A6973]",
-    celadon: "border-[#4D7358]/18 bg-[rgba(77,115,88,0.10)] text-[#4D7358]",
-    ochre: "border-[#B08E61]/18 bg-[rgba(176,142,97,0.10)] text-[#8C724C]",
-    cinnabar: "border-[#B6453C]/18 bg-[rgba(182,69,60,0.10)] text-[#B6453C]",
-  }
-
-  return (
-    <div className={cn("flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium", colorClasses[color])}>
-      <Icon className="w-3.5 h-3.5" />
-      <span className="flex items-center gap-1.5">
-        {label}:
-        <span className="font-mono text-[10px]">{value}</span>
-      </span>
-    </div>
   )
 }

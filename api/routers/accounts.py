@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import UserInDB, get_current_active_user
-from core.account_manager import AccountManager
+from api.routers.trading import (
+    _build_account_detail_payload,
+    _build_account_list_payload,
+    _empty_account_detail_payload,
+    get_trading_service,
+)
 from core.database import get_database
 
 
 router = APIRouter()
-LEGACY_AUTO_ACCOUNT_NAME = "Auto Paper Trading"
-DEFAULT_AUTO_ACCOUNT_NAME = "全市场自动模拟交易"
 
 
 def _resolve_user_id(cursor, current_user: UserInDB) -> int:
@@ -48,13 +50,64 @@ def _get_active_account_id(cursor, user_id: int) -> Optional[int]:
     return int(row["id"]) if row else None
 
 
-def _normalize_account_name(name: Optional[str]) -> Optional[str]:
-    if name is None:
-        return None
-    normalized = str(name).strip()
-    if not normalized or normalized == LEGACY_AUTO_ACCOUNT_NAME:
-        return DEFAULT_AUTO_ACCOUNT_NAME
-    return normalized
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_primary_account_detail(user_id: int) -> dict:
+    service = get_trading_service()
+    accounts = service.account_mgr.get_user_accounts(user_id)
+    if not accounts:
+        return _empty_account_detail_payload()
+    return _build_account_detail_payload(service, user_id, int(accounts[0].id))
+
+
+def _positions_list_to_legacy_map(positions: object) -> dict:
+    items = positions if isinstance(positions, list) else []
+    legacy_positions = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        ticker = str(item.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        legacy_positions[ticker] = {
+            "shares": item.get("shares", 0),
+            "avg_cost": item.get("avg_cost", 0.0),
+            "market_value": _safe_float(item.get("market_value")),
+            "unrealized_pnl": _safe_float(item.get("unrealized_pnl")),
+        }
+    return legacy_positions
+
+
+def _build_legacy_paper_account_payload(user_id: int, detail: dict) -> dict:
+    if not detail.get("account_id"):
+        return {
+            "user_id": user_id,
+            "account_id": None,
+            "account_name": None,
+            "balance": 0.0,
+            "frozen": 0.0,
+            "total_assets": 0.0,
+            "initial_capital": 0.0,
+            "positions": {},
+            "equity_history": [],
+        }
+
+    portfolio = detail.get("portfolio") or {}
+    return {
+        "user_id": user_id,
+        "account_id": detail.get("account_id"),
+        "account_name": detail.get("account_name"),
+        "balance": _safe_float(portfolio.get("cash"), _safe_float(detail.get("balance"))),
+        "frozen": _safe_float(detail.get("frozen")),
+        "total_assets": _safe_float(portfolio.get("total_assets")),
+        "initial_capital": _safe_float(detail.get("initial_capital")),
+        "positions": _positions_list_to_legacy_map(detail.get("positions")),
+    }
 
 
 @router.get("/paper")
@@ -63,57 +116,7 @@ async def get_paper_account(current_user: UserInDB = Depends(get_current_active_
         db = get_database()
         cursor = db.conn.cursor()
         user_id = _resolve_user_id(cursor, current_user)
-        account_mgr = AccountManager(db)
-
-        cursor.execute(
-            """
-            SELECT id, account_name, balance, frozen, initial_capital,
-                   (balance + frozen) as total_assets
-            FROM accounts
-            WHERE user_id = ? AND status = 'active'
-            ORDER BY id ASC
-            LIMIT 1
-            """,
-            (user_id,),
-        )
-        row = cursor.fetchone()
-
-        if not row:
-            return {
-                "user_id": user_id,
-                "account_id": None,
-                "account_name": None,
-                "balance": 0.0,
-                "frozen": 0.0,
-                "total_assets": 0.0,
-                "initial_capital": 0.0,
-                "positions": {},
-                "equity_history": [],
-            }
-
-        account_id = int(row["id"])
-        positions_list = account_mgr.get_positions(account_id, refresh_prices=True)
-        positions = {}
-        total_position_value = 0.0
-        for position in positions_list:
-            total_position_value += float(position.market_value or 0.0)
-            positions[position.ticker] = {
-                "shares": position.shares,
-                "avg_cost": position.avg_cost,
-                "market_value": float(position.market_value or 0.0),
-                "unrealized_pnl": float(position.unrealized_pnl or 0.0),
-            }
-
-        return {
-            "user_id": user_id,
-            "account_id": account_id,
-            "account_name": _normalize_account_name(row["account_name"]),
-            "balance": row["balance"],
-            "frozen": row["frozen"],
-            "total_assets": float(row["balance"] or 0.0) + float(row["frozen"] or 0.0) + total_position_value,
-            "initial_capital": row["initial_capital"],
-            "positions": positions,
-        }
+        return _build_legacy_paper_account_payload(user_id, _get_primary_account_detail(user_id))
     except HTTPException:
         raise
     except Exception as e:
@@ -129,22 +132,13 @@ async def get_equity_history(
         db = get_database()
         cursor = db.conn.cursor()
         user_id = _resolve_user_id(cursor, current_user)
-        account_mgr = AccountManager(db)
         account_id = _get_active_account_id(cursor, user_id)
 
         if account_id is None:
             return {"equity_history": []}
 
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-        cursor.execute(
-            """
-            SELECT date, equity, cash, position_value
-            FROM equity_history
-            WHERE account_id = ? AND date >= ?
-            ORDER BY date ASC
-            """,
-            (account_id, start_date),
-        )
+        service = get_trading_service()
+        history = service.account_mgr.get_equity_history(account_id, days=days)
 
         return {
             "equity_history": [
@@ -152,9 +146,9 @@ async def get_equity_history(
                     "date": r["date"],
                     "equity": r["equity"],
                     "cash": r["cash"],
-                    "position_value": r["position_value"],
+                    "position_value": r.get("market_value", r.get("position_value")),
                 }
-                for r in cursor.fetchall()
+                for r in history
             ]
         }
     except HTTPException:
@@ -169,22 +163,8 @@ async def get_positions(current_user: UserInDB = Depends(get_current_active_user
         db = get_database()
         cursor = db.conn.cursor()
         user_id = _resolve_user_id(cursor, current_user)
-        account_id = _get_active_account_id(cursor, user_id)
-        account_mgr = AccountManager(db)
-
-        if account_id is None:
-            return {"positions": {}}
-
-        positions = {}
-        for position in account_mgr.get_positions(account_id, refresh_prices=True):
-            positions[position.ticker] = {
-                "shares": position.shares,
-                "avg_cost": position.avg_cost,
-                "market_value": float(position.market_value or 0.0),
-                "unrealized_pnl": float(position.unrealized_pnl or 0.0),
-            }
-
-        return {"positions": positions}
+        detail = _get_primary_account_detail(user_id)
+        return {"positions": _positions_list_to_legacy_map(detail.get("positions"))}
     except HTTPException:
         raise
     except Exception as e:
@@ -246,34 +226,21 @@ async def list_user_accounts(current_user: UserInDB = Depends(get_current_active
         db = get_database()
         cursor = db.conn.cursor()
         user_id = _resolve_user_id(cursor, current_user)
-
-        cursor.execute(
-            """
-            SELECT id, account_name, balance, frozen, initial_capital, status, created_at
-            FROM accounts
-            WHERE user_id = ?
-            ORDER BY id ASC
-            """,
-            (user_id,),
-        )
-
-        accounts = []
-        for row in cursor.fetchall():
-            account_id = int(row["id"])
-            positions = account_mgr.get_positions(account_id, refresh_prices=True)
-            total_position_value = sum(float(position.market_value or 0.0) for position in positions)
-            accounts.append(
-                {
-                    "id": account_id,
-                    "name": _normalize_account_name(row["account_name"]),
-                    "balance": row["balance"],
-                    "frozen": row["frozen"],
-                    "total_assets": float(row["balance"] or 0.0) + float(row["frozen"] or 0.0) + total_position_value,
-                    "initial_capital": row["initial_capital"],
-                    "status": row["status"],
-                    "created_at": row["created_at"],
-                }
-            )
+        service = get_trading_service()
+        payload = _build_account_list_payload(service, user_id)
+        accounts = [
+            {
+                "id": item["account_id"],
+                "name": item["account_name"],
+                "balance": item["balance"],
+                "frozen": item["frozen"],
+                "total_assets": item["total_assets"],
+                "initial_capital": item["initial_capital"],
+                "status": item["status"],
+                "created_at": item["created_at"],
+            }
+            for item in payload["accounts"]
+        ]
 
         return {"accounts": accounts, "count": len(accounts)}
     except HTTPException:

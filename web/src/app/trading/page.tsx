@@ -13,12 +13,13 @@ import {
   RotateCcw,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Wallet,
   Workflow,
 } from "lucide-react"
 
 import { MeasuredChart } from "@/components/charts/measured-chart"
+import { MetricCard } from "@/components/data/metric-card"
+import { StatusPill } from "@/components/data/status-pill"
 import { MultiAssetPicker } from "@/components/shared/multi-asset-picker"
 import { OrderForm, type OrderRequest } from "@/components/trading/OrderForm"
 import { Badge } from "@/components/ui/badge"
@@ -42,6 +43,7 @@ import {
   type UnknownRecord,
 } from "@/lib/api"
 import { SONG_COLORS } from "@/lib/chart-theme"
+import { formatDateTimeInBeijing } from "@/lib/time"
 import { cn, formatCurrency } from "@/lib/utils"
 
 type WorkspaceTab = "overview" | "automation" | "manual"
@@ -55,6 +57,13 @@ type RecentOrderRow = {
   status: string
   created_at?: string | null
   avg_fill_price?: number | null
+}
+
+const ORDER_TYPE_TEXT: Record<string, string> = {
+  MARKET: "市价",
+  LIMIT: "限价",
+  STOP: "止损",
+  STOP_LIMIT: "止损限价",
 }
 
 const FALLBACK_AUTO_CONFIG: AutoTradingConfig = {
@@ -176,10 +185,7 @@ function normalizeRecentOrders(rows: UnknownRecord[] | undefined): RecentOrderRo
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) return "暂未记录"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString("zh-CN", { hour12: false })
+  return formatDateTimeInBeijing(value, {}, "暂未记录")
 }
 
 function formatSignedCurrency(value: number) {
@@ -193,8 +199,8 @@ function formatSignedPercent(value: number) {
 }
 
 function toneClass(value: number) {
-  if (value > 0) return "text-[color:var(--rise-color)]"
-  if (value < 0) return "text-[color:var(--fall-color)]"
+  if (value > 0) return "text-tone-positive"
+  if (value < 0) return "text-tone-negative"
   return "text-foreground/85"
 }
 
@@ -214,22 +220,26 @@ function SummaryMetric({
   value,
   help,
   accent = SONG_COLORS.ink,
+  secondary,
 }: {
   label: string
   value: string
   help?: string
   accent?: string
+  secondary?: string
 }) {
   return (
-    <GlassCard className="space-y-2 p-4">
-      <div className="flex items-center gap-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-        <span>{label}</span>
-        {help ? <HelpTooltip content={help} /> : null}
-      </div>
-      <div className="text-2xl font-semibold tracking-[-0.04em]" style={{ color: accent }}>
-        {value}
-      </div>
-    </GlassCard>
+    <MetricCard
+      label={label}
+      value={value}
+      secondary={secondary}
+      help={help}
+      accentColor={accent}
+      compact
+      surface="muted"
+      className="h-full rounded-[24px]"
+      valueClassName="mt-2 text-[1.42rem] font-semibold tracking-[-0.03em]"
+    />
   )
 }
 
@@ -239,10 +249,10 @@ function StatusBanner({ notice }: { notice: NoticeState }) {
   return (
     <div
       className={cn(
-        "rounded-2xl border px-4 py-3 text-sm",
+        "rounded-[24px] border px-4 py-3 text-sm leading-7",
         isSuccess
-          ? "border-[color:var(--rise-color)]/15 bg-[color:var(--rise-color)]/8 text-[color:var(--rise-color)]"
-          : "border-[color:var(--fall-color)]/15 bg-[color:var(--fall-color)]/8 text-[color:var(--fall-color)]",
+          ? "surface-tone-celadon text-tone-negative"
+          : "surface-tone-cinnabar text-tone-cinnabar",
       )}
     >
       {notice.text}
@@ -256,6 +266,21 @@ function EmptyState({ text }: { text: string }) {
       {text}
     </div>
   )
+}
+
+function toUiNotice(error: unknown, fallback: string) {
+  const raw = error instanceof Error ? error.message : fallback
+  const normalized = raw.toLowerCase()
+
+  if (
+    normalized.includes("failed to fetch") ||
+    normalized.includes("cannot reach api service") ||
+    normalized.includes("networkerror")
+  ) {
+    return "当前无法连接后端服务，请确认 8685 后端已启动，且前端地址已被后端允许。"
+  }
+
+  return raw
 }
 
 function withTimeout<T>(promise: Promise<T>, fallback: T, timeoutMs: number) {
@@ -332,7 +357,7 @@ export default function TradingPage() {
           const permissionDenied = inferPermissionError(message)
           setAutoAccessDenied(permissionDenied)
           if (!permissionDenied) {
-            setNotice({ tone: "error", text: message })
+            setNotice({ tone: "error", text: toUiNotice(new Error(message), "读取自动交易状态失败") })
           }
           return null
         })
@@ -391,10 +416,7 @@ export default function TradingPage() {
           setEquityCurve(null)
         })
     } catch (error) {
-      setNotice({
-        tone: "error",
-        text: error instanceof Error ? error.message : "读取模拟交易工作台失败",
-      })
+      setNotice({ tone: "error", text: toUiNotice(error, "读取模拟交易工作台失败") })
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -494,7 +516,7 @@ export default function TradingPage() {
       setNotice({ tone: "success", text: "自动交易配置已保存。" })
       await loadWorkspace(true)
     } catch (error) {
-      setNotice({ tone: "error", text: error instanceof Error ? error.message : "保存自动交易配置失败" })
+      setNotice({ tone: "error", text: toUiNotice(error, "保存自动交易配置失败") })
     } finally {
       setAutoBusy(null)
     }
@@ -517,7 +539,7 @@ export default function TradingPage() {
       setActiveTab("overview")
       void pollAutoTradingStatus()
     } catch (error) {
-      setNotice({ tone: "error", text: error instanceof Error ? error.message : "执行自动交易失败" })
+      setNotice({ tone: "error", text: toUiNotice(error, "执行自动交易失败") })
     } finally {
       setAutoBusy(null)
     }
@@ -536,7 +558,7 @@ export default function TradingPage() {
       setNotice({ tone: "success", text: `模拟账户已重置为 ${formatCurrency(configDraft.initial_capital)}。` })
       await loadWorkspace(true)
     } catch (error) {
-      setNotice({ tone: "error", text: error instanceof Error ? error.message : "重置模拟账户失败" })
+      setNotice({ tone: "error", text: toUiNotice(error, "重置模拟账户失败") })
     } finally {
       setAutoBusy(null)
     }
@@ -552,7 +574,7 @@ export default function TradingPage() {
       setNotice({ tone: "success", text: "模拟账户已创建。" })
       await loadWorkspace(true)
     } catch (error) {
-      setNotice({ tone: "error", text: error instanceof Error ? error.message : "创建模拟账户失败" })
+      setNotice({ tone: "error", text: toUiNotice(error, "创建模拟账户失败") })
     } finally {
       setAutoBusy(null)
     }
@@ -578,7 +600,7 @@ export default function TradingPage() {
       await loadWorkspace(true)
       setActiveTab("overview")
     } catch (error) {
-      setNotice({ tone: "error", text: error instanceof Error ? error.message : "提交手动订单失败" })
+      setNotice({ tone: "error", text: toUiNotice(error, "提交手动订单失败") })
     } finally {
       setAutoBusy(null)
     }
@@ -599,61 +621,63 @@ export default function TradingPage() {
   const cumulativeReturnPct = referenceInitialCapital > 0 ? (cumulativeProfit / referenceInitialCapital) * 100 : 0
   const performanceTone =
     cumulativeReturnPct > 0
-      ? SONG_COLORS.positive
+      ? SONG_COLORS.celadon
       : cumulativeReturnPct < 0
-        ? SONG_COLORS.negative
+        ? SONG_COLORS.cinnabar
         : SONG_COLORS.ink
+  const daemonAccent = autoStatus?.daemon?.daemon_running ? SONG_COLORS.celadon : SONG_COLORS.ochre
+  const evaluationAccent = latestValidatedStrategies.length > 0 ? SONG_COLORS.celadon : SONG_COLORS.ink
+  const latestExecutionSummary = autoStatus?.daemon?.last_trading_run
+    ? `最近 ${formatDateTime(autoStatus.daemon.last_trading_run)}`
+    : !autoAccessDenied
+      ? "当前页可直接重跑"
+      : "当前账户无自动交易权限"
 
   return (
-    <div className="mx-auto max-w-7xl space-y-8 md:space-y-12 p-6 md:p-10 [--rise-color:#B6453C] [--fall-color:#4D7358]">
-      <section className="overflow-hidden rounded-[32px] border border-white/40 bg-white/30 backdrop-blur-2xl p-8 md:p-10 shadow-[0_8px_32px_rgba(142,115,77,0.04)]">
+    <div className="mx-auto max-w-7xl space-y-8 p-6 md:p-10">
+      <section className="overflow-hidden rounded-[32px] border border-white/40 bg-white/30 p-7 shadow-[0_8px_32px_rgba(142,115,77,0.04)] backdrop-blur-2xl md:p-9">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-3xl space-y-3">
-            <div className="inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/70 px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-foreground/55">
-              <Sparkles className="h-3.5 w-3.5" />
-              模拟交易工作台
-            </div>
             <div className="space-y-3">
-              <h1 className="text-3xl font-medium tracking-wide text-foreground/90">
-                把账户、自动执行与手动下单收进一个入口
-              </h1>
-              <p className="max-w-2xl text-base font-light tracking-wide text-foreground/60">
-                这里统一查看模拟账户净值、自动交易状态、策略启停、执行记录与手动订单，不再在多个页面来回切换确认状态。
+              <h1 className="page-title">模拟交易工作台</h1>
+              <p className="page-subtitle max-w-3xl">
+                在同一页查看账户净值、自动交易状态、执行记录与手动下单，先判断账户状态，再决定是否继续操作。
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="rounded-full border-black/[0.08] bg-white/70 px-3 py-1">
-                <Wallet className="mr-1.5 h-3.5 w-3.5" />
-                {account?.account_name || configDraft.account_name}
-              </Badge>
-              <Badge variant="outline" className="rounded-full border-black/[0.08] bg-white/70 px-3 py-1">
-                <Bot className="mr-1.5 h-3.5 w-3.5" />
-                {configDraft.enabled ? "自动交易已启用" : "自动交易已暂停"}
-              </Badge>
-              <Badge variant="outline" className="rounded-full border-black/[0.08] bg-white/70 px-3 py-1">
-                <Clock3 className="mr-1.5 h-3.5 w-3.5" />
-                每 {configDraft.interval_minutes} 分钟评估一次
-              </Badge>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <StatusPill label="账户" value={account?.account_name || configDraft.account_name} icon={Wallet} tone="ink" />
+              <StatusPill
+                label="自动交易"
+                value={configDraft.enabled ? "已启用" : "已暂停"}
+                icon={Bot}
+                tone={configDraft.enabled ? "ochre" : "ink"}
+              />
+              <span className="text-[0.88rem] leading-6 text-foreground/62">评估频率每 {configDraft.interval_minutes} 分钟</span>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" onClick={() => void handleRefresh()} disabled={refreshing || loading}>
-              <RefreshCw className={cn("mr-2 h-4 w-4", (refreshing || loading) && "animate-spin")} />
-              刷新状态
-            </Button>
-            <Button variant="outline" asChild>
-              <Link href="/strategies">策略库</Link>
-            </Button>
-            <Button variant="outline" asChild>
-              <Link href="/backtest">去做回测</Link>
-            </Button>
-            {!autoAccessDenied ? (
-              <Button onClick={() => void handleRunNow(false)} disabled={autoActionLocked}>
-                <PlayCircle className="mr-2 h-4 w-4" />
-                立即执行一次
+          <div className="flex flex-col items-start gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => void handleRefresh()} disabled={refreshing || loading}>
+                <RefreshCw className={cn("mr-2 h-4 w-4", (refreshing || loading) && "animate-spin")} />
+                刷新
               </Button>
-            ) : null}
+              {!autoAccessDenied ? (
+                <Button size="sm" onClick={() => void handleRunNow(false)} disabled={autoActionLocked}>
+                  <PlayCircle className="mr-2 h-4 w-4" />
+                  立即执行
+                </Button>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[0.88rem] text-foreground/62">
+              <Link className="transition-colors duration-200 hover:text-foreground" href="/strategies">
+                查看策略库
+              </Link>
+              <Link className="transition-colors duration-200 hover:text-foreground" href="/backtest">
+                进入回测中心
+              </Link>
+            </div>
           </div>
         </div>
       </section>
@@ -664,27 +688,25 @@ export default function TradingPage() {
         <GlassCard className="p-10 text-center text-sm text-muted-foreground">正在读取模拟交易工作台，请稍候。</GlassCard>
       ) : (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <SummaryMetric
               label="总资产"
               value={formatCurrency(account?.portfolio.total_assets || 0)}
+              secondary={`基准资金 ${formatCurrency(referenceInitialCapital)}`}
               help="现金与持仓市值之和。"
-            />
-            <SummaryMetric
-              label="初始资金"
-              value={formatCurrency(referenceInitialCapital)}
-              help="当前模拟账户创建或最近一次重置时的基准资金。"
             />
             <SummaryMetric
               label="累计收益"
               value={formatSignedCurrency(cumulativeProfit)}
               accent={performanceTone}
+              secondary="对比账户基准资金的累计变化。"
               help="当前总资产减去账户初始资金。"
             />
             <SummaryMetric
               label="收益率"
               value={formatSignedPercent(cumulativeReturnPct)}
               accent={performanceTone}
+              secondary={`可用资金 ${formatCurrency(account?.portfolio.cash || 0)}`}
               help="累计收益 ÷ 初始资金。"
             />
             <SummaryMetric
@@ -692,11 +714,12 @@ export default function TradingPage() {
               value={`${strategyCount} 个`}
               help="当前纳入自动评估与执行的策略数量。"
               accent={SONG_COLORS.indigo}
+              secondary={`${autoStatus?.daemon?.daemon_running ? "守护进程运行中" : "守护进程未运行"} · ${latestExecutionSummary}`}
             />
           </div>
 
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as WorkspaceTab)} className="space-y-8">
-            <TabsList className="h-auto w-full justify-start gap-2 overflow-x-auto rounded-[24px] bg-white/40 backdrop-blur-md border border-white/60 p-2 shadow-[0_4px_16px_rgba(0,0,0,0.02)]">
+            <TabsList className="inline-flex h-auto w-auto max-w-full justify-start gap-1.5 overflow-x-auto rounded-[22px] border border-black/[0.05] bg-[rgba(249,245,239,0.78)] p-1.5 shadow-none">
               <TabsTrigger value="overview" className="rounded-xl px-4 py-2">
                 账户总览
               </TabsTrigger>
@@ -769,14 +792,15 @@ export default function TradingPage() {
                 <GlassCard className="space-y-4 p-5">
                   <div className="space-y-1">
                     <CardTitle>自动执行状态</CardTitle>
-                    <CardDescription>把守护进程状态、最新执行时间与最近一次评估结果集中展示。</CardDescription>
+                    <CardDescription>先看守护进程与最近执行，再决定是否进入自动交易配置。</CardDescription>
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <SummaryMetric
-                      label="运行状态"
+                      label="守护进程"
                       value={autoStatus?.daemon?.daemon_running ? "运行中" : "未运行"}
-                      accent={autoStatus?.daemon?.daemon_running ? SONG_COLORS.positive : SONG_COLORS.ochre}
+                      accent={daemonAccent}
+                      secondary={autoStatus?.daemon?.last_started_at ? `最近启动 ${formatDateTime(autoStatus?.daemon?.last_started_at)}` : "尚未启动"}
                     />
                     <SummaryMetric
                       label="最近执行"
@@ -786,19 +810,14 @@ export default function TradingPage() {
                           : "暂未执行"
                       }
                       accent={SONG_COLORS.indigo}
+                      secondary={`${latestValidatedStrategies.length} 个策略通过 · ${latestPlacedOrders} 笔下单`}
                     />
-                    <SummaryMetric
-                      label="通过评估"
-                      value={`${latestValidatedStrategies.length} 个`}
-                      accent={SONG_COLORS.positive}
-                    />
-                    <SummaryMetric label="本轮下单" value={`${latestPlacedOrders} 笔`} accent={SONG_COLORS.ink} />
                   </div>
 
                   <div className="rounded-[22px] border border-black/[0.05] bg-white/60 p-4">
                     <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground/80">
                       <Workflow className="h-4 w-4" />
-                      最近一次自动评估
+                      评估与执行摘要
                     </div>
                     {latestValidatedStrategies.length > 0 ? (
                       <div className="flex flex-wrap gap-2">
@@ -809,11 +828,12 @@ export default function TradingPage() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">最近一次执行暂无通过策略，或尚未运行。</p>
+                      <p className="text-sm text-muted-foreground">最近一次执行暂时没有通过策略，或尚未运行。</p>
                     )}
-                    {typeof lastRunRecord.message === "string" ? (
-                      <p className="mt-3 text-sm leading-6 text-muted-foreground">{lastRunRecord.message}</p>
-                    ) : null}
+                    <div className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
+                      <p>当前启用了 {configDraft.strategy_ids.length} 个策略，实际采用数量仍会受收益、夏普与回撤阈值约束。</p>
+                      {typeof lastRunRecord.message === "string" ? <p>{lastRunRecord.message}</p> : null}
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap gap-3">
@@ -911,7 +931,7 @@ export default function TradingPage() {
                             <tr key={`${trade.ticker}-${trade.trade_time}-${index}`} className="border-b border-black/[0.05] last:border-b-0">
                               <td className="py-3">{formatDateTime(trade.trade_time)}</td>
                               <td className="py-3 font-medium">{trade.ticker}</td>
-                              <td className={cn("py-3 font-medium", trade.action.toUpperCase() === "BUY" ? "text-[color:var(--rise-color)]" : "text-[color:var(--fall-color)]")}>
+                              <td className={cn("py-3 font-medium", trade.action.toUpperCase() === "BUY" ? "text-tone-positive" : "text-tone-negative")}>
                                 {trade.action.toUpperCase() === "BUY" ? "买入" : "卖出"}
                               </td>
                               <td className="py-3 text-right">{formatCurrency(trade.price)}</td>
@@ -971,7 +991,7 @@ export default function TradingPage() {
                             <span
                               className="inline-flex h-2.5 w-2.5 rounded-full"
                               style={{
-                                backgroundColor: autoStatus?.daemon?.daemon_running ? SONG_COLORS.positive : SONG_COLORS.ochre,
+                                backgroundColor: daemonAccent,
                               }}
                             />
                             <span className="text-foreground/80">{autoStatus?.daemon?.daemon_running ? "运行中" : "未运行"}</span>
@@ -1159,7 +1179,7 @@ export default function TradingPage() {
                                 className={cn(
                                   "rounded-[22px] border px-4 py-3 text-left transition",
                                   active
-                                    ? "border-[color:var(--rise-color)]/18 bg-[color:var(--rise-color)]/6 shadow-[0_10px_24px_rgba(182,69,60,0.08)]"
+                                    ? "border-[rgba(var(--rgb-ochre),0.18)] bg-[rgba(var(--rgb-ochre),0.07)] shadow-[0_10px_24px_rgba(142,115,77,0.06)]"
                                     : "border-black/[0.06] bg-white/60 hover:bg-white/80",
                                 )}
                               >
@@ -1255,10 +1275,10 @@ export default function TradingPage() {
                       </div>
 
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <SummaryMetric label="守护进程" value={autoStatus?.daemon?.daemon_running ? "运行中" : "未运行"} accent={autoStatus?.daemon?.daemon_running ? SONG_COLORS.positive : SONG_COLORS.ochre} />
+                        <SummaryMetric label="守护进程" value={autoStatus?.daemon?.daemon_running ? "运行中" : "未运行"} accent={daemonAccent} />
                         <SummaryMetric label="最近启动" value={autoStatus?.daemon?.last_started_at ? formatDateTime(autoStatus?.daemon?.last_started_at) : "暂无"} accent={SONG_COLORS.indigo} />
                         <SummaryMetric label="本轮持仓" value={`${latestPositions} 个`} accent={SONG_COLORS.ink} />
-                        <SummaryMetric label="选中策略" value={`${latestValidatedStrategies.length} 个`} accent={SONG_COLORS.positive} />
+                        <SummaryMetric label="选中策略" value={`${latestValidatedStrategies.length} 个`} accent={evaluationAccent} />
                       </div>
 
                       <div className="rounded-[22px] border border-black/[0.05] bg-white/60 p-4">
@@ -1310,7 +1330,7 @@ export default function TradingPage() {
                             className={cn(
                               "flex cursor-pointer items-start gap-3 rounded-[24px] border px-4 py-4 transition",
                               checked
-                                ? "border-[color:var(--rise-color)]/18 bg-[color:var(--rise-color)]/6"
+                                ? "border-[rgba(var(--rgb-ochre),0.18)] bg-[rgba(var(--rgb-ochre),0.07)]"
                                 : "border-black/[0.06] bg-white/60 hover:bg-white/80",
                             )}
                           >
@@ -1332,8 +1352,8 @@ export default function TradingPage() {
                               <div className="flex flex-wrap items-center gap-2">
                                 <div className="text-sm font-medium text-foreground/85">{strategy.name}</div>
                                 {strategy.category ? (
-                                  <Badge variant="outline" className="rounded-full border-black/[0.08] bg-white/70 px-2 py-0.5 text-[11px]">
-                                    {strategy.category}
+                                  <Badge variant="outline" className="rounded-full border-black/[0.08] bg-white/70 px-2 py-0.5 text-[0.76rem]">
+                                    {strategy.category === "stz" ? "扫描" : "经典"}
                                   </Badge>
                                 ) : null}
                               </div>
@@ -1444,10 +1464,10 @@ export default function TradingPage() {
                               <tr key={order.order_id} className="border-b border-black/[0.05] last:border-b-0">
                                 <td className="py-3">{formatDateTime(order.created_at)}</td>
                                 <td className="py-3 font-medium">{order.symbol}</td>
-                                <td className={cn("py-3 font-medium", order.side.toUpperCase() === "BUY" ? "text-[color:var(--rise-color)]" : "text-[color:var(--fall-color)]")}>
-                                  {order.side.toUpperCase()}
+                                <td className={cn("py-3 font-medium", order.side.toUpperCase() === "BUY" ? "text-tone-positive" : "text-tone-negative")}>
+                                  {order.side.toUpperCase() === "BUY" ? "买入" : "卖出"}
                                 </td>
-                                <td className="py-3">{order.order_type}</td>
+                                <td className="py-3">{ORDER_TYPE_TEXT[order.order_type.toUpperCase()] ?? order.order_type}</td>
                                 <td className="py-3 text-right">{order.quantity}</td>
                                 <td className="py-3 text-right">{order.status}</td>
                               </tr>

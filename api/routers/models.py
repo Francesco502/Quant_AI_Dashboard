@@ -2,10 +2,9 @@
 模型管理 API 路由
 """
 
-from fastapi import APIRouter, HTTPException, Query
-from typing import List, Optional, Dict
+from fastapi import APIRouter, HTTPException
 
-from core.advanced_forecasting import ModelManager, ModelRegistry
+from core.advanced_forecasting import ModelManager
 
 router = APIRouter()
 
@@ -70,4 +69,3 @@ async def get_available_models():
         return models
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取可用模型列表失败: {str(e)}")
-

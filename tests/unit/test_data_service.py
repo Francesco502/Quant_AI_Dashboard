@@ -53,7 +53,7 @@ class TestDataService:
         # 模拟本地有数据
         mock_load_local.return_value = sample_price_series
         
-        result = load_price_data(tickers=["AAPL"], days=365)
+        result = load_price_data(tickers=["AAPL"], days=365, refresh_stale=False)
         
         assert result is not None
         assert not result.empty
@@ -215,8 +215,54 @@ class TestDataService:
         # 模拟本地有数据
         mock_load_local.return_value = sample_ohlcv_df
         
-        result = load_ohlcv_data(tickers=["AAPL"], days=365)
-        
+        result = load_ohlcv_data(tickers=["AAPL"], days=365, refresh_stale=False)
+
         assert result is not None
         assert "AAPL" in result
         assert isinstance(result["AAPL"], pd.DataFrame)
+        mock_load_remote.assert_not_called()
+
+    @patch('core.data_service._load_ohlcv_data_remote')
+    @patch('core.data_store.load_local_ohlcv_history')
+    @patch('core.data_store.save_local_ohlcv_history')
+    def test_load_ohlcv_data_refreshes_stale_local_cache(
+        self,
+        mock_save_local,
+        mock_load_local,
+        mock_load_remote,
+    ):
+        """OHLCV 瀵硅繃鏈熸湰鍦扮紦瀛樺簲杩滅▼琛ュ叏骞跺洖鍐欐湰鍦?"""
+        today = datetime.now().date()
+        stale_dates = pd.date_range(end=pd.Timestamp(today - timedelta(days=2)), periods=5, freq="D")
+        fresh_dates = pd.date_range(end=pd.Timestamp(today), periods=7, freq="D")
+
+        mock_load_local.return_value = pd.DataFrame(
+            {
+                "open": [10.0, 10.1, 10.2, 10.3, 10.4],
+                "high": [10.0, 10.1, 10.2, 10.3, 10.4],
+                "low": [10.0, 10.1, 10.2, 10.3, 10.4],
+                "close": [10.0, 10.1, 10.2, 10.3, 10.4],
+                "volume": [100, 101, 102, 103, 104],
+            },
+            index=stale_dates,
+        )
+        mock_load_remote.return_value = {
+            "159755": pd.DataFrame(
+                {
+                    "open": [10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7],
+                    "high": [10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7],
+                    "low": [10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7],
+                    "close": [10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7],
+                    "volume": [101, 102, 103, 104, 105, 106, 107],
+                },
+                index=fresh_dates,
+            )
+        }
+
+        result = load_ohlcv_data(tickers=["159755"], days=7, refresh_stale=True)
+
+        mock_load_remote.assert_called_once()
+        mock_save_local.assert_called_once()
+        assert "159755" in result
+        assert result["159755"].index.max().date() == today
+        assert result["159755"]["close"].iloc[-1] == pytest.approx(10.7)

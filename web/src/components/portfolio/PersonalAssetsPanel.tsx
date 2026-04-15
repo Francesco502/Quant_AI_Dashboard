@@ -19,11 +19,10 @@ import { motion, AnimatePresence } from "framer-motion"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { GlassCard } from "@/components/ui/card"
+import { CardDescription, CardTitle, GlassCard } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -33,6 +32,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AssetSearchPicker } from "@/components/shared/asset-search-picker"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { getTodayInBeijing } from "@/lib/time"
 
 const MotionTableRow = motion.create(TableRow)
 
@@ -48,7 +48,7 @@ type FormState = {
   dca_rule: UserAssetDcaRule
 }
 
-const today = new Date().toISOString().slice(0, 10)
+const today = getTodayInBeijing()
 
 const weeklyOptions = [
   { value: "0", label: "周一" },
@@ -256,9 +256,9 @@ function validateForm(form: FormState) {
 }
 
 function signedClass(value: number) {
-  if (value > 0) return "text-market-up"
-  if (value < 0) return "text-market-down"
-  return "text-muted-foreground"
+  if (value > 0) return "text-tone-cinnabar"
+  if (value < 0) return "text-tone-celadon"
+  return "text-foreground/66"
 }
 
 function formatSignedCurrency(value: number) {
@@ -332,7 +332,7 @@ function AssetTypeField({
           ))}
         </SelectContent>
       </Select>
-      <p className="text-xs leading-5 text-muted-foreground">
+      <p className="text-sm leading-7 text-foreground/66">
         {currentOption?.hint || "选择后，系统会按该资产类型优先匹配适合的数据源和估值方式。"}
       </p>
     </div>
@@ -347,10 +347,10 @@ function AssetIdentityEditor({
   onChange: (updater: (prev: FormState) => FormState) => void
 }) {
   return (
-    <div className="space-y-4 rounded-2xl border border-black/[0.06] bg-white/75 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+    <div className="data-panel space-y-4 rounded-2xl p-5">
       <div className="flex flex-col gap-1">
         <div className="text-sm font-medium text-foreground">资产信息</div>
-        <p className="text-xs leading-5 text-muted-foreground">
+        <p className="text-sm leading-7 text-foreground/66">
           资产类型会影响估值时优先调用的数据源。场外基金建议选择“场外基金”，ETF 和 LOF 建议选择“场内 ETF / LOF”。
         </p>
       </div>
@@ -395,8 +395,8 @@ function DcaEditor({
   const gridClass = dense ? "grid gap-3 md:grid-cols-3" : "grid gap-4 md:grid-cols-3"
 
   return (
-    <div className="space-y-3 rounded-2xl border border-black/[0.06] bg-black/[0.02] p-4">
-      <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-black/[0.05] bg-white/70 px-4 py-3">
+    <div className="data-panel-muted space-y-3 rounded-2xl p-4">
+      <label className="data-panel-muted flex cursor-pointer items-start gap-3 rounded-2xl px-4 py-3">
         <Checkbox
           checked={form.dca_enabled}
           onCheckedChange={(checked) =>
@@ -408,7 +408,7 @@ function DcaEditor({
         />
         <div className="space-y-1">
           <div className="text-sm font-medium text-foreground/80">纳入定投补算</div>
-          <div className="text-xs leading-5 text-muted-foreground">
+          <div className="text-sm leading-7 text-foreground/66">
             开启后，系统会按设定的频率和金额自动补算；遇到非交易日会顺延到下一个交易日。
           </div>
         </div>
@@ -506,7 +506,7 @@ function DcaEditor({
           </div>
         </div>
       ) : (
-        <div className="rounded-2xl border border-dashed border-black/[0.08] bg-white/50 px-4 py-3 text-xs leading-5 text-muted-foreground">
+        <div className="data-empty data-empty-compact text-sm leading-7 text-foreground/66">
           当前只会跟踪这笔持仓的收益变化，不会自动生成定投记录。
         </div>
       )}
@@ -781,9 +781,9 @@ export function PersonalAssetsPanel() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {summaryCards.map((item) => (
           <GlassCard key={item.label}>
-            <div className="mb-2 text-sm text-muted-foreground">{item.label}</div>
-            <div className={cn("text-2xl font-semibold tracking-tight", item.className)}>{item.value}</div>
-            <div className="mt-1 text-xs text-muted-foreground">{item.extra}</div>
+            <div className="data-metric-label mb-2">{item.label}</div>
+            <div className={cn("text-2xl font-semibold tabular-nums tracking-tight", item.className)}>{item.value}</div>
+            <div className="mt-1 text-[0.84rem] leading-6 text-foreground/66">{item.extra}</div>
           </GlassCard>
         ))}
       </div>
@@ -793,8 +793,8 @@ export function PersonalAssetsPanel() {
           className={cn(
             "flex items-center gap-2 rounded-lg border p-3 text-sm",
             message.type === "success"
-              ? "border-market-down-soft bg-market-down-soft text-market-down"
-              : "border-market-up-soft bg-market-up-soft text-market-up"
+              ? "border-[rgba(var(--rgb-celadon),0.18)] bg-[rgba(var(--rgb-celadon),0.1)] text-tone-celadon"
+              : "border-[rgba(var(--rgb-cinnabar),0.16)] bg-[rgba(var(--rgb-cinnabar),0.1)] text-tone-cinnabar"
           )}
         >
           {message.type === "success" ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
@@ -805,7 +805,7 @@ export function PersonalAssetsPanel() {
       <GlassCard className="space-y-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-1">
-            <h2 className="flex items-center gap-2 text-xl font-semibold">
+            <h2 className="section-title flex items-center gap-2">
               个人资产
               <Badge variant="secondary">{assets.length}</Badge>
               {loading ? <Badge variant="outline">正在读取</Badge> : null}
@@ -828,7 +828,7 @@ export function PersonalAssetsPanel() {
           </div>
         </div>
 
-        <div className="relative overflow-hidden rounded-2xl border border-black/[0.06] shadow-[inset_-10px_0_10px_-10px_rgba(0,0,0,0.05)]">
+        <div className="data-panel-muted relative overflow-hidden rounded-2xl">
           <div className="overflow-x-auto">
             <Table className="min-w-[1260px]">
               <TableHeader>
@@ -852,10 +852,10 @@ export function PersonalAssetsPanel() {
                 <TableRow>
                   <TableCell colSpan={12} className="h-32 text-center">
                     <div className="flex flex-col items-center gap-3 py-4">
-                      <RefreshCcw className="h-5 w-5 animate-spin text-muted-foreground" />
+                      <RefreshCcw className="h-5 w-5 animate-spin text-foreground/56" />
                       <div className="space-y-1">
                         <div className="text-sm font-medium text-foreground/80">正在读取已保存的个人资产</div>
-                        <div className="text-xs text-muted-foreground">如果你之前已经录入过资产，请稍等片刻，系统会按最新净值重新计算。</div>
+                        <div className="text-sm leading-7 text-foreground/66">如果你之前已经录入过资产，请稍等片刻，系统会按最新净值重新计算。</div>
                       </div>
                     </div>
                   </TableCell>
@@ -864,7 +864,7 @@ export function PersonalAssetsPanel() {
                 <TableRow>
                   <TableCell colSpan={12} className="h-32 text-center">
                     <div className="space-y-3 py-4">
-                      <div className="text-sm text-muted-foreground">还没有个人资产记录，现在可以直接添加第一笔。</div>
+                      <div className="text-sm leading-7 text-foreground/66">还没有个人资产记录，现在可以直接添加第一笔。</div>
                       <Button onClick={openAddDialog}>
                         <Plus className="mr-2 h-4 w-4" />
                         添加个人资产
@@ -896,13 +896,13 @@ export function PersonalAssetsPanel() {
                             onClick={() => setTransactionTicker(asset.ticker)}
                           >
                             <div className="font-medium">{asset.asset_name || asset.ticker}</div>
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[0.82rem] text-foreground/66">
                               <span>{asset.ticker}</span>
                               <Badge variant="outline">{assetTypeLabel(resolvedType)}</Badge>
                               <span>{valuationHint(resolvedType)}</span>
                               {asset.dca_rule?.enabled ? <Badge variant="secondary">定投中</Badge> : null}
                               {asset.pending_dca ? (
-                                <Badge className="border-amber-500/25 bg-amber-500/10 text-amber-700 hover:bg-amber-500/10">
+                                <Badge className="surface-tone-ochre hover:bg-[rgba(var(--rgb-ochre),0.14)]">
                                   已定投，份额待确认
                                 </Badge>
                               ) : null}
@@ -910,7 +910,7 @@ export function PersonalAssetsPanel() {
                           </button>
                         </TableCell>
 
-                        <TableCell className="text-right font-mono">
+                        <TableCell className="text-right font-mono tabular-nums">
                           {draft ? (
                             <Input
                               type="number"
@@ -926,7 +926,7 @@ export function PersonalAssetsPanel() {
                           )}
                         </TableCell>
 
-                        <TableCell className="text-right font-mono">
+                        <TableCell className="text-right font-mono tabular-nums">
                           {draft ? (
                             <Input
                               type="number"
@@ -948,7 +948,7 @@ export function PersonalAssetsPanel() {
                               <Badge variant={draft.dca_enabled ? "secondary" : "outline"}>
                                 {draft.dca_enabled ? "定投已开启" : "未启用"}
                               </Badge>
-                              <div className="text-xs text-muted-foreground">
+                              <div className="text-sm leading-7 text-foreground/66">
                                 {draft.dca_enabled ? describeDca(buildDcaRuleForSubmit(draft)) : "在下方编辑定投设置"}
                               </div>
                             </div>
@@ -957,9 +957,9 @@ export function PersonalAssetsPanel() {
                               <Badge variant={asset.dca_rule?.enabled ? "secondary" : "outline"}>
                                 {asset.dca_rule?.enabled ? "定投中" : "未启用"}
                               </Badge>
-                              <div className="text-xs text-muted-foreground">{describeDca(asset.dca_rule)}</div>
+                              <div className="text-sm leading-7 text-foreground/66">{describeDca(asset.dca_rule)}</div>
                               {asset.pending_dca && pendingDcaDescription ? (
-                                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-900/80">
+                                <div className="surface-tone-ochre rounded-xl px-3 py-2 text-sm leading-7">
                                   {pendingDcaDescription}
                                 </div>
                               ) : null}
@@ -967,28 +967,28 @@ export function PersonalAssetsPanel() {
                           )}
                         </TableCell>
 
-                        <TableCell className="text-right font-mono">
+                        <TableCell className="text-right font-mono tabular-nums">
                           {asset.current_price > 0 ? asset.current_price.toFixed(4) : "-"}
-                          <div className="text-xs text-muted-foreground">{asset.last_price_date || "暂无估值日"}</div>
+                          <div className="text-[0.82rem] text-foreground/66">{asset.last_price_date || "暂无估值日"}</div>
                         </TableCell>
 
-                        <TableCell className="text-right">{formatCurrency(asset.market_value)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatCurrency(asset.market_value)}</TableCell>
 
-                        <TableCell className={cn("text-right font-medium", signedClass(asset.total_return))}>
+                        <TableCell className={cn("text-right font-medium tabular-nums", signedClass(asset.total_return))}>
                           {formatSignedCurrency(asset.total_return)}
-                          <div className="text-xs text-muted-foreground">{asset.total_return_pct.toFixed(2)}%</div>
+                          <div className="text-[0.82rem] text-foreground/66">{asset.total_return_pct.toFixed(2)}%</div>
                         </TableCell>
 
-                        <TableCell className={cn("text-right", signedClass(asset.day_change))}>
+                        <TableCell className={cn("text-right tabular-nums", signedClass(asset.day_change))}>
                           {formatSignedCurrency(asset.day_change)}
                         </TableCell>
-                        <TableCell className={cn("text-right", signedClass(asset.week_change))}>
+                        <TableCell className={cn("text-right tabular-nums", signedClass(asset.week_change))}>
                           {formatSignedCurrency(asset.week_change)}
                         </TableCell>
-                        <TableCell className={cn("text-right", signedClass(asset.month_change))}>
+                        <TableCell className={cn("text-right tabular-nums", signedClass(asset.month_change))}>
                           {formatSignedCurrency(asset.month_change)}
                         </TableCell>
-                        <TableCell className={cn("text-right", signedClass(asset.year_change))}>
+                        <TableCell className={cn("text-right tabular-nums", signedClass(asset.year_change))}>
                           {formatSignedCurrency(asset.year_change)}
                         </TableCell>
 
@@ -1005,13 +1005,22 @@ export function PersonalAssetsPanel() {
                             </div>
                           ) : (
                             <div className="flex justify-end gap-1">
-                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => startEdit(asset)}>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8"
+                                onClick={() => startEdit(asset)}
+                                aria-label={`编辑 ${asset.ticker}`}
+                                title="编辑资产"
+                              >
                                 <PencilLine className="h-4 w-4" />
                               </Button>
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                className="h-8 w-8 text-market-up hover:bg-market-up-soft hover:text-market-up"
+                                className="h-8 w-8 text-tone-cinnabar hover:bg-[rgba(var(--rgb-cinnabar),0.1)] hover:text-tone-cinnabar"
+                                aria-label={`删除 ${asset.ticker}`}
+                                title="删除资产"
                                 onClick={() => handleDelete(asset.ticker)}
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -1030,11 +1039,11 @@ export function PersonalAssetsPanel() {
                           className="bg-black/[0.02]"
                         >
                           <TableCell colSpan={12} className="px-5 py-4">
-                            <div className="space-y-4 rounded-2xl border border-black/[0.06] bg-white/80 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
+                            <div className="data-panel space-y-4 rounded-2xl p-4">
                               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
                                   <div className="text-sm font-medium">编辑资产与定投</div>
-                                  <div className="text-xs text-muted-foreground">
+                                  <div className="text-sm leading-7 text-foreground/66">
                                     资产代码、名称、类型、成本价、持有数和定投规则都可以在这里修改；确认后系统会按新数据重新计算。
                                   </div>
                                 </div>
@@ -1069,8 +1078,8 @@ export function PersonalAssetsPanel() {
       <GlassCard>
         <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="font-semibold">最近交易流水</h3>
-            <p className="text-xs text-muted-foreground">展示手工重置、手工买卖和自动定投生成的记录。</p>
+            <CardTitle>最近交易流水</CardTitle>
+            <CardDescription>展示手工重置、手动买卖和自动定投生成的记录。</CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant={transactionTicker === null ? "default" : "outline"} size="sm" onClick={() => setTransactionTicker(null)}>
@@ -1089,7 +1098,7 @@ export function PersonalAssetsPanel() {
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-md border">
+        <div className="data-panel-muted overflow-x-auto rounded-2xl">
           <Table className="min-w-[760px]">
             <TableHeader>
               <TableRow>
@@ -1106,13 +1115,13 @@ export function PersonalAssetsPanel() {
             <TableBody>
               {isInitialLoading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="h-20 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="h-20 text-center text-foreground/66">
                     正在读取最近交易流水...
                   </TableCell>
                 </TableRow>
               ) : transactions.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="h-20 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="h-20 text-center text-foreground/66">
                     暂无交易流水。
                   </TableCell>
                 </TableRow>
@@ -1122,9 +1131,9 @@ export function PersonalAssetsPanel() {
                     <TableCell>{item.trade_date}</TableCell>
                     <TableCell className="font-medium">{item.ticker}</TableCell>
                     <TableCell>{item.transaction_type}</TableCell>
-                    <TableCell className="text-right font-mono">{Number(item.quantity || 0).toFixed(2)}</TableCell>
-                    <TableCell className="text-right font-mono">{Number(item.price || 0).toFixed(4)}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(Number(item.amount || 0))}</TableCell>
+                    <TableCell className="text-right font-mono tabular-nums">{Number(item.quantity || 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-right font-mono tabular-nums">{Number(item.price || 0).toFixed(4)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatCurrency(Number(item.amount || 0))}</TableCell>
                     <TableCell>{item.source || "-"}</TableCell>
                     <TableCell>{item.note || "-"}</TableCell>
                   </TableRow>
@@ -1136,13 +1145,10 @@ export function PersonalAssetsPanel() {
       </GlassCard>
 
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent className="max-h-[88vh] overflow-y-auto border border-[#d8d1c2] bg-[rgba(248,245,238,0.98)] p-0 shadow-[0_28px_80px_rgba(28,24,18,0.22)] backdrop-blur-none sm:max-w-3xl">
+        <DialogContent className="max-h-[88vh] overflow-y-auto p-0 sm:max-w-3xl">
           <div className="overflow-hidden rounded-3xl">
-            <DialogHeader className="border-b border-black/[0.06] px-6 py-5">
+            <DialogHeader className="border-b border-border/70 px-6 py-5">
               <DialogTitle>添加个人资产</DialogTitle>
-              <DialogDescription className="leading-6">
-                先搜索并确认资产，再录入你当前的持仓成本、持有份额和定投规则，避免把同代码或同主题的基金选错。
-              </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-5 px-6 py-5">
@@ -1171,17 +1177,14 @@ export function PersonalAssetsPanel() {
               <AssetIdentityEditor form={dialogForm} onChange={(updater) => setDialogForm((prev) => updater(prev))} />
 
               {selectedSearchSummary ? (
-                <div className="rounded-2xl border border-black/[0.06] bg-[rgba(248,245,238,0.8)] px-4 py-3 text-sm text-foreground">
+                <div className="data-panel-muted rounded-2xl px-4 py-3 text-sm text-foreground">
                   已确认资产 <span className="font-medium">{selectedSearchSummary}</span>
                 </div>
               ) : null}
 
-              <div className="space-y-4 rounded-2xl border border-black/[0.06] bg-white/75 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+              <div className="data-panel space-y-4 rounded-2xl p-5">
                 <div className="flex flex-col gap-1">
                   <div className="text-sm font-medium text-foreground">当前持仓</div>
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    这里填写的是你此刻手上的成本价和持有数量，确认后系统会立刻重新计算当前市值与累计收益。
-                  </p>
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
@@ -1214,7 +1217,7 @@ export function PersonalAssetsPanel() {
               <DcaEditor form={dialogForm} onChange={(updater) => setDialogForm((prev) => updater(prev))} />
             </div>
 
-            <DialogFooter className="border-t border-black/[0.06] px-6 py-5">
+            <DialogFooter className="border-t border-border/70 px-6 py-5">
               <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
                 取消
               </Button>

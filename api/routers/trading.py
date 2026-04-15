@@ -18,11 +18,6 @@ import threading
 from datetime import datetime
 
 from core.trading_service import TradingService, TradingError, InsufficientFundsError, InsufficientSharesError
-from core.account_manager import AccountManager
-from core.order_manager import OrderManager
-from core.risk_monitor import RiskMonitor
-from core.interfaces.broker_adapter import BrokerAdapter
-from core.brokers.paper_broker import PaperBrokerAdapter
 from core.database import get_database
 
 from api.auth import get_current_active_user, require_admin, UserInDB
@@ -154,7 +149,90 @@ def _safe_float(value: Any, default: Optional[float] = 0.0) -> Optional[float]:
         return default
 
 
-def _build_universe_summary(trading_cfg: Dict[str, Any]) -> Dict[str, Any]:
+def _serialize_datetime(value: Any) -> Any:
+    if hasattr(value, "isoformat") and callable(getattr(value, "isoformat")):
+        try:
+            return value.isoformat()
+        except Exception:
+            return value
+    return value
+
+
+def _empty_account_detail_payload() -> Dict[str, Any]:
+    return {
+        "account_id": None,
+        "account_name": None,
+        "balance": 0.0,
+        "frozen": 0.0,
+        "initial_capital": 0.0,
+        "currency": "CNY",
+        "status": None,
+        "created_at": None,
+        "portfolio": None,
+        "positions": [],
+        "trade_history": [],
+    }
+
+
+def _build_account_detail_payload(service: TradingService, user_id: int, account_id: int) -> Dict[str, Any]:
+    account = service.account_mgr.get_account(account_id, user_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="璐︽埛涓嶅瓨鍦ㄦ垨鏃犳潈璁块棶")
+
+    return {
+        "account_id": account_id,
+        "account_name": _normalize_account_name(account.account_name),
+        "balance": _safe_float(account.balance),
+        "frozen": _safe_float(account.frozen),
+        "initial_capital": _safe_float(account.initial_capital),
+        "currency": getattr(account, "currency", "CNY"),
+        "status": getattr(account, "status", None),
+        "created_at": _serialize_datetime(getattr(account, "created_at", None)),
+        "portfolio": service.get_portfolio(user_id, account_id, refresh_prices=True),
+        "positions": service.get_positions(user_id, account_id, refresh_prices=True),
+        "trade_history": service.account_mgr.get_trade_history(account_id, limit=100),
+    }
+
+
+def _build_account_summary_payload(service: TradingService, user_id: int, account: Any) -> Dict[str, Any]:
+    account_id = int(account.id)
+    account_name = _normalize_account_name(getattr(account, "account_name", None))
+    portfolio = service.get_portfolio(user_id, account_id, refresh_prices=True)
+    market_value = _safe_float(
+        (portfolio or {}).get("market_value", (portfolio or {}).get("position_value")),
+        0.0,
+    )
+    total_assets = _safe_float(
+        (portfolio or {}).get("total_assets"),
+        _safe_float(getattr(account, "balance", 0.0), 0.0)
+        + _safe_float(getattr(account, "frozen", 0.0), 0.0)
+        + _safe_float(market_value, 0.0),
+    )
+
+    return {
+        "id": account_id,
+        "account_id": account_id,
+        "name": account_name,
+        "account_name": account_name,
+        "balance": _safe_float(getattr(account, "balance", 0.0), 0.0),
+        "cash": _safe_float(getattr(account, "balance", 0.0), 0.0),
+        "frozen": _safe_float(getattr(account, "frozen", 0.0), 0.0),
+        "market_value": _safe_float(market_value, 0.0),
+        "total_assets": _safe_float(total_assets, 0.0),
+        "initial_capital": _safe_float(getattr(account, "initial_capital", 0.0), 0.0),
+        "currency": getattr(account, "currency", "CNY"),
+        "status": getattr(account, "status", None),
+        "created_at": _serialize_datetime(getattr(account, "created_at", None)),
+    }
+
+
+def _build_account_list_payload(service: TradingService, user_id: int) -> Dict[str, Any]:
+    accounts = service.account_mgr.get_user_accounts(user_id)
+    summaries = [_build_account_summary_payload(service, user_id, account) for account in accounts]
+    return {"accounts": summaries, "count": len(summaries)}
+
+
+def _build_universe_summary(trading_cfg: Dict[str, Any], *, user_id: Optional[int] = None) -> Dict[str, Any]:
     mode = str(trading_cfg.get("universe_mode") or "").strip().lower()
     if mode not in AUTO_TRADING_UNIVERSE_LABELS:
         mode = UNIVERSE_MODE_MANUAL if trading_cfg.get("universe") else UNIVERSE_MODE_ASSET_POOL
@@ -170,7 +248,7 @@ def _build_universe_summary(trading_cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     if mode == UNIVERSE_MODE_ASSET_POOL:
         limit = int(trading_cfg.get("universe_limit", 0) or 0)
-        tickers = get_asset_pool_tickers(limit=limit or None)
+        tickers = get_asset_pool_tickers(limit=limit or None, user_id=user_id)
         return {
             "mode": mode,
             "label": AUTO_TRADING_UNIVERSE_LABELS[mode],
@@ -194,7 +272,7 @@ def _build_auto_trading_payload(service: TradingService, trading_cfg: Dict[str, 
     available_strategies = list_backtestable_strategies()
     config_snapshot = dict(trading_cfg)
     config_snapshot["account_name"] = account_name
-    universe_summary = _build_universe_summary(config_snapshot)
+    universe_summary = _build_universe_summary(config_snapshot, user_id=user_id)
     config_snapshot.setdefault("universe_mode", universe_summary["mode"])
     config_snapshot.setdefault("universe_limit", int(config_snapshot.get("universe_limit", 0) or 0))
 
@@ -227,8 +305,8 @@ def _build_auto_trading_payload(service: TradingService, trading_cfg: Dict[str, 
         "account_name": _normalize_account_name(account.account_name),
         "balance": account.balance,
         "initial_capital": account.initial_capital,
-        "portfolio": service.get_portfolio(user_id, account.id, refresh_prices=False),
-        "positions": service.get_positions(user_id, account.id, refresh_prices=False),
+        "portfolio": service.get_portfolio(user_id, account.id, refresh_prices=True),
+        "positions": service.get_positions(user_id, account.id, refresh_prices=True),
         "recent_trades": service.account_mgr.get_trade_history(account.id, limit=12),
         "recent_orders": [_serialize_order(order) for order in service.get_orders_by_account(user_id, account.id)[:12]],
         "found": True,
@@ -494,11 +572,30 @@ async def list_accounts(
     """查询用户的所有账户"""
     try:
         service = get_trading_service()
-        accounts = service.list_user_accounts(user_id=current_user.id)
-        return {"accounts": accounts}
+        return _build_account_list_payload(service, current_user.id)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询账户列表失败: {str(e)}")
+
+
+@router.get("/accounts/primary")
+async def get_primary_account(
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """Return the user's primary paper account for frontend consumption."""
+    try:
+        service = get_trading_service()
+        accounts = service.account_mgr.get_user_accounts(current_user.id)
+        if not accounts:
+            return _empty_account_detail_payload()
+
+        account_id = int(accounts[0].id)
+        return _build_account_detail_payload(service, current_user.id, account_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"鏌ヨ涓昏处鎴峰け璐? {str(e)}")
 
 
 @router.get("/accounts/{account_id}")
@@ -513,18 +610,7 @@ async def get_account_detail(
         if not service.account_mgr.account_exists(account_id, current_user.id):
             raise HTTPException(status_code=404, detail="账户不存在或无权访问")
 
-        account = service.account_mgr.get_account(account_id, current_user.id)
-        positions = service.get_positions(current_user.id, account_id, refresh_prices=False)
-        portfolio = service.get_portfolio(current_user.id, account_id, refresh_prices=False)
-        trade_history = service.account_mgr.get_trade_history(account_id, limit=100)
-
-        return {
-            "account_id": account_id,
-            "account_name": _normalize_account_name(account.account_name if account else ""),
-            "portfolio": portfolio,
-            "positions": positions,
-            "trade_history": trade_history,
-        }
+        return _build_account_detail_payload(service, current_user.id, account_id)
 
     except HTTPException:
         raise
@@ -956,7 +1042,7 @@ async def get_account_performance(
             raise HTTPException(status_code=404, detail="账户不存在")
 
         # 获取最新投资组合快照
-        portfolio = service.get_portfolio(current_user.id, account_id, refresh_prices=False)
+        portfolio = service.get_portfolio(current_user.id, account_id, refresh_prices=True)
         total_market_value = float(portfolio.get("position_value", 0.0) or 0.0)
         total_assets = float(portfolio.get("total_assets", account.balance) or 0.0)
 
@@ -1080,7 +1166,7 @@ async def get_equity_curve(
         # 如果没有历史记录，生成基于当前持仓的实时数据
         if not equity_history:
             account = service.account_mgr.get_account(account_id, current_user.id)
-            positions = service.get_positions(current_user.id, account_id, refresh_prices=False)
+            positions = service.get_positions(current_user.id, account_id, refresh_prices=True)
             total_market_value = sum(float(p.get("market_value", 0.0) or 0.0) for p in positions)
             current_equity = account.balance + account.frozen + total_market_value
 

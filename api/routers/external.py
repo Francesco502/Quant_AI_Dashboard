@@ -1,94 +1,103 @@
-"""外部数据源 API 路由
+"""External market data routes."""
 
-提供宏观经济数据、行业轮动数据、市场情绪数据和资金流向数据的 API 接口。
-"""
+from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Depends
-from api.dependencies import require_permission, log_access
-from api.auth import get_current_active_user, UserInDB
-from core.rbac import Permission
-from core.audit_log import AuditAction
-from typing import List, Optional
+from typing import Any, List
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-import pandas as pd
 
+from api.auth import UserInDB
+from api.dependencies import require_permission
 from core.data_service import (
-    load_external_data,
-    merge_price_with_external,
-    get_external_features,
     get_economic_summary,
+    get_external_features,
+    get_flow_summary,
     get_industry_summary,
     get_sentiment_summary,
-    get_flow_summary,
+    load_external_data,
+    load_price_data,
+    merge_price_with_external,
 )
+from core.rbac import Permission
+
 
 router = APIRouter()
 
 
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_jsonable(item) for item in value]
+    if hasattr(value, "item") and callable(getattr(value, "item")):
+        try:
+            return _to_jsonable(value.item())
+        except Exception:  # noqa: BLE001
+            return value
+    if hasattr(value, "isoformat") and callable(getattr(value, "isoformat")):
+        try:
+            return value.isoformat()
+        except Exception:  # noqa: BLE001
+            return value
+    return value
+
+
 class ExternalDataRequest(BaseModel):
-    """外部数据请求模型"""
     economic: bool = True
     industry: bool = True
     sentiment: bool = True
     flow: bool = True
-    start_date: str = Query("2010-01-01", description="开始日期")
-    end_date: str = Query(None, description="结束日期")
+    start_date: str = Query("2010-01-01", description="Start date")
+    end_date: str | None = Query(None, description="End date")
 
 
 @router.get("/economic")
 async def get_economic_data(
-    start_date: str = Query("2010-01-01", description="开始日期"),
-    end_date: str = Query(None, description="结束日期"),
+    start_date: str = Query("2010-01-01", description="Start date"),
+    end_date: str | None = Query(None, description="End date"),
     current_user: UserInDB = Depends(require_permission(Permission.VIEW_DATA)),
 ):
-    """获取宏观经济数据（需要VIEW_DATA权限）"""
     try:
-        economic_data = get_economic_summary(start_date=start_date, end_date=end_date)
-        return {"data": economic_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取宏观经济数据失败: {str(e)}")
+        return {"data": _to_jsonable(get_economic_summary(start_date=start_date, end_date=end_date))}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to load economic data: {exc}") from exc
 
 
 @router.get("/industry")
 async def get_industry_data(
-    start_date: str = Query("2010-01-01", description="开始日期"),
-    end_date: str = Query(None, description="结束日期"),
+    start_date: str = Query("2010-01-01", description="Start date"),
+    end_date: str | None = Query(None, description="End date"),
     current_user: UserInDB = Depends(require_permission(Permission.VIEW_DATA)),
 ):
-    """获取行业轮动数据（需要VIEW_DATA权限）"""
     try:
-        industry_data = get_industry_summary(start_date=start_date, end_date=end_date)
-        return {"data": industry_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取行业轮动数据失败: {str(e)}")
+        return {"data": _to_jsonable(get_industry_summary(start_date=start_date, end_date=end_date))}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to load industry data: {exc}") from exc
 
 
 @router.get("/sentiment")
 async def get_sentiment_data(
-    start_date: str = Query("2010-01-01", description="开始日期"),
-    end_date: str = Query(None, description="结束日期"),
+    start_date: str = Query("2010-01-01", description="Start date"),
+    end_date: str | None = Query(None, description="End date"),
     current_user: UserInDB = Depends(require_permission(Permission.VIEW_DATA)),
 ):
-    """获取市场情绪数据（需要VIEW_DATA权限）"""
     try:
-        sentiment_data = get_sentiment_summary(start_date=start_date, end_date=end_date)
-        return {"data": sentiment_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取市场情绪数据失败: {str(e)}")
+        return {"data": _to_jsonable(get_sentiment_summary(start_date=start_date, end_date=end_date))}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to load sentiment data: {exc}") from exc
 
 
 @router.get("/flow")
 async def get_flow_data(
-    start_date: str = Query("2010-01-01", description="开始日期"),
-    end_date: str = Query(None, description="结束日期"),
+    start_date: str = Query("2010-01-01", description="Start date"),
+    end_date: str | None = Query(None, description="End date"),
     current_user: UserInDB = Depends(require_permission(Permission.VIEW_DATA)),
 ):
-    """获取资金流向数据（需要VIEW_DATA权限）"""
     try:
-        flow_data = get_flow_summary(start_date=start_date, end_date=end_date)
-        return {"data": flow_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取资金流向数据失败: {str(e)}")
+        return {"data": _to_jsonable(get_flow_summary(start_date=start_date, end_date=end_date))}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to load flow data: {exc}") from exc
 
 
 @router.post("/all")
@@ -96,7 +105,6 @@ async def get_all_external_data(
     request: ExternalDataRequest,
     current_user: UserInDB = Depends(require_permission(Permission.VIEW_DATA)),
 ):
-    """获取所有外部数据（需要VIEW_DATA权限）"""
     try:
         external_data = load_external_data(
             economic=request.economic,
@@ -106,18 +114,23 @@ async def get_all_external_data(
             start_date=request.start_date,
             end_date=request.end_date,
         )
-        return {"data": external_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取外部数据失败: {str(e)}")
+        return {"data": _to_jsonable(external_data)}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to load external data: {exc}") from exc
 
 
 @router.post("/merge")
 async def merge_price_with_external_data(
     request: ExternalDataRequest,
+    tickers: List[str] = Query(..., description="Tickers to merge"),
+    days: int = Query(365, description="Price lookback days"),
     current_user: UserInDB = Depends(require_permission(Permission.VIEW_DATA)),
 ):
-    """获取外部数据（需要VIEW_DATA权限）"""
     try:
+        price_df = load_price_data(tickers=tickers, days=days)
+        if price_df.empty:
+            raise HTTPException(status_code=400, detail="Unable to load price data.")
+
         external_data = load_external_data(
             economic=request.economic,
             industry=request.industry,
@@ -126,28 +139,34 @@ async def merge_price_with_external_data(
             start_date=request.start_date,
             end_date=request.end_date,
         )
-        return {"data": external_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取外部数据失败: {str(e)}")
+        merged_df = merge_price_with_external(
+            price_df=price_df,
+            external_data=external_data,
+            start_date=request.start_date,
+            end_date=request.end_date,
+        )
+        return {"data": merged_df.to_dict(orient="split")}
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to merge external data: {exc}") from exc
 
 
 @router.post("/features")
 async def get_external_features_endpoint(
     request: ExternalDataRequest,
-    tickers: List[str] = Query(..., description="标的代码列表"),
-    days: int = Query(365, description="历史天数"),
+    tickers: List[str] = Query(..., description="Tickers"),
+    days: int = Query(365, description="Price lookback days"),
     current_user: UserInDB = Depends(require_permission(Permission.VIEW_DATA)),
 ):
-    """获取外部数据特征（需要VIEW_DATA权限）"""
     try:
-        from core.data_service import load_price_data
         price_df = load_price_data(tickers=tickers, days=days)
         if price_df.empty:
-            raise HTTPException(status_code=400, detail="无法获取价格数据")
+            raise HTTPException(status_code=400, detail="Unable to load price data.")
 
         features_df = get_external_features(price_df, start_date=request.start_date, end_date=request.end_date)
         return {"data": features_df.to_dict(orient="split")}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取外部数据特征失败: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to build external features: {exc}") from exc

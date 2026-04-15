@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useStrategies } from "@/lib/use-strategies"
 import { StrategyLearningCard } from "@/components/trading/StrategyLearningCard"
+import { getTodayInBeijing } from "@/lib/time"
 
 type StrategyResultRow = {
   ticker: string
@@ -102,7 +103,7 @@ export default function StrategiesPage() {
   }, [])
 
   useEffect(() => {
-    setTradeDate(new Date().toISOString().slice(0, 10))
+    setTradeDate(getTodayInBeijing())
     void fetchHistory()
   }, [fetchHistory])
 
@@ -164,7 +165,7 @@ export default function StrategiesPage() {
         <Badge variant="outline" className="w-fit rounded-full px-3 py-1 text-xs">
           量化策略
         </Badge>
-        <h1 className="text-3xl font-semibold tracking-[-0.03em] text-foreground/90">量化策略工作台</h1>
+        <h1 className="page-title">量化策略工作台</h1>
       </div>
 
       <Tabs defaultValue="run" className="space-y-4">
@@ -221,7 +222,7 @@ export default function StrategiesPage() {
               </div>
 
               <Button onClick={runStrategy} disabled={running || strategiesLoading || !tradeDate} className="w-full">
-                {running ? "运行中..." : "运行策略"}
+                    {running ? "运行中…" : "运行策略"}
               </Button>
             </GlassCard>
 

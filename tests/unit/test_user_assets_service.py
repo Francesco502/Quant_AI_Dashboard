@@ -80,7 +80,8 @@ def test_user_asset_overview_uses_cached_payload_between_reads(
         1,
         {
             "ticker": "002611",
-            "asset_name": "鍗氭椂榛勯噾ETF鑱旀帴C",
+            "asset_name": "Linked Fund Cache Test",
+            "asset_type": "fund",
             "units": 10,
             "avg_cost": 2.50,
         },
@@ -356,3 +357,52 @@ def test_otc_fund_dca_confirms_next_trading_day_and_starts_earning_on_confirmati
     assert asset["total_return"] == pytest.approx(2.5)
     assert asset["day_change"] == pytest.approx(2.5)
     assert asset["week_change"] == pytest.approx(2.5)
+
+
+@patch("core.user_assets.load_cn_realtime_quotes_sina", return_value={})
+@patch("core.user_assets.load_price_data_akshare")
+@patch("core.user_assets.load_price_data")
+def test_period_change_uses_opening_reset_baseline_instead_of_full_market_value(
+    mock_load_price,
+    mock_load_price_akshare,
+    _mock_realtime,
+    asset_service,
+):
+    dates = pd.to_datetime(["2025-03-26", "2026-02-24", "2026-03-19", "2026-03-25", "2026-03-26"])
+    series = pd.DataFrame({"002611": [2.40, 2.60, 2.80, 3.10, 3.20]}, index=dates)
+    mock_load_price.return_value = series
+    mock_load_price_akshare.return_value = series
+
+    asset_service.upsert_asset(
+        1,
+        {
+            "ticker": "002611",
+            "asset_name": "Fund Reset Baseline Test",
+            "asset_type": "fund",
+            "units": 100,
+            "avg_cost": 2.50,
+            "trade_date": "2026-03-26",
+        },
+    )
+    asset_service.add_transaction(
+        1,
+        "002611",
+        {
+            "transaction_type": "BUY",
+            "quantity": 10,
+            "price": 3.00,
+            "amount": 30.0,
+            "trade_date": "2026-03-26",
+        },
+    )
+
+    overview = asset_service.get_overview(1, sync_dca=False, force_refresh=True)
+    asset = overview["assets"][0]
+
+    assert asset["market_value"] == pytest.approx(352.0)
+    assert asset["invested_amount"] == pytest.approx(280.0)
+    assert asset["total_return"] == pytest.approx(72.0)
+    assert asset["day_change"] == pytest.approx(12.0)
+    assert asset["week_change"] == pytest.approx(42.0)
+    assert asset["month_change"] == pytest.approx(62.0)
+    assert asset["year_change"] == pytest.approx(82.0)

@@ -272,92 +272,6 @@
       "created_at": "2026-03-19 18:07:44"
     },
     {
-      "model_id": "013281_xgboost_20260325024341238803",
-      "ticker": "013281",
-      "model_type": "xgboost",
-      "train_date": "2026-03-25",
-      "train_data_range": {
-        "start": "2009-04-03",
-        "end": "2026-03-24",
-        "rows": 4118
-      },
-      "features_version": "v1.0",
-      "metrics": {
-        "MAE": 0.00228446476374361,
-        "RMSE": 0.002295220055796894,
-        "MAPE": 0.20083810383188724,
-        "SMAPE": 0.20063474680587895,
-        "Direction_Accuracy": 80.0,
-        "ECE": 0.2494429401558591,
-        "Strategy_NetReturn": 0.0006701275846894283,
-        "Strategy_Sharpe": 2.1161510330039213,
-        "Strategy_MaxDrawdown": -0.0010000000000000009,
-        "Strategy_Turnover": 0.05,
-        "direction_accuracy": 80.0,
-        "mae": 0.000433663119503421,
-        "rmse": 0.00047827820742913025,
-        "smape": 0.03820678620745801,
-        "ece": 0.24942432929431865,
-        "strategy_sharpe": 2.311962174563808,
-        "strategy_net_return": 0.0007615594388810099,
-        "strategy_max_drawdown": -0.0010000000000000009,
-        "strategy_turnover": 0.05000000000000001,
-        "evaluation_folds": 3,
-        "walk_forward_purge_days": 5.0,
-        "walk_forward_embargo_days": 2.0,
-        "shadow_win_streak": 0.0,
-        "shadow_required_wins": 4.0,
-        "shadow_score_delta": -1.3482220264873699,
-        "shadow_reference_score": 1.564794937523768
-      },
-      "status": "staging",
-      "model_path": "D:\\LLT\\Code\\Quant\\Quant_AI_Dashboard-main\\models\\013281_xgboost_20260325024341238803.joblib",
-      "created_at": "2026-03-25 02:43:41"
-    },
-    {
-      "model_id": "002611_xgboost_20260325024345041963",
-      "ticker": "002611",
-      "model_type": "xgboost",
-      "train_date": "2026-03-25",
-      "train_data_range": {
-        "start": "2009-04-03",
-        "end": "2026-03-24",
-        "rows": 4118
-      },
-      "features_version": "v1.0",
-      "metrics": {
-        "MAE": 0.19692070759247882,
-        "RMSE": 0.2745400774936564,
-        "MAPE": 5.859026882989772,
-        "SMAPE": 5.745677141958878,
-        "Direction_Accuracy": 25.0,
-        "ECE": 0.3536444250901696,
-        "Strategy_NetReturn": -0.14143217468994562,
-        "Strategy_Sharpe": -3.5453468654850404,
-        "Strategy_MaxDrawdown": -0.21991818915264782,
-        "Strategy_Turnover": 0.35,
-        "direction_accuracy": 50.0,
-        "mae": 0.20504399734861925,
-        "rmse": 0.24421432881464114,
-        "smape": 6.141251347215783,
-        "ece": 0.15991134242888927,
-        "strategy_sharpe": -1.8078860525970484,
-        "strategy_net_return": -0.045361976589795905,
-        "strategy_max_drawdown": -0.1456259601006619,
-        "strategy_turnover": 0.4166666666666667,
-        "evaluation_folds": 3,
-        "walk_forward_purge_days": 5.0,
-        "walk_forward_embargo_days": 2.0,
-        "shadow_win_streak": 0.0,
-        "shadow_required_wins": 4.0,
-        "shadow_score_delta": -0.2223446734464357,
-        "shadow_reference_score": -0.12526782360584057
-      },
-      "status": "staging",
-      "model_path": "D:\\LLT\\Code\\Quant\\Quant_AI_Dashboard-main\\models\\002611_xgboost_20260325024345041963.joblib",
-      "created_at": "2026-03-25 02:43:45"
-    },
-    {
       "model_id": "160615_xgboost_20260325024349384174",
       "ticker": "160615",
       "model_type": "xgboost",
@@ -528,6 +442,60 @@
       "status": "staging",
       "model_path": "D:\\LLT\\Code\\Quant\\Quant_AI_Dashboard-main\\models\\006810_xgboost_20260325024402049986.joblib",
       "created_at": "2026-03-25 02:44:02"
+    },
+    {
+      "model_id": "002611_xgboost_20260402021937092852",
+      "ticker": "002611",
+      "model_type": "xgboost",
+      "train_date": "2026-04-02",
+      "train_data_range": {
+        "start": "2025-10-09",
+        "end": "2026-04-01",
+        "rows": 117
+      },
+      "features_version": "runtime",
+      "metrics": {
+        "MAE": 0.33900544470162236,
+        "RMSE": 0.35730900473043764,
+        "MAPE": 9.99506239439045,
+        "SMAPE": 10.227221545938297,
+        "Direction_Accuracy": 63.1578947368421,
+        "ECE": 0.1249640109055786,
+        "Strategy_NetReturn": 0.041538785634319675,
+        "Strategy_Sharpe": 1.2820780205190734,
+        "Strategy_MaxDrawdown": -0.1246104985618407,
+        "Strategy_Turnover": 0.3684210526315789
+      },
+      "status": "staging",
+      "model_path": "models/002611_xgboost_20260402021937092852.joblib",
+      "created_at": "2026-04-02 02:19:37"
+    },
+    {
+      "model_id": "013281_xgboost_20260403014650618504",
+      "ticker": "013281",
+      "model_type": "xgboost",
+      "train_date": "2026-04-03",
+      "train_data_range": {
+        "start": "2025-04-03",
+        "end": "2026-04-02",
+        "rows": 242
+      },
+      "features_version": "runtime",
+      "metrics": {
+        "MAE": 0.0015771339781967986,
+        "RMSE": 0.0015989720133973032,
+        "MAPE": 0.1385838095443044,
+        "SMAPE": 0.1384851609366976,
+        "Direction_Accuracy": 80.0,
+        "ECE": 0.24975697653371753,
+        "Strategy_NetReturn": 0.0005811131627539989,
+        "Strategy_Sharpe": 1.861393282414922,
+        "Strategy_MaxDrawdown": -0.0010000000000000009,
+        "Strategy_Turnover": 0.05
+      },
+      "status": "staging",
+      "model_path": "models/013281_xgboost_20260403014650618504.joblib",
+      "created_at": "2026-04-03 01:46:50"
     }
   ],
   "production_models": {

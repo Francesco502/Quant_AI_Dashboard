@@ -6,8 +6,9 @@ This folder contains the only documentation set that should be treated as curren
 
 - [`quickstart.md`](./quickstart.md)
 - [`deployment.md`](./deployment.md)
+- [`release.md`](./release.md)
 - [`development.md`](./development.md)
 
 ## Scope
 
-These guides replace the older root-level quickstart and deployment documents. Historical material remains available under `docs/archive/` for reference only.
+These guides replace older root-level quickstart and deployment notes. Historical material remains available under `docs/archive/` for reference only.

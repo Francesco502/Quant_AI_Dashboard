@@ -35,7 +35,7 @@ const BASE_GROUPS: WorkspaceGroup[] = [
   {
     id: "workbench",
     name: "工作台",
-    description: "回到案头总览，先看今日重点、账户状态与主工作流入口。",
+    description: "查看总览、提醒与常用入口。",
     defaultHref: "/",
     icon: Compass,
     tone: "indigo",
@@ -43,7 +43,7 @@ const BASE_GROUPS: WorkspaceGroup[] = [
       {
         name: "总览",
         href: "/",
-        description: "查看全局概览、关键提醒与下一步入口。",
+        description: "查看全局概览、当日状态与常用操作入口。",
         icon: Compass,
       },
     ],
@@ -51,45 +51,39 @@ const BASE_GROUPS: WorkspaceGroup[] = [
   {
     id: "research",
     name: "研究",
-    description: "集中查看市场、扫描、预测与决策支持内容。",
+    description: "集中处理市场观察、扫描、预测与模型研究。",
     defaultHref: "/market",
     icon: Bot,
     tone: "plum",
     items: [
       {
-        name: "AI分析",
+        name: "技术与风险",
         href: "/market",
-        description: "查看趋势、技术指标与风险拆解。",
+        description: "查看技术指标、波动特征与风险拆解。",
         icon: LineChart,
       },
       {
         name: "大盘复盘",
         href: "/market-review",
-        description: "回看市场结构、领涨领跌与情绪变化。",
+        description: "回看市场广度、主线结构与情绪节奏。",
         icon: ChartColumn,
       },
       {
         name: "市场扫描",
         href: "/market-scanner",
-        description: "筛选值得继续跟踪的标的。",
+        description: "筛选值得继续跟踪的候选标的。",
         icon: ScanSearch,
       },
       {
-        name: "预测研究",
+        name: "AI 预测研究",
         href: "/predictions",
-        description: "查看历史、预测路径与误差分析。",
+        description: "查看历史走势、预测路径与误差评估。",
         icon: Radar,
       },
       {
-        name: "决策仪表盘",
+        name: "LLM 研究工作台",
         href: "/dashboard-llm",
-        description: "按模型、接口与标的生成辅助判断。",
-        icon: Bot,
-      },
-      {
-        name: "代理研究",
-        href: "/agent-research",
-        description: "查看代理研究流程、研究记录与输出。",
+        description: "统一处理结构化决策与 Agent 研究。",
         icon: Bot,
       },
     ],
@@ -97,27 +91,27 @@ const BASE_GROUPS: WorkspaceGroup[] = [
   {
     id: "execution",
     name: "执行",
-    description: "把策略、回测与模拟交易组织成一条执行闭环。",
-    defaultHref: "/trading",
+    description: "把回测、策略与模拟交易收拢到一条执行链路。",
+    defaultHref: "/backtest",
     icon: Activity,
     tone: "ochre",
     items: [
       {
-        name: "模拟交易",
-        href: "/trading",
-        description: "查看账户、自动交易、订单与成交。",
-        icon: Activity,
+        name: "回测中心",
+        href: "/backtest",
+        description: "统一处理策略回测、组合回测、扫描与参数优化。",
+        icon: History,
       },
       {
-        name: "策略回测",
-        href: "/backtest",
-        description: "验证策略表现、参数与回撤情况。",
-        icon: History,
+        name: "模拟交易",
+        href: "/trading",
+        description: "查看账户、订单、成交与自动交易状态。",
+        icon: Activity,
       },
       {
         name: "量化策略",
         href: "/strategies",
-        description: "浏览、运行与沉淀常用策略。",
+        description: "运行、学习并沉淀常用策略模板。",
         icon: LineChart,
       },
     ],
@@ -125,7 +119,7 @@ const BASE_GROUPS: WorkspaceGroup[] = [
   {
     id: "assets",
     name: "资产",
-    description: "管理个人持仓、资产池与组合分析。",
+    description: "聚焦个人资产与资产池两类核心入口。",
     defaultHref: "/portfolio",
     icon: WalletCards,
     tone: "celadon",
@@ -133,20 +127,14 @@ const BASE_GROUPS: WorkspaceGroup[] = [
       {
         name: "个人资产",
         href: "/portfolio",
-        description: "维护持仓、定投与区间收益。",
+        description: "维护真实持仓、收益轨迹与账户视图。",
         icon: WalletCards,
       },
       {
-        name: "组合分析",
-        href: "/portfolio-analysis",
-        description: "查看组合收益贡献、相关性与风险暴露。",
+        name: "资产池",
+        href: "/asset-pool",
+        description: "管理研究、扫描与回测共用的候选资产。",
         icon: Radar,
-      },
-      {
-        name: "组合回测",
-        href: "/portfolio-backtest",
-        description: "验证组合构建方案的历史表现。",
-        icon: History,
       },
     ],
   },
@@ -156,16 +144,24 @@ const SYSTEM_ITEMS: WorkspaceItem[] = [
   {
     name: "系统监控",
     href: "/system-monitor",
-    description: "查看服务状态、任务执行与告警记录。",
+    description: "查看服务状态、资源指标与告警记录。",
     icon: ShieldCheck,
   },
   {
     name: "系统设置",
     href: "/settings",
-    description: "配置数据源、模型与全局行为。",
+    description: "配置数据源、模型服务与全局行为。",
     icon: Settings2,
   },
 ]
+
+const GROUP_PREFIXES: Record<WorkspaceGroup["id"], string[]> = {
+  workbench: ["/"],
+  research: ["/market", "/market-review", "/market-scanner", "/predictions", "/dashboard-llm", "/agent-research"],
+  execution: ["/backtest", "/portfolio-backtest", "/trading", "/strategies"],
+  assets: ["/portfolio", "/asset-pool", "/portfolio-analysis"],
+  system: ["/settings", "/system-monitor", "/users"],
+}
 
 export function getWorkspaceGroups(isAdmin: boolean): WorkspaceGroup[] {
   return [
@@ -173,7 +169,7 @@ export function getWorkspaceGroups(isAdmin: boolean): WorkspaceGroup[] {
     {
       id: "system",
       name: "系统",
-    description: "维护环境配置、监控状态与系统权限。",
+      description: "维护运行环境、配置状态与系统权限。",
       defaultHref: "/settings",
       icon: Settings2,
       tone: "ink",
@@ -201,9 +197,18 @@ export function isWorkspaceItemActive(pathname: string, href: string): boolean {
 }
 
 export function getActiveWorkspaceGroup(pathname: string, groups: WorkspaceGroup[]): WorkspaceGroup {
-  const matched = groups.find((group) =>
+  const matchedByItem = groups.find((group) =>
     group.items.some((item) => isWorkspaceItemActive(pathname, item.href)),
   )
+  if (matchedByItem) {
+    return matchedByItem
+  }
 
-  return matched ?? groups[0]
+  const matchedByPrefix = groups.find((group) =>
+    (GROUP_PREFIXES[group.id] ?? []).some((prefix) =>
+      prefix === "/" ? pathname === "/" : pathname === prefix || pathname.startsWith(`${prefix}/`),
+    ),
+  )
+
+  return matchedByPrefix ?? groups[0]
 }

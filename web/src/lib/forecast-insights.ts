@@ -1,4 +1,5 @@
 import type { ForecastResult, PricePoint } from "@/lib/api"
+import { formatMonthDayInBeijing } from "@/lib/time"
 
 export type ForecastChartRow = {
   date: string
@@ -37,7 +38,7 @@ export function formatPrice(value: number) {
 }
 
 export function shortDate(date: string) {
-  return new Date(date).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })
+  return formatMonthDayInBeijing(date, date)
 }
 
 export function buildForecastRows(history: PricePoint[], forecast: PricePoint[]): ForecastChartRow[] {

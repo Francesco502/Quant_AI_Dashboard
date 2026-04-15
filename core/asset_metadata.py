@@ -7,6 +7,8 @@ from time import time
 from typing import Any, Dict, List, Optional
 import json
 
+from .database import get_database
+
 try:
     import akshare as ak
 
@@ -21,6 +23,16 @@ _CATALOG_LOCK = Lock()
 _CATALOG_CACHE: Dict[str, Any] = {"loaded_at": 0.0, "items": []}
 _CATALOG_TTL_SECONDS = 6 * 60 * 60
 _EXCLUDED_EQUITY_PREFIXES = ("ST", "*ST", "S*ST", "SST")
+_USER_ASSET_POOL_SCHEMA_READY = False
+
+DEFAULT_ASSET_POOL: List[Dict[str, str]] = [
+    {"ticker": "013281", "name": "国泰海通30天滚动持有中短债债券A", "alias": "", "asset_type": "fund", "market": "CN"},
+    {"ticker": "002611", "name": "博时黄金ETF联接C", "alias": "", "asset_type": "fund", "market": "CN"},
+    {"ticker": "160615", "name": "鹏华沪深300ETF联接(LOF)A", "alias": "", "asset_type": "fund", "market": "CN"},
+    {"ticker": "006195", "name": "国金量化多因子股票A", "alias": "", "asset_type": "fund", "market": "CN"},
+    {"ticker": "159755", "name": "电池ETF", "alias": "", "asset_type": "etf", "market": "CN"},
+    {"ticker": "006810", "name": "泰康港股通中证香港银行投资指数C", "alias": "", "asset_type": "fund", "market": "CN"},
+]
 
 _FUND_KEYWORDS = (
     "基金",
@@ -147,6 +159,133 @@ def should_prefer_fund_nav(
     )
 
 
+def _ensure_user_asset_pool_schema() -> None:
+    global _USER_ASSET_POOL_SCHEMA_READY
+    if _USER_ASSET_POOL_SCHEMA_READY:
+        return
+
+    db = get_database()
+    if db.conn is None:
+        raise RuntimeError("Database connection is not initialized")
+
+    cursor = db.conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE user_assets ADD COLUMN name TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE user_assets ADD COLUMN market TEXT DEFAULT 'CN'")
+    except Exception:
+        pass
+    db.conn.commit()
+    _USER_ASSET_POOL_SCHEMA_READY = True
+
+
+def _normalize_asset_pool_entry(item: Dict[str, Any]) -> Dict[str, str]:
+    ticker = str(item.get("ticker") or "").strip().upper()
+    if not ticker:
+        raise ValueError("ticker is required")
+
+    name = str(item.get("name") or "").strip()
+    alias = str(item.get("alias") or "").strip()
+    market = str(item.get("market") or "CN").strip().upper() or "CN"
+    asset_type = resolve_asset_type(
+        ticker,
+        asset_name=name or None,
+        asset_type=str(item.get("asset_type") or "").strip() or None,
+    )
+    return {
+        "ticker": ticker,
+        "name": name,
+        "alias": alias,
+        "asset_type": asset_type,
+        "market": market,
+    }
+
+
+def _seed_default_asset_pool(cursor, user_id: int) -> List[Dict[str, str]]:
+    seeded_items = [_normalize_asset_pool_entry(item) for item in DEFAULT_ASSET_POOL]
+    for item in seeded_items:
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO user_assets (user_id, ticker, asset_type, alias, name, market)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(user_id),
+                item["ticker"],
+                item["asset_type"],
+                item["alias"],
+                item["name"],
+                item["market"],
+            ),
+        )
+    return seeded_items
+
+
+def list_user_asset_pool(user_id: int) -> List[Dict[str, str]]:
+    _ensure_user_asset_pool_schema()
+    db = get_database()
+    if db.conn is None:
+        raise RuntimeError("Database connection is not initialized")
+
+    cursor = db.conn.cursor()
+    cursor.execute(
+        """
+        SELECT ticker, COALESCE(name, '') AS name, COALESCE(alias, '') AS alias,
+               COALESCE(asset_type, '') AS asset_type, COALESCE(market, 'CN') AS market
+        FROM user_assets
+        WHERE user_id = ?
+        ORDER BY id ASC
+        """,
+        (int(user_id),),
+    )
+    rows = [dict(row) for row in cursor.fetchall()]
+    if rows:
+        return [_normalize_asset_pool_entry(row) for row in rows]
+
+    seeded_items = _seed_default_asset_pool(cursor, user_id)
+    db.conn.commit()
+    return seeded_items
+
+
+def save_user_asset_pool(user_id: int, items: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    _ensure_user_asset_pool_schema()
+    db = get_database()
+    if db.conn is None:
+        raise RuntimeError("Database connection is not initialized")
+
+    normalized: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for item in items:
+        normalized_item = _normalize_asset_pool_entry(item)
+        ticker = normalized_item["ticker"]
+        if ticker in seen:
+            continue
+        seen.add(ticker)
+        normalized.append(normalized_item)
+
+    cursor = db.conn.cursor()
+    cursor.execute("DELETE FROM user_assets WHERE user_id = ?", (int(user_id),))
+    for item in normalized:
+        cursor.execute(
+            """
+            INSERT INTO user_assets (user_id, ticker, asset_type, alias, name, market)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(user_id),
+                item["ticker"],
+                item["asset_type"],
+                item["alias"],
+                item["name"],
+                item["market"],
+            ),
+        )
+    db.conn.commit()
+    return normalized
+
+
 def _read_user_state() -> Dict[str, Any]:
     if not USER_STATE_FILE.exists():
         return {}
@@ -163,12 +302,15 @@ def _is_excluded_equity_name(name: str) -> bool:
     return upper_text.startswith(_EXCLUDED_EQUITY_PREFIXES) or "退" in text
 
 
-def get_asset_hint(ticker: str) -> Dict[str, Any]:
+def get_asset_hint(ticker: str, user_id: Optional[int] = None) -> Dict[str, Any]:
     code = str(ticker or "").strip().upper()
     digits = "".join(ch for ch in code if ch.isdigit())
-    selected = _read_user_state().get("selected_tickers", [])
-    if not isinstance(selected, list):
-        return {}
+    if user_id is not None:
+        selected: List[Dict[str, Any]] = list_user_asset_pool(int(user_id))
+    else:
+        selected = _read_user_state().get("selected_tickers", [])
+        if not isinstance(selected, list):
+            return {}
 
     for item in selected:
         if not isinstance(item, dict):
@@ -185,10 +327,13 @@ def get_asset_hint(ticker: str) -> Dict[str, Any]:
     return {}
 
 
-def get_asset_pool_tickers(limit: Optional[int] = None) -> List[str]:
-    selected = _read_user_state().get("selected_tickers", [])
-    if not isinstance(selected, list):
-        return []
+def get_asset_pool_tickers(limit: Optional[int] = None, user_id: Optional[int] = None) -> List[str]:
+    if user_id is not None:
+        selected: List[Any] = list_user_asset_pool(int(user_id))
+    else:
+        selected = _read_user_state().get("selected_tickers", [])
+        if not isinstance(selected, list):
+            return []
 
     tickers: List[str] = []
     for item in selected:

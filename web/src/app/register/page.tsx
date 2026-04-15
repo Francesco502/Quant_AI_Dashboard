@@ -1,15 +1,17 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { Lock, User } from "lucide-react"
+
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Lock, User, UserPlus } from "lucide-react"
+import { BrandMark } from "@/components/layout/brand-mark"
 import { getEffectiveApiBaseUrl } from "@/lib/api"
+import { BRAND_NAME, BRAND_REGISTER_TITLE, BRAND_SUBTITLE } from "@/lib/brand"
 import { SONG_COLORS } from "@/lib/chart-theme"
-import { motion } from "framer-motion"
-import Link from "next/link"
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -20,16 +22,17 @@ export default function RegisterPage() {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState(false)
 
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleRegister = async () => {
+    if (loading) return
+
     setError("")
 
     if (username.length < 3) {
-      setError("用户名至少3个字符")
+      setError("用户名至少 3 个字符")
       return
     }
     if (password.length < 6) {
-      setError("密码至少6个字符")
+      setError("密码至少 6 个字符")
       return
     }
     if (password !== confirmPassword) {
@@ -46,14 +49,14 @@ export default function RegisterPage() {
         body: JSON.stringify({ username, password }),
       })
 
-      const data = await res.json()
+      const data = (await res.json().catch(() => ({}))) as { detail?: string }
 
       if (!res.ok) {
         throw new Error(data.detail || "注册失败")
       }
 
       setSuccess(true)
-      setTimeout(() => router.push("/login"), 2000)
+      window.setTimeout(() => router.push("/login"), 1200)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "注册失败，请稍后重试"
       setError(message)
@@ -62,50 +65,42 @@ export default function RegisterPage() {
     }
   }
 
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") return
+    event.preventDefault()
+    void handleRegister()
+  }
+
   return (
-    <div className="flex items-center justify-center min-h-[calc(100vh-200px)]">
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-        className="w-full max-w-sm"
-      >
+    <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
+      <div className="w-full max-w-sm">
         <div className="glass-card rounded-2xl p-8">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <div className="w-10 h-10 rounded-xl bg-foreground/90 flex items-center justify-center mx-auto mb-4">
-              <UserPlus className="h-4 w-4 text-background" />
-            </div>
-            <h1 className="text-lg font-semibold tracking-[-0.02em] text-foreground/90 mb-1">
-              创建账户
-            </h1>
-            <p className="text-[13px] text-foreground/40">
-              注册新的 Quant AI 研习台账户
-            </p>
+          <div className="mb-8 text-center">
+            <BrandMark className="mx-auto mb-4" iconClassName="h-6 w-6" />
+            <h1 className="section-title mb-1">{BRAND_REGISTER_TITLE}</h1>
+            <p className="text-[13px] text-foreground/60">注册新的 {BRAND_NAME} 账户</p>
+            <p className="mt-2 text-[12px] tracking-[0.12em] text-foreground/44">{BRAND_SUBTITLE}</p>
           </div>
 
           {success ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="text-center space-y-3"
-            >
-              <div className="rounded-xl p-4 text-[13px] font-medium" style={{ color: SONG_COLORS.positive, backgroundColor: "rgba(77, 115, 88, 0.08)" }}>
+            <div className="text-center space-y-3">
+              <div className="surface-tone-celadon rounded-xl p-4 text-[13px] font-medium">
                 注册成功，正在跳转到登录页…
               </div>
-            </motion.div>
+            </div>
           ) : (
-            <form onSubmit={handleRegister} className="space-y-4">
+            <div className="space-y-4" role="form" aria-label="注册表单">
               <div className="space-y-1.5">
                 <Label htmlFor="username">用户名</Label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/25" />
+                  <User className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground/25" />
                   <Input
                     id="username"
-                    placeholder="至少3个字符"
+                    placeholder="至少 3 个字符"
                     className="pl-9"
                     value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    onChange={(event) => setUsername(event.target.value)}
+                    onKeyDown={handleKeyDown}
                     autoComplete="username"
                     required
                     minLength={3}
@@ -116,14 +111,15 @@ export default function RegisterPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="password">密码</Label>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/25" />
+                  <Lock className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground/25" />
                   <Input
                     id="password"
                     type="password"
-                    placeholder="至少6个字符"
+                    placeholder="至少 6 个字符"
                     className="pl-9"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(event) => setPassword(event.target.value)}
+                    onKeyDown={handleKeyDown}
                     autoComplete="new-password"
                     required
                     minLength={6}
@@ -134,14 +130,15 @@ export default function RegisterPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="confirmPassword">确认密码</Label>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/25" />
+                  <Lock className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground/25" />
                   <Input
                     id="confirmPassword"
                     type="password"
                     placeholder="再次输入密码"
                     className="pl-9"
                     value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    onKeyDown={handleKeyDown}
                     autoComplete="new-password"
                     required
                     minLength={6}
@@ -149,31 +146,37 @@ export default function RegisterPage() {
                 </div>
               </div>
 
-              {error && (
-                <motion.div
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
+              {error ? (
+                <div
                   className="rounded-lg p-2.5 text-center text-[12px]"
                   style={{ color: SONG_COLORS.negative, backgroundColor: "rgba(182, 69, 60, 0.08)" }}
                 >
                   {error}
-                </motion.div>
-              )}
+                </div>
+              ) : null}
 
-              <Button type="submit" className="w-full mt-2" disabled={loading}>
-                {loading ? "注册中..." : "注册"}
+              <Button
+                type="submit"
+                className="mt-2 w-full"
+                disabled={loading}
+                onClick={() => void handleRegister()}
+              >
+                {loading ? "注册中…" : "注册"}
               </Button>
 
-              <div className="text-center text-[12px] text-foreground/35 mt-4">
+              <div className="mt-4 text-center text-[12px] text-foreground/35">
                 已有账户？{" "}
-                <Link href="/login" className="text-foreground/60 hover:text-foreground/80 font-medium transition-colors">
+                <Link
+                  href="/login"
+                  className="font-medium text-foreground/60 transition-colors hover:text-foreground/80"
+                >
                   返回登录
                 </Link>
               </div>
-            </form>
+            </div>
           )}
         </div>
-      </motion.div>
+      </div>
     </div>
   )
 }

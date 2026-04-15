@@ -14,8 +14,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-10 items-center justify-center gap-1 rounded-full border border-black/[0.06] bg-[rgba(248,244,238,0.88)] p-1",
-      "text-foreground/45 shadow-[0_8px_18px_rgba(41,33,25,0.035)]",
+      "segmented-shell inline-flex h-auto items-center justify-start gap-1.5 rounded-[24px] p-1.5",
       className
     )}
     {...props}
@@ -30,17 +29,12 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-medium",
-      "ring-offset-background transition-all duration-200",
+      "segmented-item inline-flex items-center justify-center whitespace-nowrap rounded-[18px] border px-4.5 py-2.5 text-sm font-medium tracking-[0.03em]",
+      "transition-[background-color,border-color,color,box-shadow,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:ring-offset-1",
       "disabled:pointer-events-none disabled:opacity-40",
-      "data-[state=active]:border data-[state=active]:border-black/[0.05]",
-      "data-[state=active]:bg-white/92 dark:data-[state=active]:bg-white/[0.1]",
-      "data-[state=active]:text-foreground",
-      "data-[state=active]:shadow-[0_8px_18px_rgba(41,33,25,0.05),inset_0_1px_0_rgba(255,255,255,0.7)]",
-      "dark:data-[state=active]:shadow-[0_1px_3px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.04)]",
-      "data-[state=inactive]:hover:text-foreground/65",
-      "data-[state=inactive]:hover:bg-black/[0.02] dark:data-[state=inactive]:hover:bg-white/[0.03]",
+      "data-[state=active]:bg-[rgba(var(--rgb-ink),0.05)] data-[state=active]:text-[rgb(var(--rgb-ink))] data-[state=active]:shadow-[inset_0_-2px_0_rgba(var(--rgb-celadon),0.8)]",
+      "data-[state=inactive]:text-foreground/60 data-[state=inactive]:hover:bg-[rgba(255,252,248,0.76)] data-[state=inactive]:hover:text-foreground/90",
       className
     )}
     {...props}

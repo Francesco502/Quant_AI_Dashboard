@@ -155,7 +155,7 @@ class WeightedEnsemble:
     def get_model_performance(self) -> Dict[str, Any]:
         if not self.prediction_history:
             return {}
-        return {"weights": dict(self.prediction_history[-1]["weights"])}
+        return {"weights": dict(self.prediction_history[-1]["weights"])}
 
 class EnsembleForecaster:
     def __init__(self, models: Optional[Dict[str, Any]] = None, weights: Optional[Dict[str, float]] = None):
@@ -249,4 +249,4 @@ def ensemble_predict(predictions: Dict[str, pd.DataFrame], weights: Dict[str, fl
         up_df = pd.DataFrame(upper_series).reindex(columns=pred_df.columns)
         out["upper_bound"] = sum(up_df[c].fillna(pred_df[c]) * w.get(c, 0.0) for c in up_df.columns)
 
-    return out
+    return out

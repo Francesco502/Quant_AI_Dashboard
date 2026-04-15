@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 
 import { fetchApi } from "@/lib/api"
@@ -13,15 +13,19 @@ interface UserInfo {
 interface AuthContextType {
   user: UserInfo | null
   token: string | null
+  isReady: boolean
   login: (token: string, username: string, role?: string) => void
   logout: () => void
   isAuthenticated: boolean
   loadUser: () => Promise<void>
 }
 
+const PUBLIC_ROUTES = new Set(["/login", "/register"])
+
 const AuthContext = createContext<AuthContextType>({
   user: null,
   token: null,
+  isReady: false,
   login: () => {},
   logout: () => {},
   isAuthenticated: false,
@@ -30,25 +34,48 @@ const AuthContext = createContext<AuthContextType>({
 
 function readStoredUser(): UserInfo | null {
   if (typeof window === "undefined") return null
+
   const username = localStorage.getItem("user")
   if (!username) return null
+
   return {
     username,
     role: localStorage.getItem("userRole") || "viewer",
   }
 }
 
+function clearStoredAuth() {
+  if (typeof window === "undefined") return
+  localStorage.removeItem("token")
+  localStorage.removeItem("user")
+  localStorage.removeItem("userRole")
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserInfo | null>(() => readStoredUser())
   const [token, setToken] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : localStorage.getItem("token")
+    typeof window === "undefined" ? null : localStorage.getItem("token"),
   )
+  const isReady = typeof window !== "undefined"
 
   const router = useRouter()
   const pathname = usePathname()
 
+  useEffect(() => {
+    if (typeof window === "undefined") return
+
+    const handleStorage = () => {
+      setToken(localStorage.getItem("token"))
+      setUser(readStoredUser())
+    }
+
+    window.addEventListener("storage", handleStorage)
+    return () => window.removeEventListener("storage", handleStorage)
+  }, [])
+
   const loadUser = useCallback(async () => {
     if (typeof window === "undefined" || !token) return
+
     try {
       const data = await fetchApi<{ username: string; role: string }>("/auth/me")
       const nextUser = { username: data.username, role: data.role }
@@ -57,15 +84,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(nextUser)
     } catch (error) {
       console.error("Failed to load user info:", error)
+      clearStoredAuth()
+      setToken(null)
+      setUser(null)
     }
   }, [token])
 
   useEffect(() => {
-    const publicRoutes = new Set(["/login", "/register"])
-    const isPublic = publicRoutes.has(pathname)
+    if (!isReady) return
+
+    const isPublicRoute = PUBLIC_ROUTES.has(pathname)
 
     if (!token) {
-      if (!isPublic) {
+      if (!isPublicRoute) {
         router.replace("/login")
       }
       return
@@ -74,17 +105,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (user) return
 
     let cancelled = false
+
     void (async () => {
       try {
         const data = await fetchApi<{ username: string; role: string }>("/auth/me")
         if (cancelled) return
+
         const nextUser = { username: data.username, role: data.role }
         localStorage.setItem("user", data.username)
         localStorage.setItem("userRole", data.role)
         setUser(nextUser)
       } catch (error) {
-        if (!cancelled) {
-          console.error("Failed to hydrate user info:", error)
+        if (cancelled) return
+
+        console.error("Failed to hydrate user info:", error)
+        clearStoredAuth()
+        setToken(null)
+        setUser(null)
+
+        if (!isPublicRoute) {
+          router.replace("/login")
         }
       }
     })()
@@ -92,31 +132,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [pathname, router, token, user])
+  }, [isReady, pathname, router, token, user])
 
-  const login = (newToken: string, username: string, role?: string) => {
-    localStorage.setItem("token", newToken)
-    localStorage.setItem("user", username)
-    localStorage.setItem("userRole", role || "viewer")
-    setToken(newToken)
-    setUser({ username, role: role || "viewer" })
-    router.push("/")
-  }
+  const login = useCallback(
+    (newToken: string, username: string, role?: string) => {
+      if (typeof window === "undefined") return
 
-  const logout = () => {
-    localStorage.removeItem("token")
-    localStorage.removeItem("user")
-    localStorage.removeItem("userRole")
+      const nextRole = role || "viewer"
+      localStorage.setItem("token", newToken)
+      localStorage.setItem("user", username)
+      localStorage.setItem("userRole", nextRole)
+      setToken(newToken)
+      setUser({ username, role: nextRole })
+      router.replace("/")
+    },
+    [router],
+  )
+
+  const logout = useCallback(() => {
+    clearStoredAuth()
     setToken(null)
     setUser(null)
-    router.push("/login")
-  }
+    router.replace("/login")
+  }, [router])
 
-  return (
-    <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token, loadUser }}>
-      {children}
-    </AuthContext.Provider>
+  const value = useMemo<AuthContextType>(
+    () => ({
+      user,
+      token,
+      isReady,
+      login,
+      logout,
+      isAuthenticated: Boolean(token),
+      loadUser,
+    }),
+    [isReady, loadUser, login, logout, token, user],
   )
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
 export const useAuth = () => useContext(AuthContext)

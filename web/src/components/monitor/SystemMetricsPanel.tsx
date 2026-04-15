@@ -1,24 +1,124 @@
-﻿"use client"
+"use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { motion } from "framer-motion"
+import { Activity, AlertTriangle, Box, Cpu, HardDrive, Server, Wifi, Zap } from "lucide-react"
+
+import { EmptyState } from "@/components/data/empty-state"
+import { PanelHeader } from "@/components/data/panel-header"
+import { StatusPill } from "@/components/data/status-pill"
 import { GlassCard } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { api, type DetailedSystemMetrics, type SystemMetrics } from "@/lib/api"
 import { SONG_COLORS } from "@/lib/chart-theme"
-import { Activity, AlertTriangle, Box, Cpu, HardDrive, RefreshCw, Server, Wifi, Zap } from "lucide-react"
-import { cn } from "@/lib/utils"
 
 interface SystemMetricsPanelProps {
   detailed?: boolean
   autoRefresh?: boolean
   refreshInterval?: number
+  showHeader?: boolean
+  showLatency?: boolean
+}
+
+function ResourceMetricCard({
+  icon: Icon,
+  tone,
+  title,
+  description,
+  value,
+  status,
+  progress,
+  detail,
+}: {
+  icon: typeof Cpu
+  tone: "indigo" | "plum" | "ochre"
+  title: string
+  description: string
+  value: string
+  status: string
+  progress: number
+  detail?: string
+}) {
+  const progressColor =
+    progress >= 90
+      ? SONG_COLORS.cinnabar
+      : progress >= 75
+        ? SONG_COLORS.ochre
+        : tone === "indigo"
+          ? SONG_COLORS.indigo
+          : tone === "plum"
+            ? SONG_COLORS.plum
+            : SONG_COLORS.celadon
+
+  return (
+    <GlassCard className="space-y-4 p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className={`surface-tone-${tone} rounded-xl p-2.5`}>
+            <Icon className="h-5 w-5" />
+          </div>
+          <div className="space-y-1">
+            <p className="text-[0.98rem] font-medium text-foreground/88">{title}</p>
+            <p className="text-[0.88rem] leading-6 text-foreground/70">{description}</p>
+          </div>
+        </div>
+        <StatusPill label="状态" value={status} tone={tone} />
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-[2rem] font-semibold tracking-[-0.04em] text-foreground">{value}</div>
+        {detail ? <p className="text-sm leading-6 text-foreground/68">{detail}</p> : null}
+      </div>
+
+      <div className="h-2 overflow-hidden rounded-full bg-foreground/10">
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${Math.max(0, Math.min(progress, 100))}%` }}
+          transition={{ duration: 0.45, ease: "easeOut" }}
+          className="h-full rounded-full"
+          style={{ backgroundColor: progressColor }}
+        />
+      </div>
+    </GlassCard>
+  )
+}
+
+function DetailMetricGrid({
+  icon: Icon,
+  title,
+  tone,
+  items,
+}: {
+  icon: typeof Server
+  title: string
+  tone: "indigo" | "plum" | "ochre" | "celadon"
+  items: Array<{ label: string; value: string }>
+}) {
+  return (
+    <GlassCard className="space-y-4 p-5">
+      <div className="flex items-center gap-3">
+        <div className={`surface-tone-${tone} rounded-xl p-2`}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="text-sm font-medium text-foreground/86">{title}</div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {items.map((item) => (
+          <div key={item.label} className="data-panel-muted rounded-[18px] px-4 py-3">
+            <div className="data-metric-label">{item.label}</div>
+            <div className="mt-2 text-[1.08rem] font-semibold tracking-tight text-foreground">{item.value}</div>
+          </div>
+        ))}
+      </div>
+    </GlassCard>
+  )
 }
 
 export function SystemMetricsPanel({
   detailed = false,
   autoRefresh = true,
   refreshInterval = 30000,
+  showHeader = true,
+  showLatency = true,
 }: SystemMetricsPanelProps) {
   const [metrics, setMetrics] = useState<SystemMetrics | DetailedSystemMetrics | null>(null)
   const [loading, setLoading] = useState(true)
@@ -31,7 +131,7 @@ export function SystemMetricsPanel({
       setMetrics(response.data)
       setError(null)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "读取系统指标失败"
+      const message = err instanceof Error ? err.message : "读取系统指标失败。"
       setError(message)
     } finally {
       setLoading(false)
@@ -97,204 +197,135 @@ export function SystemMetricsPanel({
     }
   }, [metrics])
 
-  const cpuUsage = normalized.cpuUsage
-  const memoryUsage = normalized.memoryUsage
-  const diskUsage = normalized.diskUsage
-
-  const cpuStatus = cpuUsage >= 90 ? "高压" : cpuUsage >= 70 ? "偏高" : "平稳"
-  const memoryStatus = memoryUsage >= 85 ? "紧张" : memoryUsage >= 70 ? "偏高" : "平稳"
-  const diskStatus = diskUsage >= 90 ? "紧张" : diskUsage >= 80 ? "预警" : "健康"
+  const cpuStatus = normalized.cpuUsage >= 90 ? "高压" : normalized.cpuUsage >= 70 ? "偏高" : "平稳"
+  const memoryStatus = normalized.memoryUsage >= 85 ? "紧张" : normalized.memoryUsage >= 70 ? "偏高" : "平稳"
+  const diskStatus = normalized.diskUsage >= 90 ? "紧张" : normalized.diskUsage >= 80 ? "预警" : "健康"
 
   if (loading && !metrics) {
     return (
-      <div className="flex items-center justify-center p-12">
-        <RefreshCw className="h-6 w-6 animate-spin text-foreground/50" />
-      </div>
+      <GlassCard className="p-8">
+        <EmptyState
+          compact
+          title="正在读取系统指标"
+          description="系统会在拿到最新资源指标后展示 CPU、内存、磁盘与业务延迟。"
+        />
+      </GlassCard>
     )
   }
 
   if (error) {
     return (
-      <GlassCard className="border-red-200 bg-red-50/50 p-6 dark:bg-red-950/20">
-        <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+      <GlassCard className="surface-tone-cinnabar p-5">
+        <div className="flex items-center gap-2 text-tone-cinnabar">
           <AlertTriangle className="h-5 w-5" />
-          <p>{error}</p>
+          <p className="text-sm leading-7">{error}</p>
         </div>
       </GlassCard>
     )
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h2 className="flex items-center gap-2 text-xl font-semibold tracking-[-0.02em] text-foreground/90">
-            <Activity className="h-5 w-5" />
-            系统指标
-          </h2>
-          <p className="text-[13px] text-foreground/40">查看 CPU、内存、磁盘与业务延迟，判断系统是否适合继续运行。</p>
-        </div>
-        <Badge variant="secondary" className="text-[11px]">
-          {autoRefresh ? "自动刷新" : "手动刷新"}
-        </Badge>
-      </div>
+    <div className="space-y-5">
+      {showHeader ? (
+        <PanelHeader
+          title={
+            <h2 className="section-title flex items-center gap-2">
+              <Activity className="h-5 w-5" />
+              系统指标
+            </h2>
+          }
+          description="查看 CPU、内存、磁盘与业务延迟，判断当前系统是否适合继续运行。"
+          meta={<StatusPill label="刷新" value={autoRefresh ? `${Math.round(refreshInterval / 1000)}s` : "手动"} tone="ink" />}
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <GlassCard className="p-5">
-          <div className="mb-3 flex items-center gap-3">
-            <div className="rounded-lg p-2" style={{ backgroundColor: "rgba(111,124,142,0.10)", color: SONG_COLORS.indigo }}>
-              <Cpu className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-[13px] font-medium text-foreground/70">CPU 占用</p>
-              <p className="text-[11px] text-foreground/40">处理器负载</p>
-            </div>
-          </div>
-          <div className="mb-2 flex items-end gap-2">
-            <span className="text-3xl font-bold text-foreground">{cpuUsage.toFixed(1)}%</span>
-            <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ backgroundColor: "rgba(111,124,142,0.10)", color: SONG_COLORS.indigo }}>{cpuStatus}</span>
-          </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-foreground/10">
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${cpuUsage}%` }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-              className={cn("h-full rounded-full", cpuUsage >= 90 ? "bg-[color:var(--market-up)]" : cpuUsage >= 70 ? "bg-[#B08E61]" : "bg-[#6F7C8E]")}
-            />
-          </div>
-        </GlassCard>
-
-        <GlassCard className="p-5">
-          <div className="mb-3 flex items-center gap-3">
-            <div className="rounded-lg p-2" style={{ backgroundColor: "rgba(122,105,115,0.10)", color: SONG_COLORS.plum }}>
-              <Box className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-[13px] font-medium text-foreground/70">内存占用</p>
-              <p className="text-[11px] text-foreground/40">运行内存</p>
-            </div>
-          </div>
-          <div className="mb-2 flex items-end gap-2">
-            <span className="text-3xl font-bold text-foreground">{memoryUsage.toFixed(1)}%</span>
-            <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ backgroundColor: "rgba(122,105,115,0.10)", color: SONG_COLORS.plum }}>{memoryStatus}</span>
-          </div>
-          <div className="mb-2 text-sm text-foreground/60">
-            {normalized.memoryUsedMb.toFixed(0)} MB / {normalized.memoryTotalMb.toFixed(0)} MB
-          </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-foreground/10">
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${memoryUsage}%` }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-              className={cn("h-full rounded-full", memoryUsage >= 85 ? "bg-[color:var(--market-up)]" : memoryUsage >= 70 ? "bg-[#B08E61]" : "bg-[#7A6973]")}
-            />
-          </div>
-        </GlassCard>
-
-        <GlassCard className="p-5">
-          <div className="mb-3 flex items-center gap-3">
-            <div className="rounded-lg p-2" style={{ backgroundColor: "rgba(176,142,97,0.10)", color: SONG_COLORS.ochre }}>
-              <HardDrive className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-[13px] font-medium text-foreground/70">磁盘占用</p>
-              <p className="text-[11px] text-foreground/40">存储压力</p>
-            </div>
-          </div>
-          <div className="mb-2 flex items-end gap-2">
-            <span className="text-3xl font-bold text-foreground">{diskUsage.toFixed(1)}%</span>
-            <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ backgroundColor: "rgba(176,142,97,0.10)", color: "#8C724C" }}>{diskStatus}</span>
-          </div>
-          <div className="mb-2 text-sm text-foreground/60">剩余 {normalized.diskFreeGb.toFixed(1)} GB</div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-foreground/10">
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${diskUsage}%` }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-              className={cn("h-full rounded-full", diskUsage >= 90 ? "bg-[color:var(--market-up)]" : diskUsage >= 80 ? "bg-[#B08E61]" : "bg-[color:var(--market-down)]")}
-            />
-          </div>
-        </GlassCard>
+        <ResourceMetricCard
+          icon={Cpu}
+          tone="indigo"
+          title="CPU 占用"
+          description="处理器负载"
+          value={`${normalized.cpuUsage.toFixed(1)}%`}
+          status={cpuStatus}
+          progress={normalized.cpuUsage}
+        />
+        <ResourceMetricCard
+          icon={Box}
+          tone="plum"
+          title="内存占用"
+          description="运行内存"
+          value={`${normalized.memoryUsage.toFixed(1)}%`}
+          status={memoryStatus}
+          progress={normalized.memoryUsage}
+          detail={`${normalized.memoryUsedMb.toFixed(0)} MB / ${normalized.memoryTotalMb.toFixed(0)} MB`}
+        />
+        <ResourceMetricCard
+          icon={HardDrive}
+          tone="ochre"
+          title="磁盘占用"
+          description="存储压力"
+          value={`${normalized.diskUsage.toFixed(1)}%`}
+          status={diskStatus}
+          progress={normalized.diskUsage}
+          detail={`剩余 ${normalized.diskFreeGb.toFixed(1)} GB`}
+        />
       </div>
 
-      {detailed && (metrics as DetailedSystemMetrics | undefined)?.system && (
+      {detailed && (metrics as DetailedSystemMetrics | undefined)?.system ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <GlassCard className="p-5">
-            <div className="mb-4 flex items-center gap-2">
-              <Server className="h-4 w-4 text-foreground/40" />
-              <p className="text-[13px] font-medium text-foreground/70">进程资源</p>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="rounded-lg bg-foreground/5 p-3">
-                <p className="mb-1 text-[11px] text-foreground/40">RSS 内存</p>
-                <p className="text-lg font-semibold text-foreground">{(metrics as DetailedSystemMetrics).process.memory.rss_mb} MB</p>
-              </div>
-              <div className="rounded-lg bg-foreground/5 p-3">
-                <p className="mb-1 text-[11px] text-foreground/40">CPU</p>
-                <p className="text-lg font-semibold text-foreground">{(metrics as DetailedSystemMetrics).process.cpu.percent}%</p>
-              </div>
-              <div className="rounded-lg bg-foreground/5 p-3">
-                <p className="mb-1 text-[11px] text-foreground/40">线程数</p>
-                <p className="text-lg font-semibold text-foreground">{(metrics as DetailedSystemMetrics).process.cpu.num_threads}</p>
-              </div>
-              <div className="rounded-lg bg-foreground/5 p-3">
-                <p className="mb-1 text-[11px] text-foreground/40">连接数</p>
-                <p className="text-lg font-semibold text-foreground">{(metrics as DetailedSystemMetrics).process.connections}</p>
-              </div>
-            </div>
-          </GlassCard>
+          <DetailMetricGrid
+            icon={Server}
+            title="进程资源"
+            tone="indigo"
+            items={[
+              { label: "驻留内存", value: `${(metrics as DetailedSystemMetrics).process.memory.rss_mb} MB` },
+              { label: "CPU 占用", value: `${(metrics as DetailedSystemMetrics).process.cpu.percent}%` },
+              { label: "线程数", value: String((metrics as DetailedSystemMetrics).process.cpu.num_threads) },
+              { label: "连接数", value: String((metrics as DetailedSystemMetrics).process.connections) },
+            ]}
+          />
+          <DetailMetricGrid
+            icon={Wifi}
+            title="网络流量"
+            tone="celadon"
+            items={[
+              { label: "发送字节", value: (metrics as DetailedSystemMetrics).network.io.bytes_sent.toLocaleString() },
+              { label: "接收字节", value: (metrics as DetailedSystemMetrics).network.io.bytes_recv.toLocaleString() },
+              { label: "发送包数", value: (metrics as DetailedSystemMetrics).network.io.packets_sent.toLocaleString() },
+              { label: "接收包数", value: (metrics as DetailedSystemMetrics).network.io.packets_recv.toLocaleString() },
+            ]}
+          />
+        </div>
+      ) : null}
 
-          <GlassCard className="p-5">
-            <div className="mb-4 flex items-center gap-2">
-              <Wifi className="h-4 w-4 text-foreground/40" />
-              <p className="text-[13px] font-medium text-foreground/70">网络 I/O</p>
+      {showLatency ? (
+        <GlassCard className="space-y-4 p-5">
+          <div className="flex items-center gap-3">
+            <div className="surface-tone-celadon rounded-xl p-2">
+              <Zap className="h-4 w-4" />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="rounded-lg bg-foreground/5 p-3">
-                <p className="mb-1 text-[11px] text-foreground/40">发送字节</p>
-                <p className="text-lg font-semibold text-foreground">{(metrics as DetailedSystemMetrics).network.io.bytes_sent.toLocaleString()}</p>
-              </div>
-              <div className="rounded-lg bg-foreground/5 p-3">
-                <p className="mb-1 text-[11px] text-foreground/40">接收字节</p>
-                <p className="text-lg font-semibold text-foreground">{(metrics as DetailedSystemMetrics).network.io.bytes_recv.toLocaleString()}</p>
-              </div>
-              <div className="rounded-lg bg-foreground/5 p-3">
-                <p className="mb-1 text-[11px] text-foreground/40">发送包数</p>
-                <p className="text-lg font-semibold text-foreground">{(metrics as DetailedSystemMetrics).network.io.packets_sent.toLocaleString()}</p>
-              </div>
-              <div className="rounded-lg bg-foreground/5 p-3">
-                <p className="mb-1 text-[11px] text-foreground/40">接收包数</p>
-                <p className="text-lg font-semibold text-foreground">{(metrics as DetailedSystemMetrics).network.io.packets_recv.toLocaleString()}</p>
-              </div>
+            <div className="space-y-1">
+              <div className="text-sm font-medium text-foreground/86">业务延迟</div>
+              <p className="text-[0.88rem] leading-6 text-foreground/70">
+                关注数据更新、委托执行和接口响应的节奏是否平稳。
+              </p>
             </div>
-          </GlassCard>
-        </div>
-      )}
-
-      <GlassCard className="p-5">
-        <div className="mb-4 flex items-center gap-2">
-          <Zap className="h-4 w-4 text-foreground/40" />
-          <p className="text-[13px] font-medium text-foreground/70">业务延迟</p>
-        </div>
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <div className="rounded-lg bg-foreground/5 p-3">
-            <p className="mb-1 text-[11px] text-foreground/40">数据更新</p>
-            <p className="text-lg font-semibold text-foreground">{normalized.dataUpdateLatency.toFixed(1)} s</p>
           </div>
-          <div className="rounded-lg bg-foreground/5 p-3">
-            <p className="mb-1 text-[11px] text-foreground/40">委托执行</p>
-            <p className="text-lg font-semibold text-foreground">{normalized.orderExecutionLatency.toFixed(3)} s</p>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            {[
+              { label: "数据更新", value: `${normalized.dataUpdateLatency.toFixed(1)} s` },
+              { label: "委托执行", value: `${normalized.orderExecutionLatency.toFixed(3)} s` },
+              { label: "接口响应", value: `${normalized.apiResponseTime.toFixed(3)} s` },
+              { label: "进程 CPU", value: `${normalized.processCpuUsage.toFixed(1)}%` },
+            ].map((item) => (
+              <div key={item.label} className="data-panel-muted rounded-[18px] px-4 py-3">
+                <div className="data-metric-label">{item.label}</div>
+                <div className="mt-2 text-[1.08rem] font-semibold tracking-tight text-foreground">{item.value}</div>
+              </div>
+            ))}
           </div>
-          <div className="rounded-lg bg-foreground/5 p-3">
-            <p className="mb-1 text-[11px] text-foreground/40">接口响应</p>
-            <p className="text-lg font-semibold text-foreground">{normalized.apiResponseTime.toFixed(3)} s</p>
-          </div>
-          <div className="rounded-lg bg-foreground/5 p-3">
-            <p className="mb-1 text-[11px] text-foreground/40">进程 CPU</p>
-            <p className="text-lg font-semibold text-foreground">{normalized.processCpuUsage.toFixed(1)}%</p>
-          </div>
-        </div>
-      </GlassCard>
+        </GlassCard>
+      ) : null}
     </div>
   )
 }

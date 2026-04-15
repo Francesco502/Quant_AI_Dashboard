@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { GlassCard } from "@/components/ui/card"
 import { api, type DecisionDashboardResult } from "@/lib/api"
+import { formatDateTimeInBeijing } from "@/lib/time"
 
 interface DecisionDashboardProps {
   ticker: string
@@ -58,7 +59,7 @@ export function DecisionDashboard({ ticker, compact = false, showChart = true }:
   if (loading) {
     return (
       <GlassCard className="p-6">
-        <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">Loading decision...</div>
+        <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">Loading decision…</div>
       </GlassCard>
     )
   }
@@ -102,7 +103,7 @@ export function DecisionDashboard({ ticker, compact = false, showChart = true }:
             <Badge className={`text-white ${actionBadgeClass(decision.action)}`}>{decision.action}</Badge>
           </div>
           <p className="text-sm text-muted-foreground">{decision.conclusion}</p>
-          <p className="text-xs text-muted-foreground">{new Date(decision.timestamp).toLocaleString("zh-CN")}</p>
+          <p className="text-xs text-muted-foreground">{formatDateTimeInBeijing(decision.timestamp, {}, String(decision.timestamp))}</p>
         </div>
 
         <div className="text-right">

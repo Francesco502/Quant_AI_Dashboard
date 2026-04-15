@@ -1,9 +1,9 @@
 ﻿"""
-绂荤嚎璁粌娴佹按绾挎ā鍧楋紙闃舵浜岋細璁粌/棰勬祴瑙ｈ€︼級
+Offline training pipeline for model retraining, evaluation, and prediction generation.
 
-鑱岃矗锛?- 鎵归噺璁粌妯″瀷
-- 妯″瀷璇勪及涓庡姣?- 鑷姩娉ㄥ唽鐢熶骇妯″瀷
-- 鐢熸垚棰勬祴淇″彿
+Responsibilities:
+- Batch-train models for a ticker universe
+- Evaluate candidates, promote better models, and generate prediction signals
 """
 
 from __future__ import annotations
@@ -48,12 +48,14 @@ class TrainingPipeline:
         retrain_interval_days: int = 7,
         min_improvement_threshold: float = 0.02,
     ):
-        """
-        鍒濆鍖栬缁冩祦姘寸嚎
+        """Initialize the training pipeline.
 
-        鍙傛暟:
-            model_dir: 妯″瀷鐩綍
-            min_train_days: 鏈€灏忚缁冨ぉ鏁?            retrain_interval_days: 閲嶈缁冮棿闅斿ぉ鏁?            min_improvement_threshold: 鏈€灏忔敼杩涢槇鍊硷紙鐢ㄤ簬鍐冲畾鏄惁鏇存柊鐢熶骇妯″瀷锛?        """
+        Args:
+            model_dir: Directory used to store trained models.
+            min_train_days: Minimum number of days required for training.
+            retrain_interval_days: Minimum interval between retraining runs.
+            min_improvement_threshold: Minimum score improvement required for promotion.
+        """
         self.model_manager = ModelManager(model_dir=model_dir)
         self.registry = self.model_manager.registry
         self.feature_store = get_feature_store()
@@ -66,12 +68,12 @@ class TrainingPipeline:
 
     def should_retrain(self, ticker: str) -> bool:
         """
-        鍒ゆ柇鏄惁闇€瑕侀噸鏂拌缁冩ā鍨?
+        Return whether the ticker should be retrained now.
         鍙傛暟:
             ticker: 鏍囩殑浠ｇ爜
 
         杩斿洖:
-            鏄惁闇€瑕侀噸璁粌
+            Whether retraining should run for the ticker.
         """
         # 妫€鏌ユ槸鍚︽湁鐢熶骇妯″瀷
         prod_model_id = self.registry.get_production_model(ticker)
@@ -101,13 +103,13 @@ class TrainingPipeline:
         hyperparams: Optional[Dict] = None,
     ) -> Optional[str]:
         """
-        璁粌鍗曚釜鏍囩殑鐨勬ā鍨?
+        Train one candidate model for the target ticker.
         鍙傛暟:
             ticker: 鏍囩殑浠ｇ爜
-            price_series: 浠锋牸搴忓垪锛圢one鍒欎粠鏈湴鍔犺浇锛?            model_type: 妯″瀷绫诲瀷 ("xgboost", "lightgbm", "random_forest", "lstm", "gru")
-            use_enhanced_features: 鏄惁浣跨敤澧炲己鐗瑰緛锛堜粎閫傜敤浜庢爲妯″瀷锛?            hyperparams: 瓒呭弬鏁帮紙None鍒欎娇鐢ㄩ粯璁ゅ€硷級
-
-        杩斿洖:
+            price_series: Optional price history. If omitted, local history is loaded.
+            model_type: Model family to train (xgboost, lightgbm, random_forest, lstm, gru).
+            use_enhanced_features: Whether to use enhanced features for tree models.
+            hyperparams: Optional tuned hyperparameters.
             妯″瀷ID锛屽け璐ヨ繑鍥濶one
         """
         # Allow disabling heavy sequence models in low-resource runtime.
@@ -122,7 +124,7 @@ class TrainingPipeline:
         }
 
         if not model_available.get(model_type, False):
-            logger.warning(f"{model_type}鏈畨瑁咃紝璺宠繃璁粌 {ticker}")
+            logger.warning(f"{model_type} is not available, skipping training for {ticker}")
             return None
 
         # 鍔犺浇浠锋牸鏁版嵁
@@ -138,10 +140,10 @@ class TrainingPipeline:
             return None
 
         try:
-            # 璁粌妯″瀷
+            # Resolve the feature-version snapshot used for this training run.
             features_version = self.feature_store.get_feature_version()
             
-            # 鍑嗗璁粌鍙傛暟
+            # Prepare train_model keyword arguments.
             train_kwargs = {
                 "ticker": ticker,
                 "price_series": price_series,
@@ -161,22 +163,22 @@ class TrainingPipeline:
             model_id = self.model_manager.train_model(**train_kwargs)
 
             if model_id:
-                logger.info(f"妯″瀷璁粌鎴愬姛: {ticker} ({model_type}) -> {model_id}")
-                # 鏂规鍥涳細璁粌鍚庢墽琛?Walk-Forward 楠岃瘉骞跺皢鎸囨爣鍐欏叆 registry
+                logger.info(f"Model trained successfully: {ticker} ({model_type}) -> {model_id}")
+                # After training, run Walk-Forward evaluation and persist metrics into the registry.
                 try:
                     metrics = self.evaluate_model(ticker, model_id, price_series)
                     if metrics:
                         self.registry.update_model_metrics(model_id, metrics)
-                        logger.info(f"妯″瀷璇勪及鎸囨爣宸插啓鍏?registry: {list(metrics.keys())}")
+                        logger.info(f"Model metrics persisted to registry: {list(metrics.keys())}")
                 except Exception as eval_err:
-                    logger.warning(f"妯″瀷璇勪及鎴栨洿鏂版寚鏍囧け璐ワ紙涓嶅奖鍝嶈缁冪粨鏋滐級: {eval_err}")
-                return model_id
+                    logger.warning(f"Model evaluation or registry update failed without blocking training: {eval_err}")
             else:
-                logger.warning(f"妯″瀷璁粌澶辫触: {ticker} ({model_type})")
+                logger.warning(f"Model training returned no model id: {ticker} ({model_type})")
                 return None
 
+            return model_id
         except Exception as e:
-            logger.error(f"璁粌妯″瀷寮傚父 ({ticker}, {model_type}): {e}", exc_info=True)
+            logger.error(f"Training pipeline error ({ticker}, {model_type}): {e}", exc_info=True)
             return None
 
     def run_hyperparameter_tuning(
@@ -187,18 +189,18 @@ class TrainingPipeline:
         price_series: Optional[pd.Series] = None,
     ) -> Optional[str]:
         """
-        鏂规涓夛細瀵规寚瀹氭爣鐨勮繍琛?Optuna 瓒呭弬鏁版悳绱㈠悗璁粌骞舵敞鍐屾ā鍨嬶紙褰撳墠浠呮敮鎸?xgboost锛夈€?        
+        Run Optuna tuning for one ticker and train a tuned XGBoost model.
         鍙傛暟:
             ticker: 鏍囩殑浠ｇ爜
             model_type: 妯″瀷绫诲瀷锛岀洰鍓嶄粎 "xgboost"
-            n_trials: Optuna 鎼滅储杞暟
-            price_series: 浠锋牸搴忓垪锛孨one 鍒欎粠鏈湴鍔犺浇
+            n_trials: Number of Optuna trials.
+            price_series: Optional price history. If omitted, local history is loaded.
             
         杩斿洖:
-            璁粌鍚庣殑妯″瀷 ID锛屽け璐ヨ繑鍥?None
+            Trained model id on success, otherwise None.
         """
         if model_type != "xgboost" or not XGBOOST_AVAILABLE:
-            logger.warning("瓒呭弬璋冧紭褰撳墠浠呮敮鎸?xgboost")
+            logger.warning("Hyperparameter tuning currently supports xgboost only")
             return None
         if price_series is None:
             price_series = load_local_price_history(ticker)
@@ -208,7 +210,7 @@ class TrainingPipeline:
         try:
             best_params = run_optuna_xgboost_tuning(price_series, n_trials=n_trials)
             if not best_params:
-                logger.warning("Optuna 鏈壘鍒版湁鏁堝弬鏁帮紝浣跨敤榛樿鍙傛暟璁粌")
+                logger.warning("Optuna returned no valid parameters, falling back to default training parameters")
             return self.train_model(
                 ticker,
                 price_series=price_series,
@@ -248,7 +250,7 @@ class TrainingPipeline:
 
             model = joblib.load(model_path)
             
-            # 纭畾妯″瀷绫诲瀷
+            # Continue with the requested model family after validation and tuning.
             model_class = None
             if isinstance(model, XGBoostForecaster):
                 model_class = XGBoostForecaster
@@ -385,15 +387,15 @@ class TrainingPipeline:
         auto_promote: bool = True,
     ) -> Dict:
         """
-        璁粌妯″瀷骞惰瘎浼帮紝鍙€夎嚜鍔ㄦ彁鍗囦负鐢熶骇妯″瀷
+        Train, evaluate, and optionally promote a candidate model.
 
         鍙傛暟:
             ticker: 鏍囩殑浠ｇ爜
             price_series: 浠锋牸搴忓垪
             model_type: 妯″瀷绫诲瀷
-            auto_promote: 鏄惁鑷姩鎻愬崌涓虹敓浜фā鍨嬶紙濡傛灉琛ㄧ幇鏇村ソ锛?
+            auto_promote: Whether to promote the candidate when it outperforms production.
         杩斿洖:
-            璁粌缁撴灉瀛楀吀
+            Result summary for the training run.
         """
         result = {
             "ticker": ticker,
@@ -404,10 +406,10 @@ class TrainingPipeline:
             "message": "",
         }
 
-        # 璁粌妯″瀷
+        # Train the candidate model first.
         model_id = self.train_model(ticker, price_series, model_type=model_type)
         if not model_id:
-            result["message"] = "妯″瀷璁粌澶辫触"
+            result["message"] = "Model training failed"
             return result
 
         result["model_id"] = model_id
@@ -433,7 +435,7 @@ class TrainingPipeline:
                 else:
                     result["message"] = "妯″瀷璇勪及閫氳繃锛屼絾鎻愬崌澶辫触"
             else:
-                result["message"] = f"妯″瀷璁粌鎴愬姛锛屼絾鏈揪鍒版彁鍗囨爣鍑? {comparison.get('reason', '')}"
+                result["message"] = f"Model trained successfully, but promotion criteria were not met: {comparison.get('reason', '')}"
 
         return result
 
@@ -441,14 +443,14 @@ class TrainingPipeline:
         self, ticker: str, horizon: int = 5, model_id: Optional[str] = None
     ) -> bool:
         """
-        鐢熸垚棰勬祴淇″彿骞朵繚瀛?
+        Generate prediction signals and persist them into the signal store.
         鍙傛暟:
             ticker: 鏍囩殑浠ｇ爜
             horizon: 棰勬祴澶╂暟
             model_id: 妯″瀷ID锛圢one鍒欎娇鐢ㄧ敓浜фā鍨嬶級
 
         杩斿洖:
-            鏄惁鎴愬姛
+            Whether signal generation succeeded.
         """
         if model_id is None:
             model_id = self.registry.get_production_model(ticker)
@@ -524,14 +526,14 @@ class TrainingPipeline:
         generate_signals: bool = True
     ) -> Dict:
         """
-        鎵归噺璁粌浠诲姟
+        Run batch model training for a ticker list and collect execution stats.
 
         鍙傛暟:
             tickers: 鏍囩殑鍒楄〃
-            auto_promote: 鏄惁鑷姩鎻愬崌涓虹敓浜фā鍨?            generate_signals: 鏄惁鐢熸垚棰勬祴淇″彿
-
+            auto_promote: Whether to auto-promote a better candidate model.
+            generate_signals: Whether to generate prediction signals after training.
         杩斿洖:
-            浠诲姟缁撴灉缁熻
+            Aggregated execution statistics for the batch job.
         """
         stats = {
             "total": len(tickers),
@@ -544,7 +546,7 @@ class TrainingPipeline:
 
         for ticker in tickers:
             try:
-                # 妫€鏌ユ槸鍚﹂渶瑕侀噸璁粌
+                # Skip work when retraining is not required for the ticker.
                 if not self.should_retrain(ticker):
                     stats["skipped"] += 1
                     stats["details"].append(
@@ -552,7 +554,7 @@ class TrainingPipeline:
                     )
                     continue
 
-                # 浣庨厤浼樺寲锛氬彲鐢ㄥ唴瀛樹笉瓒虫椂璺宠繃鏈爣鐨勶紝閬垮厤 OOM
+                # Low-spec optimization: skip the ticker when available memory is too low.
                 try:
                     import psutil
                     mem = psutil.virtual_memory()
@@ -598,8 +600,7 @@ class TrainingPipeline:
                 stats["details"].append(
                     {"ticker": ticker, "status": "error", "error": str(e)}
                 )
-                logger.error(f"璁粌浠诲姟寮傚父 ({ticker}): {e}", exc_info=True)
+                logger.error(f"Batch training failed for {ticker}: {e}", exc_info=True)
             finally:
-                gc.collect()  # 浣庨厤浼樺寲锛氭瘡鏍囩殑鍚庨噴鏀惧唴瀛?
+                gc.collect()  # Low-spec optimization: release memory after each ticker.
         return stats
-

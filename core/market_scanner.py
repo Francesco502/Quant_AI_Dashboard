@@ -110,7 +110,7 @@ class MarketScanner:
         market: str = "CN",
         batch_size: int = 50,
         max_workers: int = 2,
-        limit: int = 200,
+        limit: Optional[int] = None,
     ) -> List[Dict]:
         """
         执行扫描
@@ -120,7 +120,7 @@ class MarketScanner:
             market: "CN" or "HK"
             batch_size: 每批次获取数据的股票数量
             max_workers: 最大工作线程数
-            limit: 最大扫描数量 (Debug用)
+            limit: 扫描样本上限，None 表示扫描当前可获取的全部样本
 
         Returns:
             符合条件的股票列表
@@ -129,8 +129,10 @@ class MarketScanner:
         if not all_tickers:
             return []
 
-        # 仅取前 limit 个用于演示/测试
-        target_tickers = [t["ticker"] for t in all_tickers[:limit]]
+        target_tickers = [t["ticker"] for t in all_tickers]
+        if limit is not None:
+            safe_limit = max(1, int(limit))
+            target_tickers = target_tickers[:safe_limit]
 
         results = []
 
@@ -230,7 +232,7 @@ class MarketScanner:
         self,
         strategy_name: str,
         market: str = "CN",
-        limit: int = 100,
+        limit: Optional[int] = None,
         min_score: int = 60,
     ) -> List[Dict]:
         """
@@ -264,7 +266,7 @@ class MarketScanner:
         self,
         strategy_configs: List[Dict],
         market: str = "CN",
-        limit: int = 100,
+        limit: Optional[int] = None,
         top_n_per_strategy: int = 10,
     ) -> Dict[str, List[Dict]]:
         """

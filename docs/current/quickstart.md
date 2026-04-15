@@ -5,34 +5,16 @@
 - Python 3.11 recommended
 - Node.js 20 recommended
 - npm 10+
-- Optional: a virtual environment under `.venv/`
+- Optional local virtual environment under `.venv/`
 
-## Fastest Local Start
+## Local Startup
 
-From the repository root:
-
-```powershell
-.\start.ps1
-```
-
-This launches:
-
-- FastAPI backend on `8685`
-- background daemon on the default daemon config
-- Next.js frontend on `8686`
-
-## Manual Startup
+Start services explicitly from the repository root.
 
 Backend:
 
 ```powershell
 python -m uvicorn api.main:app --host 0.0.0.0 --port 8685 --reload
-```
-
-Daemon:
-
-```powershell
-python -m core.daemon
 ```
 
 Frontend:
@@ -43,6 +25,12 @@ npm install
 npm run dev
 ```
 
+Optional daemon:
+
+```powershell
+python -m core.daemon
+```
+
 ## Access URLs
 
 - Frontend: [http://localhost:8686](http://localhost:8686)
@@ -51,9 +39,9 @@ npm run dev
 
 ## Login Notes
 
-- Admin creation depends on `APP_LOGIN_PASSWORD` or `APP_LOGIN_PASSWORD_HASH`
-- The default admin username is `admin` unless `APP_ADMIN_USERNAME` is set
-- If no login password is configured, the backend may run in a local development mode depending on environment
+- Default admin username is `admin` unless `APP_ADMIN_USERNAME` is set.
+- Set `APP_LOGIN_PASSWORD` or `APP_LOGIN_PASSWORD_HASH` before expecting browser login to work.
+- Local development may appear to start successfully even when login credentials are missing, so always verify `/login` after boot.
 
 ## Recommended Checks
 
@@ -64,4 +52,10 @@ python -m pytest tests/integration -q
 cd web
 npm run lint
 npm run build
+```
+
+For release-style validation against already running services:
+
+```powershell
+python scripts/release_check.py
 ```

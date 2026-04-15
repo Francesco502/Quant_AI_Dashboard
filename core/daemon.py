@@ -65,7 +65,7 @@ def _default_config() -> Dict[str, Any]:
             "interval_minutes": 120,
         },
         "trading": {
-            "enabled": True,
+            "enabled": False,
             "interval_minutes": 60,
             "max_positions": 3,
             "initial_capital": 100_000.0,
@@ -92,7 +92,7 @@ def _default_config() -> Dict[str, Any]:
             "evaluation_limit": 120,
         },
         "training": {
-            "enabled": True,
+            "enabled": False,
             "time": "02:00",
             "model_type": "xgboost",
             "auto_promote": True,
@@ -139,15 +139,15 @@ def _normalize_config(config: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
 
     normalized["trading"] = trading_cfg
     return normalized, changed
-# ACCOUNT_PATH 宸插純鐢紝鐜板湪浣跨敤鏁版嵁搴撳瓨鍌?
+# ACCOUNT_PATH is deprecated; account state now lives in SQLite.
 
 def _ensure_dirs() -> None:
     os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
     os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
 
 
-def load_config() -> Dict[str, Any]:
-    """Load daemon configuration; create defaults when config file is missing."""
+def _load_config_legacy() -> Dict[str, Any]:
+    """Deprecated legacy config loader kept only for historical reference."""
     if not os.path.exists(CONFIG_PATH):
         default = {
             "universe": ["013281", "002611", "160615", "016858", "159755", "006810"],
@@ -157,10 +157,10 @@ def load_config() -> Dict[str, Any]:
             "tushare_token": "",
             "data_update": {
                 "enabled": True,
-                "interval_minutes": 120,  # 浣庨厤浼樺寲锛氭瘡2灏忔椂鏇存柊
+                "interval_minutes": 120,  # Low-spec optimization: update every 2 hours.
             },
             "trading": {
-                "enabled": True,
+                "enabled": False,
                 "interval_minutes": 60,
                 "max_positions": 5,
                 "initial_capital": 100_000.0,
@@ -187,8 +187,10 @@ def load_config() -> Dict[str, Any]:
                 "evaluation_limit": 120,
             },
             "training": {
-                "enabled": True,
-                "time": "02:00",  # 浣庨厤浼樺寲锛氬噷鏅ㄤ綆宄版墽琛?                "model_type": "xgboost",  # 鍙€? "xgboost", "lightgbm", "random_forest"锛堜綆閰嶇鐢?lstm/gru锛?                "auto_promote": True,
+                "enabled": False,
+                "time": "02:00",  # Low-spec optimization: run during off-peak hours.
+                "model_type": "xgboost",  # Supported: xgboost, lightgbm, random_forest. Avoid lstm/gru on low-spec hosts.
+                "auto_promote": True,
                 "generate_signals": True,
                 "min_train_days": 60,
                 "retrain_interval_days": 7,
@@ -233,6 +235,43 @@ def save_config(config: Dict[str, Any]) -> None:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
 
+def _is_pid_running(pid: Any) -> bool:
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return False
+
+    if pid_int <= 0:
+        return False
+
+    try:
+        import psutil
+
+        return bool(psutil.pid_exists(pid_int))
+    except Exception:
+        pass
+
+    if os.name == "nt":
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid_int}"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            return str(pid_int) in result.stdout
+        except Exception:
+            return False
+
+    try:
+        os.kill(pid_int, 0)
+        return True
+    except OSError:
+        return False
+
+
 def load_status() -> Dict[str, Any]:
     """Read daemon runtime status from disk."""
     if not os.path.exists(STATUS_PATH):
@@ -241,7 +280,12 @@ def load_status() -> Dict[str, Any]:
     try:
         with open(STATUS_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        if data.get("daemon_running") and not _is_pid_running(data.get("daemon_pid")):
+            data = dict(data)
+            data["daemon_running"] = False
+        return data
     except Exception:
         return {}
 
@@ -257,7 +301,7 @@ def save_status(patch: Dict[str, Any]) -> None:
 
 
 def _load_account() -> Dict[str, Any]:
-    """浠庢暟鎹簱鍔犺浇妯℃嫙璐︽埛锛堝畧鎶よ繘绋嬬増鏈級"""
+    """Load the daemon paper account from SQLite, creating one on first run."""
     from .database import get_database
     from .account_manager import AccountManager
 
@@ -265,24 +309,25 @@ def _load_account() -> Dict[str, Any]:
         db = get_database()
         account_mgr = AccountManager(db)
 
-        # 鑾峰彇榛樿鐢ㄦ埛锛坉aemon浣跨敤鐢ㄦ埛ID=1锛夌殑绗竴涓椿璺冭处鎴?        cursor = db.conn.cursor()
-        cursor.execute("""
+        # Fetch the first active account for the default daemon user (user_id=1).
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """
             SELECT id, account_name, balance, frozen, initial_capital
             FROM accounts
             WHERE user_id = 1 AND status = 'active'
             ORDER BY id ASC
             LIMIT 1
-        """)
+            """
+        )
         row = cursor.fetchone()
 
         if not row:
-            # 鍒涘缓榛樿璐︽埛
             account_id = account_mgr.create_account(
                 user_id=1,
-                name="Daemon妯℃嫙璐︽埛",
-                initial_balance=1_000_000.0
+                name="Daemon Auto Paper Trading",
+                initial_balance=1_000_000.0,
             )
-            account = account_mgr.get_account(account_id, user_id=1)
             return {
                 "account_id": account_id,
                 "initial_capital": 1_000_000.0,
@@ -293,11 +338,12 @@ def _load_account() -> Dict[str, Any]:
             }
 
         account_id = row["id"]
-
-        # 鑾峰彇鎸佷粨
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT ticker, shares FROM positions WHERE account_id = ?
-        """, (account_id,))
+            """,
+            (account_id,),
+        )
         positions = {r["ticker"]: r["shares"] for r in cursor.fetchall()}
 
         return {
@@ -310,8 +356,7 @@ def _load_account() -> Dict[str, Any]:
         }
 
     except Exception as e:
-        logging.error("daemon: 鍔犺浇璐︽埛澶辫触: %s", e)
-        # 杩斿洖榛樿缁撴瀯
+        logging.error("daemon: failed to load daemon account: %s", e)
         return {
             "initial_capital": 1_000_000.0,
             "cash": 1_000_000.0,
@@ -322,16 +367,12 @@ def _load_account() -> Dict[str, Any]:
 
 
 def _save_account(account: Dict[str, Any]) -> None:
-    """淇濆瓨璐︽埛鍒版暟鎹簱锛堝畧鎶よ繘绋嬬増鏈級
-
-    娉ㄦ剰锛氱幇鍦ㄦ暟鎹疄鏃跺啓鍏ユ暟鎹簱锛屾鍑芥暟淇濈暀鐢ㄤ簬鍏煎
-    """
-    # 鏁版嵁宸插疄鏃跺啓鍏ユ暟鎹簱锛屾棤闇€棰濆鎿嶄綔
+    """Account state is persisted in SQLite; this stub remains for compatibility."""
     pass
 
 
 def data_update_job(cfg: Dict[str, Any]) -> None:
-    """鏁版嵁鏇存柊浠诲姟锛氳皟鐢?data_updater 涓?universe 鍒楄〃澧為噺鏇存柊鏈湴浠撳簱锛屽苟璁＄畻鐗瑰緛"""
+    """Run scheduled historical data updates and feature refresh."""
     if not _memory_guard():
         return
     universe: List[str] = cfg.get("universe") or []
@@ -341,10 +382,8 @@ def data_update_job(cfg: Dict[str, Any]) -> None:
 
     days = int(cfg.get("days", 365))
     data_sources = cfg.get("data_sources") or ["AkShare"]
-    # Prefer env vars over config file for secrets.
     alpha_vantage_key = os.getenv("ALPHA_VANTAGE_KEY") or cfg.get("alpha_vantage_key") or ""
     tushare_token = os.getenv("TUSHARE_TOKEN") or cfg.get("tushare_token") or ""
-
 
     logging.info("daemon: starting data update job, tickers=%d, days=%d", len(universe), days)
     update_local_history_for_tickers(
@@ -356,8 +395,7 @@ def data_update_job(cfg: Dict[str, Any]) -> None:
     )
     logging.info("daemon: data update job completed.")
 
-    # 闃舵涓€锛氭暟鎹洿鏂板悗鑷姩璁＄畻鐗瑰緛
-    logging.info("daemon: 寮€濮嬭绠楃壒寰?..")
+    logging.info("daemon: refreshing feature store after data update...")
     feature_store = get_feature_store()
     use_enhanced_features = cfg.get("features", {}).get("use_enhanced", True)
     feature_success_count = 0
@@ -374,11 +412,13 @@ def data_update_job(cfg: Dict[str, Any]) -> None:
                 else:
                     feature_fail_count += 1
         except Exception as e:
-            logging.warning("daemon: 璁＄畻鐗瑰緛澶辫触 (%s): %s", ticker, e)
+            logging.warning("daemon: failed to refresh features for %s: %s", ticker, e)
             feature_fail_count += 1
 
     logging.info(
-        "daemon: 鐗瑰緛璁＄畻瀹屾垚锛屾垚鍔?%d锛屽け璐?%d", feature_success_count, feature_fail_count
+        "daemon: feature refresh finished, success=%d, failed=%d",
+        feature_success_count,
+        feature_fail_count,
     )
     save_status(
         {
@@ -391,35 +431,35 @@ def data_update_job(cfg: Dict[str, Any]) -> None:
 
 
 def _memory_guard(threshold_percent: int = 80) -> bool:
-    """Memory guard: skip jobs when system memory usage is above threshold."""
+    """Memory guard: skip heavy jobs when system memory usage is above threshold."""
     try:
         import gc
         import time
         import psutil
+
         mem = psutil.virtual_memory()
         if mem.percent > threshold_percent:
             logging.warning(
-                "daemon: 鍐呭瓨浣跨敤鐜?%s%%锛岃秴杩囬槇鍊?%s%%锛屾殏鍋滀换鍔″苟閲婃斁鍐呭瓨",
-                mem.percent, threshold_percent,
+                "daemon: memory usage %.1f%% is above threshold %.1f%%, skipping heavy job",
+                mem.percent,
+                threshold_percent,
             )
             gc.collect()
             time.sleep(30)
             return False
     except Exception as e:
-        logging.debug("daemon: memory_guard 妫€鏌ュ紓甯? %s", e)
+        logging.debug("daemon: memory_guard check failed: %s", e)
     return True
 
 
 def daily_analysis_job(cfg: Dict[str, Any]) -> None:
-    """Run daily LLM analysis task."""
-
-
+    """Run the scheduled daily LLM analysis task."""
     if not _memory_guard():
         return
     try:
         from core.daily_analysis import run_daily_analysis_from_env
 
-        logging.info("daemon: 寮€濮嬫墽琛屾瘡鏃ユ櫤鑳藉垎鏋愪换鍔?..")
+        logging.info("daemon: starting daily analysis job...")
         result = run_daily_analysis_from_env(include_market_review=True)
         save_status(
             {
@@ -432,7 +472,7 @@ def daily_analysis_job(cfg: Dict[str, Any]) -> None:
         )
         logging.info("daemon: daily analysis job completed.")
     except Exception as e:
-        logging.warning("daemon: 姣忔棩鏅鸿兘鍒嗘瀽浠诲姟澶辫触: %s", e)
+        logging.warning("daemon: daily analysis job failed: %s", e)
 
 
 def training_job(cfg: Dict[str, Any]) -> None:
@@ -446,14 +486,17 @@ def training_job(cfg: Dict[str, Any]) -> None:
 
     training_config = cfg.get("training", {})
     model_type = training_config.get("model_type", "xgboost")
-    # 浣庨厤浼樺寲锛氱鐢?LSTM/GRU 鏃跺己鍒朵娇鐢?xgboost
     if model_type in ("lstm", "gru") and os.environ.get("DISABLE_HEAVY_MODELS", "").strip().lower() in ("1", "true", "yes"):
-        logging.info("daemon: DISABLE_HEAVY_MODELS 宸插紑鍚紝灏?lstm/gru 鍥為€€涓?xgboost")
+        logging.info("daemon: DISABLE_HEAVY_MODELS is enabled, fallback %s -> xgboost", model_type)
         model_type = "xgboost"
     auto_promote = training_config.get("auto_promote", True)
     generate_signals = training_config.get("generate_signals", True)
 
-    logging.info("daemon: 寮€濮嬫ā鍨嬭缁冧换鍔★紝鏍囩殑鏁?%d锛屾ā鍨嬬被鍨?%s", len(universe), model_type)
+    logging.info(
+        "daemon: starting training job, tickers=%d, model_type=%s",
+        len(universe),
+        model_type,
+    )
 
     try:
         pipeline = TrainingPipeline(
@@ -464,14 +507,14 @@ def training_job(cfg: Dict[str, Any]) -> None:
         )
 
         stats = pipeline.run_training_job(
-            tickers=universe, 
+            tickers=universe,
             model_type=model_type,
-            auto_promote=auto_promote, 
-            generate_signals=generate_signals
+            auto_promote=auto_promote,
+            generate_signals=generate_signals,
         )
 
         logging.info(
-            "daemon: 璁粌浠诲姟瀹屾垚锛屾€昏=%d锛屾垚鍔?%d锛屾彁鍗?%d锛屽け璐?%d锛岃烦杩?%d",
+            "daemon: training finished, total=%d, trained=%d, promoted=%d, failed=%d, skipped=%d",
             stats["total"],
             stats["trained"],
             stats["promoted"],
@@ -493,7 +536,7 @@ def training_job(cfg: Dict[str, Any]) -> None:
         )
 
     except Exception as e:
-        logging.error("daemon: 璁粌浠诲姟寮傚父: %s", e, exc_info=True)
+        logging.error("daemon: training job failed: %s", e, exc_info=True)
         save_status(
             {
                 "last_training_run": local_now_str(),
@@ -674,5 +717,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

@@ -1,6 +1,5 @@
 "use client"
 
-import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 import { motion } from "framer-motion"
 import {
@@ -14,20 +13,27 @@ import {
   YAxis,
 } from "recharts"
 import {
-  ArrowRight,
-  Bot,
-  Compass,
-  Layers3,
-  PlayCircle,
-  WalletCards,
 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import { MeasuredChart } from "@/components/charts/measured-chart"
-import { api as apiClient, type Asset, type AutoTradingStatusResponse, type PaperAccountInfo, type PricePoint, type UserAssetOverview } from "@/lib/api"
+import {
+  api as apiClient,
+  type Asset,
+  type AutoTradingStatusResponse,
+  type MarketReviewResponse,
+  type PaperAccountInfo,
+  type PricePoint,
+  type UserAssetOverview,
+} from "@/lib/api"
 import { SONG_COLORS } from "@/lib/chart-theme"
-import { useAuth } from "@/lib/auth-context"
-import { getWorkspaceGroups } from "@/lib/workspace-nav"
+import {
+  diffBeijingCalendarDays,
+  formatDateInBeijing,
+  formatDateTimeInBeijing,
+  formatMonthDayInBeijing,
+  formatTimeInBeijing,
+  toBeijingDate,
+} from "@/lib/time"
 import { cn, formatCurrency, formatPercent } from "@/lib/utils"
 
 const container = {
@@ -42,14 +48,6 @@ const item = {
 
 const chartPalette = [SONG_COLORS.celadon, SONG_COLORS.indigo, SONG_COLORS.plum, SONG_COLORS.ochre]
 
-const toneClasses = {
-  indigo: "from-[#6F7C8E]/12 via-[#6F7C8E]/4 to-transparent",
-  celadon: "from-[#4D7358]/12 via-[#4D7358]/4 to-transparent",
-  plum: "from-[#7A6973]/12 via-[#7A6973]/4 to-transparent",
-  ochre: "from-[#B08E61]/12 via-[#B08E61]/4 to-transparent",
-  ink: "from-[#4D4742]/12 via-[#4D4742]/4 to-transparent",
-} as const
-
 const tooltipStyle = {
   backgroundColor: "rgba(248, 244, 238, 0.96)",
   borderRadius: "18px",
@@ -60,37 +58,75 @@ const tooltipStyle = {
 }
 
 function formatDateLabel(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
+  return formatMonthDayInBeijing(value, value)
+}
+
+function parseFreshnessDate(value?: string | null) {
+  if (!value) return null
+  return toBeijingDate(value)
+}
+
+function hasExplicitTime(value?: string | null) {
+  return Boolean(value && /(?:T|\s)\d{1,2}:\d{2}/.test(value))
+}
+
+function formatFreshnessSource(value?: string | null) {
+  const date = parseFreshnessDate(value)
+  if (!date) return "未获取"
+  if (hasExplicitTime(value)) {
+    return formatTimeInBeijing(date, { hour: "2-digit", minute: "2-digit", hour12: false }, "未获取")
   }
-  return `${date.getMonth() + 1}/${date.getDate()}`
+  return formatMonthDayInBeijing(date, "未获取")
+}
+
+function resolveFreshnessLabel(values: Array<string | null | undefined>) {
+  const candidates = values
+    .map((value) => ({ raw: value, date: parseFreshnessDate(value) }))
+    .filter((item): item is { raw: string; date: Date } => Boolean(item.raw && item.date))
+
+  if (candidates.length === 0) return "待同步"
+
+  const freshest = candidates.reduce((latest, item) => (item.date > latest.date ? item : latest))
+  const lagDays = diffBeijingCalendarDays(new Date(), freshest.date) ?? 0
+
+  if (lagDays > 0) {
+    return `已滞后 ${lagDays} 天`
+  }
+
+  if (hasExplicitTime(freshest.raw)) {
+    return `${formatTimeInBeijing(freshest.date, { hour: "2-digit", minute: "2-digit", hour12: false })} 已更新`
+  }
+
+  return "今日已更新"
 }
 
 export default function HomePage() {
-  const { user } = useAuth()
-  const isAdmin = user?.role === "admin"
-  const workspaceGroups = useMemo(() => getWorkspaceGroups(isAdmin), [isAdmin])
-
   const [assetPool, setAssetPool] = useState<Asset[]>([])
   const [portfolio, setPortfolio] = useState<UserAssetOverview | null>(null)
   const [account, setAccount] = useState<PaperAccountInfo["portfolio"] | null>(null)
   const [autoStatus, setAutoStatus] = useState<AutoTradingStatusResponse | null>(null)
+  const [marketReview, setMarketReview] = useState<MarketReviewResponse | null>(null)
   const [priceData, setPriceData] = useState<Record<string, PricePoint[]>>({})
   const [selectedTickers, setSelectedTickers] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
+    let retryTimer: number | null = null
+    const maxRetryAttempts = 6
+    const retryDelayMs = 2500
 
-    const loadWorkspace = async () => {
-      setLoading(true)
+    const loadWorkspace = async (attempt: number = 0) => {
+      if (attempt === 0) {
+        setLoading(true)
+      }
 
-      const [assetPoolResult, portfolioResult, accountResult, autoResult] = await Promise.allSettled([
+      const [assetPoolResult, portfolioResult, accountResult, autoResult, marketReviewResult] = await Promise.allSettled([
         apiClient.stz.getAssetPool(),
         apiClient.user.assets.getOverview(false),
         apiClient.trading.paper.getAccount(),
         apiClient.trading.auto.getStatus(),
+        apiClient.market.dailyReview("cn"),
       ])
 
       if (cancelled) {
@@ -99,11 +135,27 @@ export default function HomePage() {
 
       const nextAssetPool = assetPoolResult.status === "fulfilled" ? assetPoolResult.value ?? [] : []
       setAssetPool(nextAssetPool)
-      setSelectedTickers(nextAssetPool.slice(0, 4).map((asset) => asset.ticker))
+      setSelectedTickers(nextAssetPool.slice(0, 6).map((asset) => asset.ticker))
 
       setPortfolio(portfolioResult.status === "fulfilled" ? portfolioResult.value : null)
       setAccount(accountResult.status === "fulfilled" ? accountResult.value?.portfolio ?? null : null)
       setAutoStatus(autoResult.status === "fulfilled" ? autoResult.value : null)
+      setMarketReview(marketReviewResult.status === "fulfilled" ? marketReviewResult.value : null)
+
+      const hasSuccessfulSource =
+        nextAssetPool.length > 0 ||
+        portfolioResult.status === "fulfilled" ||
+        accountResult.status === "fulfilled" ||
+        autoResult.status === "fulfilled" ||
+        marketReviewResult.status === "fulfilled"
+
+      if (!hasSuccessfulSource && attempt < maxRetryAttempts - 1) {
+        retryTimer = window.setTimeout(() => {
+          void loadWorkspace(attempt + 1)
+        }, retryDelayMs)
+        return
+      }
+
       setLoading(false)
     }
 
@@ -111,6 +163,9 @@ export default function HomePage() {
 
     return () => {
       cancelled = true
+      if (retryTimer) {
+        window.clearTimeout(retryTimer)
+      }
     }
   }, [])
 
@@ -178,41 +233,69 @@ export default function HomePage() {
     })
   }, [assetPool, priceData])
 
+  const assetLabelMap = useMemo(
+    () =>
+      Object.fromEntries(
+        assetPool.map((asset) => [asset.ticker, asset.alias || asset.name || asset.ticker]),
+      ),
+    [assetPool],
+  )
+
+  const scannerUpdatedAt = useMemo(() => {
+    const datedAssets = assetPool
+      .map((asset) => ({ raw: asset.last_price_date, date: parseFreshnessDate(asset.last_price_date) }))
+      .filter((item): item is { raw: string; date: Date } => Boolean(item.raw && item.date))
+
+    if (datedAssets.length === 0) return null
+    return datedAssets.reduce((latest, item) => (item.date > latest.date ? item : latest)).raw
+  }, [assetPool])
+
+  const holdingsUpdatedAt = portfolio?.summary.updated_at ?? null
+  const marketReviewUpdatedAt = marketReview?.date ?? null
+  const freshnessLabel = resolveFreshnessLabel([
+    marketReviewUpdatedAt,
+    scannerUpdatedAt,
+    holdingsUpdatedAt,
+  ])
+  const freshnessDetail = `复盘 ${formatFreshnessSource(marketReviewUpdatedAt)} · 扫描 ${formatFreshnessSource(scannerUpdatedAt)} · 持仓 ${formatFreshnessSource(holdingsUpdatedAt)}`
+  const autoRunSummary = autoStatus?.daemon.last_trading_run
+    ? formatDateTimeInBeijing(autoStatus.daemon.last_trading_run)
+    : "尚未执行"
+  const autoUniverseSummary =
+    autoStatus?.config.universe_mode === "cn_a_share"
+      ? "A股全市场"
+      : `${autoStatus?.universe_summary?.ticker_count ?? autoStatus?.config.universe.length ?? assetPool.length} 个`
+
   const summaryCards = [
     {
       label: "模拟账户权益",
       value: account ? formatCurrency(account.total_assets) : "待连接",
       detail: account ? `现金 ${formatCurrency(account.cash)}` : "连接后显示权益与现金结构",
+      footer: account ? `持仓市值 ${formatCurrency(account.market_value)}` : null,
     },
     {
       label: "个人资产市值",
       value: portfolio ? formatCurrency(portfolio.summary.total_market_value) : "待同步",
       detail: portfolio ? `共 ${portfolio.summary.asset_count} 项持仓` : "进入资产页后可继续编辑定投与持仓",
+      footer: holdingsUpdatedAt ? `估值 ${formatFreshnessSource(holdingsUpdatedAt)}` : null,
     },
     {
-      label: "自动交易状态",
+      label: "自动交易",
       value: autoStatus?.config.enabled ? "已启用" : "手动模式",
-      detail: autoStatus ? `${autoStatus.config.strategy_ids.length} 个候选策略` : "可在模拟交易页配置策略与频率",
+      detail: autoStatus
+        ? `${autoStatus.config.strategy_ids.length} 个策略 · ${autoStatus.daemon.daemon_running ? "调度器在线" : "调度器离线"}`
+        : "可在模拟交易页配置策略与频率",
+      footer: `最近执行 ${autoRunSummary} · ${autoUniverseSummary}`,
+    },
+    {
+      label: "数据新鲜度",
+      value: freshnessLabel,
+      detail: freshnessDetail,
+      footer: "来源：复盘 / 扫描 / 持仓估值",
     },
   ]
 
-  const heroHighlights = [
-    {
-      icon: Compass,
-      title: "先进入工作台",
-      text: "先看全局概览、当日状态和关键提醒，再决定接下来进入哪一组工作区。",
-    },
-    {
-      icon: Bot,
-      title: "再切到研究",
-      text: "AI分析、大盘复盘、市场扫描、预测研究和决策仪表盘都收进同一组二级导航。",
-    },
-    {
-      icon: PlayCircle,
-      title: "最后去执行",
-      text: "模拟交易、策略回测与量化策略继续保持连贯，避免在顶栏里堆成一排。",
-    },
-  ]
+
 
   const rangeSummaries = [
     {
@@ -233,254 +316,94 @@ export default function HomePage() {
     },
   ]
 
-  const autoRunSummary = autoStatus?.daemon.last_trading_run
-    ? new Date(autoStatus.daemon.last_trading_run).toLocaleString("zh-CN")
-    : "尚未执行"
-  const autoUniverseSummary =
-    autoStatus?.config.universe_mode === "cn_a_share"
-      ? "A股全市场"
-      : `${autoStatus?.universe_summary?.ticker_count ?? autoStatus?.config.universe.length ?? assetPool.length} 个`
+  const toggleObservedTicker = (ticker: string) => {
+    setSelectedTickers((current) => {
+      if (current.includes(ticker)) {
+        return current.length === 1 ? current : current.filter((value) => value !== ticker)
+      }
+      return [...current, ticker]
+    })
+  }
 
-  const selectedLabel =
-    selectedTickers.length === 1
-      ? watchRows.find((item) => item.ticker === selectedTickers[0])?.alias ||
-        watchRows.find((item) => item.ticker === selectedTickers[0])?.name ||
-        selectedTickers[0]
-      : "资产池观察"
+  const formatObservedPrice = (value?: number | string | null) => {
+    const numeric = Number(value ?? 0)
+    return Number.isFinite(numeric) ? numeric.toFixed(4) : "—"
+  }
 
   return (
     <motion.div variants={container} initial="hidden" animate="show" className="space-y-8">
-      <motion.section
-        variants={item}
-        className="grid gap-6 xl:grid-cols-[minmax(0,1.18fr)_360px]"
-      >
-        <div className="relative overflow-hidden rounded-[34px] border border-black/[0.07] bg-[linear-gradient(135deg,rgba(248,244,238,0.96),rgba(242,236,228,0.84))] px-6 py-7 shadow-[0_30px_70px_rgba(41,33,25,0.08)] sm:px-8 sm:py-8">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(111,124,142,0.12),transparent_34%),radial-gradient(circle_at_12%_18%,rgba(176,142,97,0.12),transparent_26%)]" />
-          <div className="relative max-w-3xl">
-            <div className="text-[11px] font-medium tracking-[0.24em] text-foreground/34">今日总览</div>
-            <h1 className="mt-4 max-w-2xl text-3xl font-semibold tracking-[-0.04em] text-foreground/92 sm:text-[38px]">
-              把研究、执行、资产与系统安排在同一张清雅而清晰的案头上。
-            </h1>
-            <p className="mt-4 max-w-2xl text-[14px] leading-7 text-foreground/56 sm:text-[15px]">
-              顶部只保留五个一级工作区：工作台、研究、执行、资产、系统。进入一级后，左侧再显示对应二级页面，让层级更稳定，也更适合长期研习与记录。
-            </p>
-          </div>
-
-          <div className="relative mt-8 grid gap-3 sm:grid-cols-3">
-            {heroHighlights.map((highlight) => (
+      <motion.section variants={item}>
+        <div className="data-panel rounded-[30px] p-5">
+          <div className="section-title">今日状态</div>
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {summaryCards.map((summary) => (
               <div
-                key={highlight.title}
-                className="rounded-[24px] border border-black/[0.05] bg-white/62 p-4 shadow-[0_12px_32px_rgba(41,33,25,0.04)]"
+                key={summary.label}
+                className="data-panel-muted flex h-full min-h-[164px] flex-col rounded-[22px] px-4 py-3"
               >
-                <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/84">
-                  <highlight.icon className="h-4 w-4 text-[#6F7C8E]" />
-                  {highlight.title}
+                <div className="data-metric-label">{summary.label}</div>
+                <div className="mt-2 min-h-[50px] text-[1.28rem] font-semibold tabular-nums tracking-tight text-foreground/92">
+                  {summary.value}
                 </div>
-                <p className="mt-2 text-[13px] leading-6 text-foreground/54">{highlight.text}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="rounded-[30px] border border-black/[0.07] bg-[rgba(247,243,237,0.95)] p-5 shadow-[0_24px_60px_rgba(41,33,25,0.06)]">
-            <div className="text-[11px] font-medium tracking-[0.22em] text-foreground/34">今日状态</div>
-            <div className="mt-3 text-[20px] font-semibold tracking-[-0.03em] text-foreground/90">
-              当前工作面
-            </div>
-            <div className="mt-5 space-y-3">
-              {summaryCards.map((summary) => (
-                <div key={summary.label} className="rounded-[22px] border border-black/[0.05] bg-white/72 px-4 py-3">
-                  <div className="text-[12px] text-foreground/42">{summary.label}</div>
-                  <div className="mt-1 text-[18px] font-semibold tracking-[-0.03em] text-foreground/88">{summary.value}</div>
-                  <div className="mt-1 text-[12px] leading-5 text-foreground/48">{summary.detail}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-[30px] border border-black/[0.07] bg-[rgba(247,243,237,0.95)] p-5 shadow-[0_20px_52px_rgba(41,33,25,0.05)]">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-[11px] font-medium tracking-[0.22em] text-foreground/34">自动交易</div>
-                <div className="mt-2 text-[17px] font-semibold tracking-[-0.02em] text-foreground/88">
-                  {autoStatus?.config.enabled ? "自动执行中" : "等待手动配置"}
-                </div>
-              </div>
-              <div
-                className={cn(
-                  "rounded-full px-2.5 py-1 text-[11px] font-medium",
-                  autoStatus?.config.enabled ? "bg-market-up-soft text-market-up" : "bg-black/[0.05] text-foreground/56"
-                )}
-              >
-                {autoStatus?.daemon.daemon_running ? "调度器在线" : "调度器离线"}
-              </div>
-            </div>
-            <div className="mt-4 space-y-2 text-[12px] leading-6 text-foreground/52">
-              <div>最近执行：{autoRunSummary}</div>
-              <div>策略数：{autoStatus?.config.strategy_ids.length ?? 0} 个</div>
-              <div>标的池：{autoUniverseSummary}</div>
-            </div>
-            <Button asChild variant="outline" className="mt-4 w-full justify-between rounded-2xl">
-              <Link href="/trading">
-                进入模拟交易
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </Button>
-          </div>
-        </div>
-      </motion.section>
-
-      <motion.section
-        variants={item}
-        className="grid gap-6 xl:grid-cols-[minmax(0,1.18fr)_360px]"
-      >
-        <div className="overflow-hidden rounded-[34px] border border-black/[0.07] bg-[rgba(247,243,237,0.92)] shadow-[0_30px_72px_rgba(41,33,25,0.06)]">
-          <div className="border-b border-black/[0.06] px-6 py-5 sm:px-7">
-            <div className="text-[11px] font-medium tracking-[0.22em] text-foreground/34">工作脉络</div>
-            <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.03em] text-foreground/90">主工作流</h2>
-            <p className="mt-2 max-w-2xl text-[13px] leading-6 text-foreground/52">
-              相关功能不再全部堆在顶栏里，而是按一级工作区和左侧二级导航重新组织，便于先定方向，再进入具体页面。
-            </p>
-          </div>
-
-          <div className="divide-y divide-black/[0.06]">
-            {workspaceGroups.map((group) => (
-              <div key={group.id} className="grid gap-4 px-6 py-5 sm:grid-cols-[220px_minmax(0,1fr)] sm:px-7">
-                <div className="relative">
-                  <div className={cn("absolute inset-y-0 left-0 w-12 rounded-full bg-gradient-to-b opacity-80 blur-2xl", toneClasses[group.tone])} />
-                  <div className="relative flex items-start gap-3">
-                    <div className="rounded-[20px] border border-black/[0.05] bg-white/74 p-2.5 text-foreground/78">
-                      <group.icon className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <div className="text-[16px] font-semibold tracking-[-0.02em] text-foreground/88">{group.name}</div>
-                      <p className="mt-1 text-[13px] leading-6 text-foreground/50">{group.description}</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {group.items.map((itemLink) => (
-                    <Link
-                      key={itemLink.href}
-                      href={itemLink.href}
-                      className="group rounded-[24px] border border-black/[0.05] bg-white/72 px-4 py-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-black/[0.08] hover:bg-white/88"
-                    >
-                      <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/84">
-                        <itemLink.icon className="h-4 w-4 text-foreground/52 transition-transform duration-200 group-hover:-translate-y-0.5" />
-                        {itemLink.name}
-                      </div>
-                      <p className="mt-2 text-[12px] leading-6 text-foreground/50">{itemLink.description}</p>
-                    </Link>
-                  ))}
+                <div className="data-metric-secondary min-h-[46px]">{summary.detail}</div>
+                <div className="data-metric-secondary mt-auto pt-3">
+                  {summary.footer ?? "\u00A0"}
                 </div>
               </div>
             ))}
           </div>
         </div>
-
-        <div className="space-y-4">
-          <div className="rounded-[30px] border border-black/[0.07] bg-[rgba(247,243,237,0.95)] p-5 shadow-[0_24px_60px_rgba(41,33,25,0.05)]">
-            <div className="flex items-center gap-2 text-[12px] font-medium tracking-[0.18em] text-foreground/34">
-              <WalletCards className="h-4 w-4" />
-              资产脉络
-            </div>
-            <div className="mt-4 grid gap-3">
-              {rangeSummaries.map((range) => {
-                const positive = range.value >= 0
-                return (
-                  <div key={range.label} className="flex items-center justify-between rounded-[22px] border border-black/[0.05] bg-white/70 px-4 py-3">
-                    <span className="text-[13px] text-foreground/58">{range.label}</span>
-                    <span className={cn("text-[14px] font-semibold tracking-[-0.02em]", positive ? "text-market-up" : "text-market-down")}>
-                      {positive ? "+" : ""}
-                      {formatCurrency(range.value)}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          <div className="rounded-[30px] border border-black/[0.07] bg-[rgba(247,243,237,0.95)] p-5 shadow-[0_20px_52px_rgba(41,33,25,0.05)]">
-            <div className="flex items-center gap-2 text-[12px] font-medium tracking-[0.18em] text-foreground/34">
-              <Layers3 className="h-4 w-4" />
-              下一步
-            </div>
-            <div className="mt-3 text-[17px] font-semibold tracking-[-0.02em] text-foreground/88">从工作区直接进入当前任务</div>
-            <p className="mt-2 text-[13px] leading-6 text-foreground/52">
-              如果要继续优化持仓与定投，进入资产；如果要验证策略，则从执行区切到回测与自动交易。
-            </p>
-            <div className="mt-4 grid gap-2">
-              <Button asChild variant="outline" className="justify-between rounded-2xl">
-                <Link href="/portfolio">
-                  进入个人资产
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
-              <Button asChild variant="outline" className="justify-between rounded-2xl">
-                <Link href="/dashboard-llm">
-                  进入决策仪表盘
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </div>
       </motion.section>
 
-      <motion.section
-        variants={item}
-        className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_360px]"
-      >
-        <div className="overflow-hidden rounded-[34px] border border-black/[0.07] bg-[rgba(247,243,237,0.94)] p-6 shadow-[0_26px_64px_rgba(41,33,25,0.05)] sm:p-7">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <div className="text-[11px] font-medium tracking-[0.22em] text-foreground/34">静观标的</div>
-              <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.03em] text-foreground/90">{selectedLabel}</h2>
-              <p className="mt-2 text-[13px] leading-6 text-foreground/52">从资产池中选取少量核心标的，保持低噪声的观察视角。</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {watchRows.slice(0, 4).map((asset) => {
-                const active = selectedTickers.includes(asset.ticker)
-                return (
-                  <button
-                    key={asset.ticker}
-                    type="button"
-                    onClick={() =>
-                      setSelectedTickers((current) => {
-                        if (current.includes(asset.ticker)) {
-                          return current.length === 1 ? current : current.filter((ticker) => ticker !== asset.ticker)
-                        }
-                        return [...current, asset.ticker]
-                      })
-                    }
+      <motion.section variants={item}>
+        <div className="data-panel rounded-[30px] p-5">
+          <div className="section-title">个人收益情况</div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {rangeSummaries.map((range) => {
+              const positive = range.value >= 0
+              return (
+                <div key={range.label} className="data-panel-muted rounded-[22px] px-4 py-3">
+                  <div className="data-metric-label">{range.label}</div>
+                  <div
                     className={cn(
-                      "rounded-full border px-3 py-1.5 text-[12px] transition-colors",
-                      active
-                        ? "border-black/[0.08] bg-white/88 text-foreground/86"
-                        : "border-black/[0.05] bg-white/54 text-foreground/54 hover:bg-white/75"
+                      "mt-2 text-[1.16rem] font-semibold tabular-nums tracking-tight",
+                      positive ? "text-tone-cinnabar" : "text-tone-celadon",
                     )}
                   >
-                    {asset.alias || asset.name || asset.ticker}
-                  </button>
-                )
-              })}
+                    {positive ? "+" : ""}
+                    {formatCurrency(range.value)}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </motion.section>
+
+      <motion.section
+        variants={item}
+        className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_332px]"
+      >
+        <div className="data-panel overflow-hidden rounded-[34px] p-6 sm:p-7">
+          <div>
+            <div>
+              <div className="section-title">资产池观察</div>
             </div>
           </div>
 
-          <div className="mt-6 h-[320px] w-full">
+          <div className="mt-6 h-[260px] w-full md:h-[280px]">
             {loading ? (
-              <div className="flex h-full items-center justify-center text-[13px] text-foreground/36">正在整理资产池数据…</div>
+              <div className="data-empty flex h-full items-center justify-center">正在整理资产池数据…</div>
             ) : chartRows.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-[13px] text-foreground/36">暂未取到可展示的价格序列。</div>
+              <div className="data-empty flex h-full items-center justify-center">暂未取到可展示的价格序列。</div>
             ) : selectedTickers.length === 1 ? (
-              <MeasuredChart height={320}>
+              <MeasuredChart height={280}>
                 {(width, height) => (
                 <AreaChart width={width} height={height} data={chartRows} margin={{ top: 10, right: 6, left: -18, bottom: 0 }}>
                   <defs>
                     <linearGradient id="workspaceChartFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={SONG_COLORS.indigo} stopOpacity={0.22} />
-                      <stop offset="95%" stopColor={SONG_COLORS.indigo} stopOpacity={0.02} />
+                      <stop offset="5%" stopColor="rgb(var(--rgb-celadon))" stopOpacity={0.22} />
+                      <stop offset="95%" stopColor="rgb(var(--rgb-celadon))" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid vertical={false} stroke={SONG_COLORS.grid} strokeDasharray="4 6" />
@@ -501,13 +424,16 @@ export default function HomePage() {
                   />
                   <Tooltip
                     contentStyle={tooltipStyle}
-                    labelFormatter={(value) => new Date(value).toLocaleDateString("zh-CN")}
-                    formatter={(value?: number | string) => [Number(value ?? 0).toFixed(4), "价格"]}
+                    labelFormatter={(value) => formatDateInBeijing(value, {}, String(value))}
+                    formatter={(value?: number | string) => [
+                      formatObservedPrice(value),
+                      assetLabelMap[selectedTickers[0]] || selectedTickers[0],
+                    ]}
                   />
                   <Area
                     type="monotone"
                     dataKey={selectedTickers[0]}
-                    stroke={SONG_COLORS.indigo}
+                    stroke="rgb(var(--rgb-celadon))"
                     strokeWidth={1.8}
                     fill="url(#workspaceChartFill)"
                   />
@@ -515,7 +441,7 @@ export default function HomePage() {
                 )}
               </MeasuredChart>
             ) : (
-              <MeasuredChart height={320}>
+              <MeasuredChart height={280}>
                 {(width, height) => (
                 <LineChart width={width} height={height} data={chartRows} margin={{ top: 10, right: 6, left: -18, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke={SONG_COLORS.grid} strokeDasharray="4 6" />
@@ -534,7 +460,14 @@ export default function HomePage() {
                     width={60}
                     domain={["auto", "auto"]}
                   />
-                  <Tooltip contentStyle={tooltipStyle} labelFormatter={(value) => new Date(value).toLocaleDateString("zh-CN")} />
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    labelFormatter={(value) => formatDateInBeijing(value, {}, String(value))}
+                    formatter={(value?: number | string, ticker?: string) => [
+                      formatObservedPrice(value),
+                      assetLabelMap[String(ticker)] || String(ticker),
+                    ]}
+                  />
                   {selectedTickers.map((ticker, index) => (
                     <Line
                       key={ticker}
@@ -553,33 +486,39 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div className="rounded-[34px] border border-black/[0.07] bg-[rgba(247,243,237,0.94)] p-5 shadow-[0_24px_60px_rgba(41,33,25,0.05)]">
-          <div className="text-[11px] font-medium tracking-[0.22em] text-foreground/34">轻量观察</div>
-          <h2 className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-foreground/90">轻量观察列表</h2>
-          <p className="mt-2 text-[13px] leading-6 text-foreground/52">
-            保留少量关键资产，避免把首页做成拥挤的行情大屏。更深入的研究可继续进入对应工作区。
-          </p>
+        <div className="data-panel rounded-[34px] p-5">
+          <div className="section-title">资产池列表</div>
 
           <div className="mt-5 divide-y divide-black/[0.06]">
             {watchRows.length === 0 ? (
-              <div className="py-6 text-[13px] text-foreground/42">资产池为空时，这里会显示最近关注的标的。</div>
+              <div className="py-6 text-sm text-foreground/68">资产池为空时，这里会显示最近关注的标的。</div>
             ) : (
               watchRows.map((asset) => (
                 <button
                   key={asset.ticker}
                   type="button"
-                  onClick={() => setSelectedTickers([asset.ticker])}
-                  className="flex w-full items-center justify-between gap-3 py-3 text-left"
+                  onClick={() => toggleObservedTicker(asset.ticker)}
+                  className={cn(
+                    "grid w-full grid-cols-[minmax(0,1fr)_112px] items-center gap-3 rounded-[20px] border px-3 py-3 text-left transition-colors",
+                    selectedTickers.includes(asset.ticker)
+                      ? "border-[rgba(var(--rgb-ochre),0.34)] bg-[rgba(var(--rgb-ochre),0.16)] text-[rgb(var(--rgb-ink))] shadow-[0_8px_18px_rgba(41,33,25,0.04)]"
+                      : "border-[rgba(var(--rgb-ink),0.06)] bg-[rgba(var(--rgb-xuan),0.78)] text-foreground/78 hover:bg-[rgba(var(--rgb-xuan),0.94)] hover:text-foreground/92"
+                  )}
                 >
                   <div className="min-w-0">
-                    <div className="truncate text-[13px] font-medium text-foreground/86">
+                    <div className="truncate text-[0.95rem] font-medium">
                       {asset.alias || asset.name || asset.ticker}
                     </div>
-                    <div className="mt-1 text-[12px] text-foreground/44">{asset.ticker}</div>
+                    <div className="mt-1 text-[0.82rem] tabular-nums text-foreground/66">{asset.ticker}</div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-[13px] font-medium text-foreground/84">{asset.current > 0 ? formatCurrency(asset.current) : "—"}</div>
-                    <div className={cn("mt-1 text-[12px] font-medium", asset.change >= 0 ? "text-market-up" : "text-market-down")}>
+                  <div className="min-w-[112px] text-right">
+                    <div className="text-sm tabular-nums font-medium">{asset.current > 0 ? formatCurrency(asset.current) : "—"}</div>
+                    <div
+                      className={cn(
+                        "mt-1 text-[0.84rem] tabular-nums font-medium",
+                        asset.change >= 0 ? "text-tone-cinnabar" : "text-tone-celadon"
+                      )}
+                    >
                       {asset.change >= 0 ? "+" : ""}
                       {formatPercent(asset.change)}
                     </div>

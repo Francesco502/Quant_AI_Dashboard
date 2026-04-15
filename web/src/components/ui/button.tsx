@@ -6,20 +6,20 @@ import { motion } from "framer-motion"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap text-[13px] font-medium transition-all duration-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40 tracking-wide",
+  "inline-flex items-center justify-center whitespace-nowrap text-sm font-medium tracking-wide transition-[background-color,border-color,color,box-shadow,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(var(--rgb-ochre),0.22)] disabled:pointer-events-none disabled:opacity-40",
   {
     variants: {
       variant: {
         default:
-          "rounded-xl bg-[#6B8E7B] text-[#FAF9F6] shadow-sm hover:bg-[#5A7A68]",
+          "rounded-xl bg-[rgb(var(--rgb-celadon))] text-[rgb(var(--rgb-xuan))] shadow-sm hover:bg-[rgba(var(--rgb-celadon),0.9)]",
         destructive:
           "rounded-xl bg-destructive/90 text-destructive-foreground shadow-sm hover:bg-destructive",
         outline:
-          "rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-[rgba(250,249,246,0.5)] dark:bg-white/[0.02] backdrop-blur-md shadow-sm hover:bg-[#FAF9F6] dark:hover:bg-white/[0.05] text-foreground/80 hover:text-foreground",
+          "rounded-xl border border-[rgba(var(--rgb-ink),0.1)] dark:border-white/[0.08] bg-[rgba(var(--rgb-xuan),0.84)] dark:bg-white/[0.02] backdrop-blur-md shadow-sm hover:bg-[rgba(var(--rgb-xuan),0.96)] dark:hover:bg-white/[0.05] text-foreground/80 hover:text-foreground",
         secondary:
-          "rounded-xl bg-[#E8E6E1] dark:bg-white/[0.04] text-foreground/80 hover:bg-[#DFDCD6] dark:hover:bg-white/[0.08] hover:text-foreground",
+          "rounded-xl bg-[rgba(var(--rgb-ochre),0.1)] dark:bg-white/[0.04] text-foreground/80 hover:bg-[rgba(var(--rgb-ochre),0.16)] dark:hover:bg-white/[0.08] hover:text-foreground",
         ghost:
-          "rounded-xl text-foreground/60 hover:text-foreground hover:bg-[#E8E6E1]/50 dark:hover:bg-white/[0.04]",
+          "rounded-xl text-foreground/60 hover:bg-[rgba(var(--rgb-ochre),0.08)] hover:text-foreground dark:hover:bg-white/[0.04]",
         link:
           "text-foreground/60 underline-offset-4 hover:underline hover:text-foreground",
         glass:
@@ -27,7 +27,7 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-9 px-5 py-2",
-        sm: "h-8 px-4 text-[12px]",
+        sm: "h-8 px-4 text-xs",
         lg: "h-10 px-8 text-sm",
         icon: "h-9 w-9",
       },
@@ -71,4 +71,3 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 Button.displayName = "Button"
 
 export { Button, buttonVariants }
-

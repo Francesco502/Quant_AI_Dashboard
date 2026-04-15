@@ -1,0 +1,5 @@
+export const BRAND_NAME = "量化研习台"
+export const BRAND_SUBTITLE = "个人量化研究工作台"
+export const BRAND_DESCRIPTION = "面向个人研究、回测、模拟交易与资产管理的量化研习工作台"
+export const BRAND_LOGIN_TITLE = "登录量化研习台"
+export const BRAND_REGISTER_TITLE = "创建量化研习账户"

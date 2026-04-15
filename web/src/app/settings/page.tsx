@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useState } from "react"
 import { KeyRound, RefreshCw, Server, ShieldCheck, Wallet } from "lucide-react"
 
-import { api, getEffectiveApiBaseUrl, type AutoTradingStatusResponse } from "@/lib/api"
-import { useSettings } from "@/lib/settings-context"
+import { StatusNotice } from "@/components/data/status-notice"
 import { Button } from "@/components/ui/button"
 import { GlassCard, CardDescription, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { HelpTooltip } from "@/components/ui/tooltip"
+import { api, getEffectiveApiBaseUrl, type AutoTradingStatusResponse } from "@/lib/api"
+import { useSettings } from "@/lib/settings-context"
+import { formatDateTimeInBeijing } from "@/lib/time"
 import { formatCurrency } from "@/lib/utils"
 
 type AccountSummary = {
@@ -42,10 +44,24 @@ const EMPTY_HEALTH: HealthSummary = {
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) return "暂无"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString("zh-CN", { hour12: false })
+  return formatDateTimeInBeijing(value, {}, "暂无")
+}
+
+function MetricTile({
+  label,
+  value,
+  toneClass,
+}: {
+  label: string
+  value: string
+  toneClass?: string
+}) {
+  return (
+    <div className="data-panel data-metric-card rounded-2xl p-5">
+      <div className="data-metric-label">{label}</div>
+      <div className={`mt-3 text-2xl font-semibold ${toneClass ?? "text-foreground/92"}`}>{value}</div>
+    </div>
+  )
 }
 
 export default function SettingsPage() {
@@ -61,8 +77,8 @@ export default function SettingsPage() {
     try {
       const paperAccount = await api.trading.paper.getAccount()
       const autoStatus = await api.trading.auto.getStatus().catch(() => null as AutoTradingStatusResponse | null)
-
       const portfolio = paperAccount?.portfolio
+
       if (!portfolio) {
         setAccountData(null)
         return
@@ -72,11 +88,7 @@ export default function SettingsPage() {
         totalAssets: Number(portfolio.total_assets || 0),
         cash: Number(portfolio.cash || 0),
         marketValue: Number(portfolio.market_value || 0),
-        initialCapital: Number(
-          autoStatus?.account?.initial_capital ??
-            autoStatus?.config?.initial_capital ??
-            0,
-        ),
+        initialCapital: Number(autoStatus?.account?.initial_capital ?? autoStatus?.config?.initial_capital ?? 0),
       })
     } catch {
       setAccountData(null)
@@ -143,10 +155,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground/90">系统设置</h1>
-        <p className="text-sm text-muted-foreground">
-          查看模拟账户概览、后端运行状态以及由服务器统一管理的数据源配置。
-        </p>
+        <h1 className="page-title">系统设置</h1>
+        <p className="page-subtitle">管理模拟账户、后台任务与统一数据源配置，保持整套研究环境稳定可用。</p>
       </div>
 
       <Tabs defaultValue="account" className="space-y-6">
@@ -170,34 +180,20 @@ export default function SettingsPage() {
             <div className="space-y-2">
               <CardTitle className="flex items-center gap-2">
                 模拟账户概览
-                <HelpTooltip content="这里显示当前主模拟账户的总资产、持仓市值、可用现金与初始资金，用于快速确认账户状态。" />
+                <HelpTooltip content="显示当前主模拟账户的总资产、持仓市值、可用现金与初始资金，用于快速确认账户状态。" />
               </CardTitle>
-              <CardDescription>用于练习、验证策略与观察自动交易结果的虚拟账户。</CardDescription>
+              <CardDescription>优先确认账户权益结构，再决定是否继续执行策略、回测或自动调度。</CardDescription>
             </div>
 
             {accountLoading ? (
-              <div className="py-10 text-center text-sm text-muted-foreground">正在读取账户数据…</div>
+              <div className="data-empty">正在读取账户数据…</div>
             ) : accountData ? (
               <>
                 <div className="grid gap-4 md:grid-cols-4">
-                  <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-5">
-                    <div className="text-sm text-muted-foreground">总资产</div>
-                    <div className="mt-2 text-2xl font-semibold">{formatCurrency(accountData.totalAssets)}</div>
-                  </div>
-                  <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-5">
-                    <div className="text-sm text-muted-foreground">持仓市值</div>
-                    <div className="mt-2 text-2xl font-semibold text-[#6F7C8E]">
-                      {formatCurrency(accountData.marketValue)}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-5">
-                    <div className="text-sm text-muted-foreground">可用现金</div>
-                    <div className="mt-2 text-2xl font-semibold">{formatCurrency(accountData.cash)}</div>
-                  </div>
-                  <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-5">
-                    <div className="text-sm text-muted-foreground">初始资金</div>
-                    <div className="mt-2 text-2xl font-semibold">{formatCurrency(accountData.initialCapital)}</div>
-                  </div>
+                  <MetricTile label="总资产" value={formatCurrency(accountData.totalAssets)} />
+                  <MetricTile label="持仓市值" value={formatCurrency(accountData.marketValue)} toneClass="text-tone-indigo" />
+                  <MetricTile label="可用现金" value={formatCurrency(accountData.cash)} />
+                  <MetricTile label="初始资金" value={formatCurrency(accountData.initialCapital)} />
                 </div>
                 <div className="flex justify-end">
                   <Button variant="outline" onClick={() => void loadAccountData()}>
@@ -207,9 +203,7 @@ export default function SettingsPage() {
                 </div>
               </>
             ) : (
-              <div className="py-10 text-center text-sm text-muted-foreground">
-                当前没有可用的模拟账户，请先前往模拟交易页面创建或恢复账户。
-              </div>
+              <div className="data-empty">当前没有可用的模拟账户，请先前往模拟交易页面创建或恢复账户。</div>
             )}
           </GlassCard>
         </TabsContent>
@@ -220,20 +214,28 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <CardTitle className="flex items-center gap-2">
                   运行状态
-                  <HelpTooltip content="这里聚合显示 API 可达性、发布安全就绪状态以及后台守护进程的最近执行信息。" />
+                  <HelpTooltip content="聚合显示 API 可达性、发布安全状态，以及后台守护进程的最近执行信息。" />
                 </CardTitle>
-                <CardDescription>用于确认发布环境是否在线、是否安全就绪，以及自动交易是否正在调度。</CardDescription>
+                <CardDescription>这里是发布前最该先看的页面，健康检查、权限保护和守护进程状态都会集中呈现。</CardDescription>
               </div>
-              <Button variant="outline" size="sm" onClick={() => { void checkHealth(); void loadDaemonStatus() }} disabled={healthLoading}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void checkHealth()
+                  void loadDaemonStatus()
+                }}
+                disabled={healthLoading}
+              >
                 <RefreshCw className="mr-2 h-4 w-4" />
                 {healthLoading ? "检测中…" : "刷新状态"}
               </Button>
             </div>
 
             <div className="space-y-4">
-              <div className={`flex items-center justify-between rounded-2xl border p-4 ${healthStatus.online ? "border-[#4D7358]/20 bg-[#4D7358]/8" : "border-[#B6453C]/20 bg-[#B6453C]/8"}`}>
+              <div className={`flex items-center justify-between rounded-2xl border p-4 ${healthStatus.online ? "surface-tone-celadon" : "surface-tone-cinnabar"}`}>
                 <div className="flex items-center gap-3">
-                  <div className={`h-2.5 w-2.5 rounded-full ${healthStatus.online ? "bg-[#4D7358]" : "bg-[#B6453C]"}`} />
+                  <div className={`h-2.5 w-2.5 rounded-full ${healthStatus.online ? "bg-[rgb(var(--rgb-celadon))]" : "bg-[rgb(var(--rgb-cinnabar))]"}`} />
                   <span className="font-medium">API 服务</span>
                 </div>
                 <span className="text-sm">
@@ -241,7 +243,7 @@ export default function SettingsPage() {
                 </span>
               </div>
 
-              <div className={`flex items-center justify-between rounded-2xl border p-4 ${healthStatus.securityReady ? "border-[#4D7358]/20 bg-[#4D7358]/8" : "border-[#B6453C]/20 bg-[#B6453C]/8"}`}>
+              <div className={`flex items-center justify-between rounded-2xl border p-4 ${healthStatus.securityReady ? "surface-tone-celadon" : "surface-tone-cinnabar"}`}>
                 <div className="flex items-center gap-3">
                   <ShieldCheck className="h-4 w-4" />
                   <span className="font-medium">发布安全</span>
@@ -250,18 +252,18 @@ export default function SettingsPage() {
               </div>
 
               {healthStatus.securityIssues.length > 0 ? (
-                <div className="rounded-2xl border border-[#B6453C]/15 bg-[#B6453C]/6 px-4 py-3 text-sm text-[#B6453C]">
+                <StatusNotice tone="error" compact title="安全问题">
                   {healthStatus.securityIssues.join("；")}
-                </div>
+                </StatusNotice>
               ) : null}
 
               {healthStatus.errorHint ? (
-                <div className="rounded-2xl border border-[#B6453C]/15 bg-[#B6453C]/6 px-4 py-3 text-sm text-[#B6453C]">
-                  健康检查失败：{healthStatus.errorHint}
-                </div>
+                <StatusNotice tone="error" compact title="健康检查失败">
+                  {healthStatus.errorHint}
+                </StatusNotice>
               ) : null}
 
-              <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-4 text-sm text-muted-foreground">
+              <div className="data-note text-sm text-muted-foreground">
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-foreground/85">守护进程</span>
                   <span>{daemonStatus.running ? "运行中" : daemonStatus.enabled ? "待调度" : "未启用"}</span>
@@ -269,7 +271,7 @@ export default function SettingsPage() {
                 <div className="mt-3 space-y-1">
                   <div>最近启动：{formatDateTime(daemonStatus.lastStartedAt)}</div>
                   <div>最近自动交易：{formatDateTime(daemonStatus.lastTradingRun)}</div>
-                  {daemonStatus.lastError ? <div className="text-[#B6453C]">最近错误：{daemonStatus.lastError}</div> : null}
+                  {daemonStatus.lastError ? <div className="text-tone-cinnabar">最近错误：{daemonStatus.lastError}</div> : null}
                 </div>
               </div>
             </div>
@@ -281,14 +283,14 @@ export default function SettingsPage() {
             <div className="space-y-2">
               <CardTitle className="flex items-center gap-2">
                 服务器统一数据源
-                <HelpTooltip content="数据源优先级与 API Key 只从服务器环境变量读取，所有账户共享同一套配置，前端不再允许用户覆盖。" />
+                <HelpTooltip content="数据源优先级与 API Key 仅从服务端环境变量读取，前端不再允许用户覆盖。" />
               </CardTitle>
-              <CardDescription>当前项目统一使用服务器端 `.env` 中配置好的数据源与密钥。</CardDescription>
+              <CardDescription>这部分不追求可配置性，而追求稳定性和可复现性。</CardDescription>
             </div>
 
             <div className="space-y-3">
               {dataSources.map((source, index) => (
-                <div key={source} className="flex items-center justify-between rounded-2xl border border-black/[0.06] bg-black/[0.02] px-4 py-3">
+                <div key={source} className="data-panel-muted flex items-center justify-between rounded-2xl px-4 py-3">
                   <div className="flex items-center gap-3">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/5 text-xs font-medium text-foreground/70">
                       {index + 1}
@@ -301,27 +303,28 @@ export default function SettingsPage() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-4">
+              <div className="data-panel rounded-2xl p-4">
                 <div className="text-sm font-medium text-foreground/85">配置模式</div>
                 <div className="mt-2 text-sm text-muted-foreground">
                   {configurationMode === "env_locked" ? "环境变量锁定模式" : "未知模式"}
                 </div>
                 <p className="mt-2 text-xs leading-6 text-muted-foreground">
-                  如需变更优先级或密钥，请修改服务器端 `.env` 并重启后端服务。
+                  如需变更优先级或密钥，请修改服务端 `.env` 并重启后端服务。
                 </p>
               </div>
-              <div className="rounded-2xl border border-black/[0.06] bg-black/[0.02] p-4">
+
+              <div className="data-panel rounded-2xl p-4">
                 <div className="text-sm font-medium text-foreground/85">密钥状态</div>
                 <div className="mt-3 space-y-2 text-sm">
                   <div className="flex items-center justify-between">
                     <span>Tushare Token</span>
-                    <span className={apiKeyStatus.Tushare ? "text-[#4D7358]" : "text-[#B6453C]"}>
+                    <span className={apiKeyStatus.Tushare ? "text-tone-celadon" : "text-tone-cinnabar"}>
                       {apiKeyStatus.Tushare ? "已配置" : "未配置"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Alpha Vantage Key</span>
-                    <span className={apiKeyStatus.AlphaVantage ? "text-[#4D7358]" : "text-[#B6453C]"}>
+                    <span className={apiKeyStatus.AlphaVantage ? "text-tone-celadon" : "text-tone-cinnabar"}>
                       {apiKeyStatus.AlphaVantage ? "已配置" : "未配置"}
                     </span>
                   </div>

@@ -1619,13 +1619,62 @@ def _trim_synthetic_tail(
     return trimmed
 
 
+def _extract_ohlcv_close_series(df: pd.DataFrame | None) -> pd.Series | None:
+    if df is None or df.empty:
+        return None
+
+    if "close" in df.columns:
+        close = df["close"]
+    elif "price" in df.columns:
+        close = df["price"]
+    else:
+        close = df.iloc[:, 0]
+
+    if not isinstance(close.index, pd.DatetimeIndex):
+        close.index = pd.to_datetime(close.index)
+    return close.sort_index()
+
+
+def _should_refresh_local_ohlcv_history(
+    ticker: str,
+    df: pd.DataFrame | None,
+    *,
+    refresh_stale: bool,
+) -> bool:
+    return _should_refresh_local_series(
+        ticker,
+        _extract_ohlcv_close_series(df),
+        refresh_stale=refresh_stale,
+    )
+
+
+def _trim_synthetic_ohlcv_tail(
+    local_df: pd.DataFrame | None,
+    remote_df: pd.DataFrame | None,
+) -> pd.DataFrame | None:
+    if local_df is None or local_df.empty or remote_df is None or remote_df.empty:
+        return local_df
+
+    trimmed_local = local_df.sort_index()
+    trimmed_local = trimmed_local[~trimmed_local.index.duplicated(keep="last")]
+    local_close = _extract_ohlcv_close_series(trimmed_local)
+    remote_close = _extract_ohlcv_close_series(remote_df)
+    trimmed_close = _trim_synthetic_tail(local_close, remote_close)
+
+    if trimmed_close is None or trimmed_close.empty:
+        return trimmed_local.iloc[0:0]
+    if local_close is not None and len(trimmed_close) == len(local_close):
+        return trimmed_local
+    return trimmed_local.loc[trimmed_close.index]
+
+
 def load_price_data(
     tickers: List[str],
     days: int,
     data_sources: List[str] | None = None,
     alpha_vantage_key: str | None = None,
     tushare_token: str | None = None,
-    refresh_stale: bool = False,
+    refresh_stale: bool = True,
     remote_cache_days: int | None = None,
 ) -> pd.DataFrame:
     """内部实现：优先使用本地仓库，不足时再回退远程并写回本地"""
@@ -1786,10 +1835,14 @@ def load_ohlcv_data(
     data_sources: List[str] | None = None,
     alpha_vantage_key: str | None = None,
     tushare_token: str | None = None,
+    refresh_stale: bool = True,
+    remote_cache_days: int | None = None,
 ) -> Dict[str, pd.DataFrame]:
     """内部实现：优先使用本地 OHLCV 仓库，不足时再回退远程并写回本地"""
     if not tickers:
         return {}
+
+    effective_remote_cache_days = max(days, int(remote_cache_days or 3650))
 
     if alpha_vantage_key is None or tushare_token is None:
         keys = get_api_keys()
@@ -1802,31 +1855,38 @@ def load_ohlcv_data(
         data_sources = get_active_data_sources()
 
     local_ohlcv_map: Dict[str, pd.DataFrame] = {}
-    missing_tickers: List[str] = []
+    tickers_to_refresh: List[str] = []
 
     # 1. 先尝试从本地 OHLCV 仓库读取
     for t in tickers:
         df = data_store.load_local_ohlcv_history(t)
-        if df is None or df.empty:
-            missing_tickers.append(t)
-        else:
+        if df is not None and not df.empty:
             local_ohlcv_map[t] = df
+        if _should_refresh_local_ohlcv_history(t, df, refresh_stale=refresh_stale):
+            tickers_to_refresh.append(t)
 
-    # 2. 对于本地缺失的标的，从远程加载 OHLCV 并写回本地
-    if missing_tickers:
-        REMOTE_CACHE_DAYS = max(days, 3650)
+    # 2. 对于本地缺失或已陈旧的标的，从远程加载 OHLCV 并写回本地
+    if tickers_to_refresh:
         remote_map = _load_ohlcv_data_remote(
-            tickers=missing_tickers,
-            days=REMOTE_CACHE_DAYS,
+            tickers=tickers_to_refresh,
+            days=effective_remote_cache_days,
             data_sources=data_sources,
             alpha_vantage_key=alpha_vantage_key,
             tushare_token=tushare_token,
         )
         if remote_map:
-            for t, df in remote_map.items():
+            for t in tickers_to_refresh:
+                df = remote_map.get(t)
                 if df is not None and not df.empty:
-                    data_store.save_local_ohlcv_history(t, df)
-                    local_ohlcv_map[t] = df
+                    local_df = local_ohlcv_map.get(t)
+                    if local_df is not None and not local_df.empty:
+                        local_df = _trim_synthetic_ohlcv_tail(local_df, df)
+                        merged = pd.concat([local_df, df]).sort_index()
+                        merged = merged[~merged.index.duplicated(keep="last")]
+                    else:
+                        merged = df.sort_index()
+                    data_store.save_local_ohlcv_history(t, merged)
+                    local_ohlcv_map[t] = merged
 
     # 3. 截取最近 days 天，并返回
     if not local_ohlcv_map:

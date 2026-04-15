@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api, type SelectorConfig } from "@/lib/api"
+import { getTodayInBeijing } from "@/lib/time"
 import { useStrategies } from "@/lib/use-strategies"
 
 type ScanRow = {
@@ -56,7 +57,7 @@ export default function MarketScannerPage() {
   const [rows, setRows] = useState<ScanRow[]>([])
 
   useEffect(() => {
-    setTradeDate(new Date().toISOString().slice(0, 10))
+    setTradeDate(getTodayInBeijing())
   }, [])
 
   const strategyOptions = useMemo(
@@ -95,13 +96,13 @@ export default function MarketScannerPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 md:space-y-12 p-6 md:p-10">
-      <div className="space-y-3">
-        <h1 className="text-3xl font-medium tracking-wide text-foreground/90">市场扫描</h1>
-        <p className="text-base font-light tracking-wide text-foreground/60">独立扫描页面，可直接筛选信号而不是再跳转到交易页。</p>
+      <div className="space-y-2">
+        <h1 className="page-title">市场扫描</h1>
+        <p className="page-subtitle">按交易日、市场与策略范围执行扫描，统一查看候选结果与评分。</p>
       </div>
 
       <div className="grid grid-cols-1 gap-8 md:gap-12 lg:grid-cols-3">
-        <GlassCard className="space-y-6 p-6 md:p-8 border-white/40 bg-white/30 backdrop-blur-2xl shadow-[0_8px_32px_rgba(142,115,77,0.04)]">
+        <GlassCard className="space-y-6 p-6 md:p-8 border-white/40 bg-[rgba(250,246,239,0.30)] backdrop-blur-2xl shadow-[0_8px_32px_rgba(142,115,77,0.04)]">
           <div className="space-y-2">
             <Label>交易日期</Label>
             <Input type="date" value={tradeDate} onChange={(event) => setTradeDate(event.target.value)} />
@@ -148,7 +149,7 @@ export default function MarketScannerPage() {
                 ))}
               </SelectContent>
             </Select>
-            {strategyLoading ? <p className="text-xs text-muted-foreground">正在加载策略...</p> : null}
+              {strategyLoading ? <p className="text-xs text-muted-foreground">正在加载策略…</p> : null}
           </div>
 
           <div className="space-y-2">
@@ -162,13 +163,13 @@ export default function MarketScannerPage() {
           </div>
 
           <Button className="w-full" onClick={() => void handleRun()} disabled={loading || strategyLoading}>
-            {loading ? "扫描中..." : "执行扫描"}
+            {loading ? "扫描中…" : "执行扫描"}
           </Button>
         </GlassCard>
 
-        <GlassCard className="space-y-6 p-6 md:p-10 lg:col-span-2 border-white/40 bg-white/30 backdrop-blur-2xl shadow-[0_8px_32px_rgba(142,115,77,0.04)]">
+        <GlassCard className="space-y-6 p-6 md:p-10 lg:col-span-2 border-white/40 bg-[rgba(250,246,239,0.30)] backdrop-blur-2xl shadow-[0_8px_32px_rgba(142,115,77,0.04)]">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-medium tracking-wide text-foreground/80">结果</h2>
+            <h2 className="section-title">结果</h2>
             <Badge variant="outline">{rows.length} 条</Badge>
           </div>
           {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}

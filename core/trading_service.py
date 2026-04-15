@@ -339,6 +339,7 @@ class TradingService:
                 "shares": p.shares,
                 "available_shares": p.available_shares,
                 "avg_cost": p.avg_cost,
+                "current_price": p.current_price,
                 "market_value": p.market_value,
                 "unrealized_pnl": p.unrealized_pnl,
                 "unrealized_return_pct": p.unrealized_return_pct

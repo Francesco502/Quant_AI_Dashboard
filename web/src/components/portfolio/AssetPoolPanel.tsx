@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { AlertCircle, Check, CheckCircle, Edit2, PieChart, Plus, RefreshCcw, Trash2, X } from "lucide-react"
+import { AlertCircle, Check, CheckCircle, Edit2, Plus, RefreshCcw, Trash2, X } from "lucide-react"
 
 import { Asset, AssetSearchResult, api as apiClient } from "@/lib/api"
 import { AssetSearchPicker } from "@/components/shared/asset-search-picker"
@@ -11,14 +11,12 @@ import { GlassCard } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { HelpTooltip } from "@/components/ui/tooltip"
 
 function assetTypeLabel(assetType?: string | null) {
   switch (assetType) {
@@ -179,11 +177,11 @@ export function AssetPoolPanel() {
   }, [selectedAsset])
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_360px]">
+    <div className="grid gap-6">
       <GlassCard>
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
-            <h2 className="flex items-center gap-2 text-xl font-semibold">
+            <h2 className="section-title flex items-center gap-2">
               资产池
               <Badge variant="secondary">{assets.length}</Badge>
             </h2>
@@ -192,7 +190,14 @@ export function AssetPoolPanel() {
             </p>
           </div>
           <div className="flex gap-2">
-                    <Button variant="outline" size="icon" onClick={() => void fetchAssetPool(true)} disabled={loading}>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => void fetchAssetPool(true)}
+              disabled={loading}
+              aria-label="刷新资产池"
+              title="刷新资产池"
+            >
               <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             </Button>
             <Button onClick={openAddDialog}>
@@ -215,7 +220,7 @@ export function AssetPoolPanel() {
           </div>
         ) : null}
 
-        <div className="overflow-x-auto rounded-2xl border border-black/[0.06]">
+        <div className="data-panel-muted overflow-x-auto rounded-2xl">
           <Table className="min-w-[920px]">
             <TableHeader>
               <TableRow>
@@ -231,7 +236,7 @@ export function AssetPoolPanel() {
               {loading ? (
                 <TableRow>
                   <TableCell colSpan={6} className="h-28 text-center text-muted-foreground">
-                    正在读取资产池与最新价格...
+                    正在读取资产池与最新价格…
                   </TableCell>
                 </TableRow>
               ) : assets.length === 0 ? (
@@ -268,13 +273,22 @@ export function AssetPoolPanel() {
                               }
                             }}
                           />
-                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => saveAlias(asset.ticker)}>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={() => saveAlias(asset.ticker)}
+                            aria-label={`保存 ${asset.ticker} 别名`}
+                            title="保存别名"
+                          >
                             <Check className="h-4 w-4 text-market-down" />
                           </Button>
                           <Button
                             size="icon"
                             variant="ghost"
                             className="h-8 w-8"
+                            aria-label={`取消编辑 ${asset.ticker} 别名`}
+                            title="取消编辑"
                             onClick={() => {
                               setEditingTicker(null)
                               setEditAlias("")
@@ -290,6 +304,8 @@ export function AssetPoolPanel() {
                             size="icon"
                             variant="ghost"
                             className="h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100"
+                            aria-label={`编辑 ${asset.ticker} 别名`}
+                            title="编辑别名"
                             onClick={() => {
                               setEditingTicker(asset.ticker)
                               setEditAlias(asset.alias || "")
@@ -300,7 +316,7 @@ export function AssetPoolPanel() {
                         </div>
                       )}
                     </TableCell>
-                    <TableCell className="text-right font-mono">
+                    <TableCell className="text-right font-mono tabular-nums">
                       {typeof asset.last_price === "number" ? asset.last_price.toFixed(4) : "-"}
                     </TableCell>
                     <TableCell>
@@ -314,6 +330,8 @@ export function AssetPoolPanel() {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-market-up hover:bg-market-up-soft hover:text-market-up"
+                        aria-label={`从资产池删除 ${asset.ticker}`}
+                        title="删除资产"
                         onClick={() => handleDeleteAsset(asset.ticker)}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -327,42 +345,11 @@ export function AssetPoolPanel() {
         </div>
       </GlassCard>
 
-      <GlassCard className="h-fit">
-        <h3 className="mb-4 flex items-center gap-2 font-semibold">
-          关于资产池
-          <PieChart className="h-4 w-4 text-[var(--accent-ink)]" />
-        </h3>
-        <div className="space-y-4 text-sm text-muted-foreground">
-          <p>
-            <span className="font-medium text-foreground">用途</span>
-            <br />
-            资产池用于策略研究、回测、扫描和自动交易候选筛选，不等同于你的真实持仓账本。
-          </p>
-          <p>
-            <span className="font-medium text-foreground">估值规则</span>
-            <br />
-            场外基金优先展示基金净值；场内 ETF 和股票优先展示场内价格。列表会同时标出数据日期和来源。
-          </p>
-          <div className="rounded-xl border border-dashed border-black/10 p-3">
-            <div className="mb-1 flex items-center gap-2 text-foreground">
-              <HelpTooltip content="资产池用来做研究和候选筛选；个人资产则用于真实持仓记录和收益跟踪。" />
-              资产池与个人资产是分开的
-            </div>
-            <p className="text-xs leading-5 text-muted-foreground">
-              这样可以避免“关注标的”与“真实持仓”混在一起，也方便后续继续扩展调仓、收益曲线和策略分组。
-            </p>
-          </div>
-        </div>
-      </GlassCard>
-
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent className="max-h-[88vh] overflow-y-auto border border-[#d8d1c2] bg-[rgba(248,245,238,0.98)] p-0 shadow-[0_28px_80px_rgba(28,24,18,0.22)] backdrop-blur-none sm:max-w-3xl">
+        <DialogContent className="max-h-[88vh] overflow-y-auto p-0 sm:max-w-3xl">
           <div className="overflow-hidden rounded-3xl">
-            <DialogHeader className="border-b border-black/[0.06] px-6 py-5">
+            <DialogHeader className="border-b border-border/70 px-6 py-5">
               <DialogTitle>添加资产到资产池</DialogTitle>
-              <DialogDescription className="leading-6">
-                先搜索并确认标的，再决定是否给它设置一个更容易识别的别名。
-              </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-5 px-6 py-5">
@@ -380,16 +367,13 @@ export function AssetPoolPanel() {
                 emptyText="没有找到匹配资产。请尝试输入更完整的基金名称、代码或关键词。"
               />
 
-              <div className="space-y-4 rounded-2xl border border-black/[0.06] bg-white/80 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
+              <div className="data-panel space-y-4 rounded-2xl p-5">
                 <div className="space-y-1">
                   <div className="text-sm font-medium text-foreground">可选别名</div>
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    别名只用于你自己在资产池里快速识别这个标的，不会影响实际价格读取。
-                  </p>
                 </div>
 
                 {selectedSummary ? (
-                  <div className="rounded-2xl border border-black/[0.06] bg-[rgba(248,245,238,0.8)] px-4 py-3 text-sm text-foreground">
+                  <div className="data-panel-muted rounded-2xl px-4 py-3 text-sm text-foreground">
                     已选择 <span className="font-medium">{selectedSummary}</span>
                   </div>
                 ) : null}
@@ -405,7 +389,7 @@ export function AssetPoolPanel() {
               </div>
             </div>
 
-            <DialogFooter className="border-t border-black/[0.06] px-6 py-5">
+            <DialogFooter className="border-t border-border/70 px-6 py-5">
               <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
                 取消
               </Button>

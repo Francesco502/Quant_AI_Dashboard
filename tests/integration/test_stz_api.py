@@ -117,3 +117,42 @@ class TestStockTradebyZAPI:
         assert payload[0]["ticker"] == "002611"
         assert payload[0]["name"] == "博时黄金ETF联接C"
         assert payload[0]["asset_type"] == "fund"
+
+    @patch("api.routers.stocktradebyz.save_selector_results", return_value=True)
+    @patch("api.routers.stocktradebyz.run_selectors_for_market")
+    def test_run_strategy_passes_custom_market_limit(
+        self,
+        mock_run_selectors_for_market,
+        _mock_save_selector_results,
+        auth_client,
+    ):
+        mock_run_selectors_for_market.return_value = pd.DataFrame(
+            [
+                {
+                    "ticker": "002611",
+                    "name": "博时黄金ETF联接C",
+                    "selector_class": "TestSelector",
+                    "selector_alias": "黄金策略",
+                    "trade_date": "2026-03-19",
+                    "last_close": 2.53,
+                    "score": 88.0,
+                }
+            ]
+        )
+
+        response = auth_client.post(
+            "/api/stz/run",
+            json={
+                "trade_date": "2026-03-19",
+                "mode": "market",
+                "market": "CN",
+                "market_scope": "custom",
+                "market_limit": 25,
+            },
+        )
+
+        assert response.status_code == 200
+        assert mock_run_selectors_for_market.call_args.kwargs["universe_limit"] == 25
+        payload = response.json()
+        assert payload["status"] == "success"
+        assert "样本 25 只" in payload["message"]

@@ -91,7 +91,10 @@ if ENABLE_GZIP:
     logger.info(f"启用 GZip 压缩 (min_size={GZIP_MIN_SIZE})")
 
 # CORS 配置
-_cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:8686,http://localhost:8685")
+_cors_origins_str = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:8686,http://127.0.0.1:8686,http://localhost:8685,http://127.0.0.1:8685,http://localhost:8786,http://127.0.0.1:8786",
+)
 _cors_origins = [o.strip() for o in _cors_origins_str.split(",") if o.strip()]
 
 app.add_middleware(

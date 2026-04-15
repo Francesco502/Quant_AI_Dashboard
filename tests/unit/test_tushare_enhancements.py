@@ -87,19 +87,101 @@ def test_build_analysis_input_enriches_name_and_market_context(monkeypatch):
             "northbound": {"net_inflow": 12.3, "unit": "亿元", "description": "北向资金净流入 12.3 亿元"},
         },
     )
+    monkeypatch.setattr(
+        "core.daily_analysis.builder.tushare_provider.get_tushare_token",
+        lambda: "token-123",
+    )
+    monkeypatch.setattr(
+        "core.daily_analysis.builder.tushare_provider.get_cn_security_profile",
+        lambda ticker: {
+            "ticker": ticker,
+            "ts_code": ticker,
+            "asset_type": "stock",
+            "name": "贵州茅台",
+            "industry": "白酒",
+            "area": "贵州",
+            "market": "主板",
+            "valuation": {
+                "trade_date": "20260313",
+                "pe_ttm": 22.5,
+                "pb": 8.6,
+                "turnover_rate": 1.28,
+                "volume_ratio": 1.16,
+                "total_mv": 23100.0,
+                "circ_mv": 22980.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "core.daily_analysis.builder.tushare_provider.get_cn_security_moneyflow",
+        lambda ticker: {
+            "trade_date": "20260313",
+            "description": "最新主力资金净流入 4.20 亿元",
+            "net_mf_5d_amount_billion": 6.3,
+            "net_mf_20d_amount_billion": 18.2,
+            "large_order_net_amount_billion": 3.1,
+            "unit": "亿元",
+        },
+    )
 
     result = build_analysis_input("600519.SH", market="cn")
 
     assert result["name"] == "贵州茅台"
     assert result["meta"]["market_context"]["calendar"]["is_trading_day"] is True
+    assert result["meta"]["profile"]["valuation"]["pe_ttm"] == 22.5
+    assert result["meta"]["capital_flow"]["net_mf_20d_amount_billion"] == 18.2
+    assert result["analysis_brief"]["profile"]["industry"] == "白酒"
     assert "上证指数" in result["text_context"]
     assert "北向资金" in result["text_context"]
+    assert "白酒" in result["text_context"]
+    assert "主力资金净流入" in result["text_context"]
+
+
+def test_build_analysis_input_reports_limitations_without_tushare_token(monkeypatch):
+    monkeypatch.setattr(
+        "core.daily_analysis.builder.load_price_data",
+        lambda tickers, days: _sample_price_df(),
+    )
+    monkeypatch.setattr(
+        "core.daily_analysis.builder.tushare_provider.get_cn_security_name",
+        lambda ticker: "测试标的",
+    )
+    monkeypatch.setattr(
+        "core.daily_analysis.builder.tushare_provider.get_tushare_token",
+        lambda: "",
+    )
+    monkeypatch.setattr(
+        "core.daily_analysis.builder.tushare_provider.get_cn_market_context",
+        lambda: {},
+    )
+    monkeypatch.setattr(
+        "core.daily_analysis.builder.tushare_provider.get_cn_security_profile",
+        lambda ticker: {},
+    )
+    monkeypatch.setattr(
+        "core.daily_analysis.builder.tushare_provider.get_cn_security_moneyflow",
+        lambda ticker: {},
+    )
+
+    result = build_analysis_input("600519.SH", market="cn")
+
+    limitations = result["meta"]["limitations"]
+    assert any("TUSHARE_TOKEN" in item for item in limitations)
+    assert "风险与限制" in result["text_context"]
 
 
 def test_trading_context_tool_returns_structured_context(monkeypatch):
     monkeypatch.setattr(
         "core.agent.tools.tushare_provider.get_cn_security_name",
         lambda ticker: "贵州茅台",
+    )
+    monkeypatch.setattr(
+        "core.agent.tools.tushare_provider.get_cn_security_profile",
+        lambda ticker: {"ticker": ticker, "name": "贵州茅台", "industry": "白酒"},
+    )
+    monkeypatch.setattr(
+        "core.agent.tools.tushare_provider.get_cn_security_moneyflow",
+        lambda ticker: {"description": "最新主力资金净流入 4.20 亿元"},
     )
     monkeypatch.setattr(
         "core.agent.tools.tushare_provider.get_cn_market_context",
@@ -121,6 +203,8 @@ def test_trading_context_tool_returns_structured_context(monkeypatch):
     assert result.data["ticker"] == "600519.SH"
     assert result.data["name"] == "贵州茅台"
     assert result.data["market_context"]["calendar"]["next_trading_day"] == "2026-03-16"
+    assert result.data["profile"]["industry"] == "白酒"
+    assert "主力资金净流入" in result.data["capital_flow"]["description"]
 
 
 def test_load_price_data_reads_uppercase_tushare_key(monkeypatch):

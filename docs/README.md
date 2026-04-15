@@ -5,6 +5,7 @@
 - [`current/README.md`](./current/README.md): active documentation index
 - [`current/quickstart.md`](./current/quickstart.md): local startup and first-run workflow
 - [`current/deployment.md`](./current/deployment.md): canonical deployment path
+- [`current/release.md`](./current/release.md): release engineering checklist and validation flow
 - [`current/development.md`](./current/development.md): repository layout and maintenance guidance
 
 ## Releases

@@ -2,16 +2,17 @@
 StockTradebyZ 战法与资产池管理 API
 """
 
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import List, Dict, Optional, Any
 from pydantic import BaseModel
 import pandas as pd
 import json
-import os
 from pathlib import Path
 from datetime import datetime
 from time import time
 import logging
+import threading
+from uuid import uuid4
 
 from core.stocktradebyz_adapter import (
     get_default_selector_configs,
@@ -24,7 +25,9 @@ from core.data_store import BASE_DIR
 from core.app_utils import save_selector_results
 from core.asset_metadata import (
     get_asset_hint,
+    list_user_asset_pool,
     resolve_asset_type,
+    save_user_asset_pool,
     search_assets,
     should_prefer_fund_nav,
     supports_realtime_quote,
@@ -36,6 +39,7 @@ from core.data_service import (
     load_price_data,
 )
 from core.market_scanner import MarketScanner
+from api.auth import UserInDB, get_current_active_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -45,12 +49,21 @@ _ASSET_POOL_RESPONSE_CACHE: Dict[str, Any] = {
     "loaded_at": 0.0,
     "items": [],
 }
+_SCAN_TASKS_LOCK = threading.Lock()
+_SCAN_TASKS_TTL_SECONDS = 2 * 60 * 60
+_SCAN_TASKS: Dict[str, Dict[str, Any]] = {}
+
+
+def _require_user_id(current_user: UserInDB) -> int:
+    user_id = getattr(current_user, "id", None)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Unable to resolve current user id")
+    return int(user_id)
 
 # 全局扫描器实例
 market_scanner = MarketScanner()
 
 # 用户状态文件路径 (兼容 Streamlit)
-USER_STATE_FILE = os.path.join("data", "user_state.json")
 
 # ----------------------------------------------------------------------
 #  数据模型
@@ -59,7 +72,7 @@ USER_STATE_FILE = os.path.join("data", "user_state.json")
 class ScanMarketRequest(BaseModel):
     market: str = "CN" # CN / HK
     strategy_config: Dict[str, Any]
-    limit: int = 100
+    limit: Optional[int] = None
 
 class SelectorConfigModel(BaseModel):
     class_name: str
@@ -73,7 +86,9 @@ class RunStrategyRequest(BaseModel):
     market: str = "CN"  # CN / HK
     selector_names: Optional[List[str]] = None
     selector_params: Optional[Dict[str, Dict[str, Any]]] = None
-    tickers: Optional[List[str]] = None # 仅当 mode=universe 时使用
+    tickers: Optional[List[str]] = None  # 仅当 mode=universe 时使用
+    market_scope: str = "all"  # all / custom，仅当 mode=market 时使用
+    market_limit: Optional[int] = None
     min_score: float = 60.0
     top_n: int = 20
 
@@ -184,6 +199,215 @@ def _post_process_selector_results(
 
     return grouped.reset_index(drop=True)
 
+
+def _cleanup_scan_tasks() -> None:
+    cutoff = time() - _SCAN_TASKS_TTL_SECONDS
+    expired_ids: List[str] = []
+    with _SCAN_TASKS_LOCK:
+        for task_id, task in _SCAN_TASKS.items():
+            if str(task.get("status") or "") not in {"completed", "failed"}:
+                continue
+            updated_at = float(task.get("updated_at_ts") or task.get("created_at_ts") or 0.0)
+            if updated_at < cutoff:
+                expired_ids.append(task_id)
+        for task_id in expired_ids:
+            _SCAN_TASKS.pop(task_id, None)
+
+
+def _serialize_scan_task(task: Dict[str, Any]) -> Dict[str, Any]:
+    progress = max(0.0, min(float(task.get("progress") or 0.0), 1.0))
+    created_at_ts = float(task.get("created_at_ts") or time())
+    started_at_ts = float(task.get("started_at_ts") or created_at_ts)
+    finished_at_ts = task.get("finished_at_ts")
+    anchor_ts = float(finished_at_ts) if finished_at_ts else time()
+    elapsed_seconds = max(0.0, anchor_ts - started_at_ts)
+    if str(task.get("status") or "") == "queued":
+        elapsed_seconds = max(0.0, time() - created_at_ts)
+
+    eta_seconds: Optional[float] = None
+    if str(task.get("status") or "") in {"queued", "running"} and 0.0 < progress < 1.0:
+        eta_seconds = round(elapsed_seconds * (1.0 - progress) / progress, 1)
+
+    return {
+        "task_id": task["task_id"],
+        "user_id": task["user_id"],
+        "mode": task.get("mode"),
+        "market": task.get("market"),
+        "market_scope": task.get("market_scope"),
+        "status": task.get("status"),
+        "progress": progress,
+        "progress_pct": round(progress * 100.0, 1),
+        "message": task.get("message"),
+        "error": task.get("error"),
+        "created_at": datetime.fromtimestamp(created_at_ts).isoformat(),
+        "started_at": datetime.fromtimestamp(started_at_ts).isoformat() if started_at_ts else None,
+        "finished_at": datetime.fromtimestamp(float(finished_at_ts)).isoformat() if finished_at_ts else None,
+        "elapsed_seconds": round(elapsed_seconds, 1),
+        "estimated_remaining_seconds": eta_seconds,
+        "result": task.get("result"),
+    }
+
+
+def _create_scan_task(request: RunStrategyRequest, *, user_id: int) -> Dict[str, Any]:
+    _cleanup_scan_tasks()
+    now_ts = time()
+    task = {
+        "task_id": uuid4().hex,
+        "user_id": int(user_id),
+        "mode": request.mode,
+        "market": request.market,
+        "market_scope": request.market_scope,
+        "status": "queued",
+        "progress": 0.0,
+        "message": "任务已创建，等待执行",
+        "error": None,
+        "result": None,
+        "created_at_ts": now_ts,
+        "started_at_ts": now_ts,
+        "finished_at_ts": None,
+        "updated_at_ts": now_ts,
+    }
+    with _SCAN_TASKS_LOCK:
+        _SCAN_TASKS[task["task_id"]] = task
+    return task
+
+
+def _get_scan_task(task_id: str) -> Optional[Dict[str, Any]]:
+    with _SCAN_TASKS_LOCK:
+        task = _SCAN_TASKS.get(task_id)
+        return dict(task) if task is not None else None
+
+
+def _update_scan_task(task_id: str, **updates: Any) -> Optional[Dict[str, Any]]:
+    with _SCAN_TASKS_LOCK:
+        task = _SCAN_TASKS.get(task_id)
+        if task is None:
+            return None
+        task.update(updates)
+        task["updated_at_ts"] = time()
+        return dict(task)
+
+
+def _execute_strategy_request(
+    request: RunStrategyRequest,
+    *,
+    user_id: int,
+    progress_callback: Optional[Any] = None,
+) -> Dict[str, Any]:
+    trade_date = pd.to_datetime(request.trade_date)
+    market_scope = str(request.market_scope or "all").lower()
+    market_limit: Optional[int] = None
+
+    result_df = None
+    if request.mode == "universe":
+        tickers = _normalize_ticker_list(request.tickers)
+        if not tickers:
+            tickers = _normalize_ticker_list(_load_asset_pool(int(user_id)))
+        if not tickers:
+            raise HTTPException(status_code=400, detail="资产池为空，请先添加资产或指定 tickers")
+
+        result_df = run_selectors_for_universe(
+            tickers=tickers,
+            trade_date=trade_date,
+            selector_names=request.selector_names,
+            selector_params=request.selector_params,
+        )
+    elif request.mode == "market":
+        if market_scope not in {"all", "custom"}:
+            raise HTTPException(status_code=400, detail="market_scope 仅支持 all 或 custom")
+
+        if market_scope == "custom":
+            if request.market_limit is None:
+                raise HTTPException(status_code=400, detail="自定义全市场扫描时必须提供 market_limit")
+            try:
+                market_limit = max(1, int(request.market_limit))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="market_limit 必须是大于 0 的整数") from None
+
+        result_df = run_selectors_for_market(
+            trade_date=trade_date,
+            market=request.market,
+            selector_names=request.selector_names,
+            selector_params=request.selector_params,
+            progress_callback=progress_callback,
+            universe_limit=market_limit,
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"未知的运行模式: {request.mode}")
+
+    result_df = _post_process_selector_results(
+        result_df,
+        min_score=request.min_score,
+        top_n=request.top_n,
+    )
+
+    if result_df is None or result_df.empty:
+        return {"status": "success", "count": 0, "data": [], "saved": False, "message": "未找到符合条件的标的"}
+
+    save_success = save_selector_results(result_df, request.trade_date)
+
+    normalized_df = result_df.copy()
+    if "trade_date" in normalized_df.columns:
+        normalized_df["trade_date"] = normalized_df["trade_date"].astype(str)
+    normalized_df = normalized_df.fillna("")
+    records = normalized_df.to_dict("records")
+
+    message = "选股完成"
+    if request.mode == "market":
+        message = "全市场扫描完成" if market_scope == "all" else f"全市场扫描完成（样本 {market_limit} 只）"
+
+    return {
+        "status": "success",
+        "count": len(records),
+        "data": records,
+        "saved": save_success,
+        "message": message,
+    }
+
+
+def _run_strategy_task(task_id: str, request: RunStrategyRequest, user_id: int) -> None:
+    _update_scan_task(task_id, status="running", progress=0.01, message="开始准备扫描任务", error=None)
+
+    def _progress_callback(progress: float, message: str) -> None:
+        _update_scan_task(
+            task_id,
+            status="running",
+            progress=max(0.0, min(float(progress), 1.0)),
+            message=message,
+            error=None,
+        )
+
+    try:
+        result = _execute_strategy_request(request, user_id=user_id, progress_callback=_progress_callback)
+        _update_scan_task(
+            task_id,
+            status="completed",
+            progress=1.0,
+            message=result.get("message") or "扫描完成",
+            result=result,
+            finished_at_ts=time(),
+            error=None,
+        )
+    except HTTPException as exc:
+        _update_scan_task(
+            task_id,
+            status="failed",
+            progress=1.0,
+            message="扫描失败",
+            error=str(exc.detail),
+            finished_at_ts=time(),
+        )
+    except Exception as exc:
+        logger.error("异步全市场扫描失败: %s", exc, exc_info=True)
+        _update_scan_task(
+            task_id,
+            status="failed",
+            progress=1.0,
+            message="扫描失败",
+            error=str(exc),
+            finished_at_ts=time(),
+        )
+
 # ----------------------------------------------------------------------
 #  路由实现
 # ----------------------------------------------------------------------
@@ -248,75 +472,69 @@ async def list_strategies():
         raise HTTPException(status_code=500, detail=f"获取战法列表失败: {str(e)}")
 
 @router.post("/run")
-async def run_strategy(request: RunStrategyRequest):
+async def run_strategy(
+    request: RunStrategyRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
     """运行战法选股"""
     try:
-        trade_date = pd.to_datetime(request.trade_date)
-        
-        result_df = None
-        if request.mode == "universe":
-            if not request.tickers:
-                # 尝试从资产池加载
-                pool_tickers = _normalize_ticker_list(_load_asset_pool())
-                if not pool_tickers:
-                     raise HTTPException(status_code=400, detail="资产池为空，请先添加资产或指定 tickers")
-                request.tickers = pool_tickers
-
-            result_df = run_selectors_for_universe(
-                tickers=_normalize_ticker_list(request.tickers),
-                trade_date=trade_date,
-                selector_names=request.selector_names,
-                selector_params=request.selector_params
-            )
-        elif request.mode == "market":
-            # 全市场扫描
-            def _progress_callback(p, msg):
-                logger.info(f"Progress: {p:.2f} - {msg}")
-
-            result_df = run_selectors_for_market(
-                trade_date=trade_date,
-                market=request.market,
-                selector_names=request.selector_names,
-                selector_params=request.selector_params,
-                progress_callback=_progress_callback
-            )
-        else:
-            raise HTTPException(status_code=400, detail=f"未知的运行模式: {request.mode}")
-
-        result_df = _post_process_selector_results(
-            result_df,
-            min_score=request.min_score,
-            top_n=request.top_n,
+        return _execute_strategy_request(
+            request,
+            user_id=_require_user_id(current_user),
+            progress_callback=None,
         )
-
-        if result_df is None or result_df.empty:
-            return {"status": "success", "count": 0, "data": [], "message": "未找到符合条件的标的"}
-
-        # 保存结果
-        save_success = save_selector_results(result_df, request.trade_date)
-        
-        # 转换结果用于返回
-        # 处理 NaN 值以避免 JSON 序列化错误
-        result_df = result_df.fillna("")
-        records = result_df.to_dict("records")
-        
-        return {
-            "status": "success", 
-            "count": len(records), 
-            "data": records,
-            "saved": save_success,
-            "message": "选股完成"
-        }
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"运行战法失败: {e}")
         raise HTTPException(status_code=500, detail=f"运行战法失败: {str(e)}")
 
+
+@router.post("/run-async")
+async def run_strategy_async(
+    request: RunStrategyRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
+    """异步启动全市场扫描任务，并返回进度查询句柄。"""
+    if request.mode != "market":
+        raise HTTPException(status_code=400, detail="异步进度仅支持全市场扫描模式")
+
+    user_id = _require_user_id(current_user)
+    task = _create_scan_task(request, user_id=user_id)
+    request_snapshot = request.copy(deep=True)
+    worker = threading.Thread(
+        target=_run_strategy_task,
+        args=(task["task_id"], request_snapshot, user_id),
+        daemon=True,
+    )
+    worker.start()
+    return _serialize_scan_task(task)
+
+
+@router.get("/run-status/{task_id}")
+async def get_strategy_run_status(
+    task_id: str,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
+    task = _get_scan_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="扫描任务不存在或已过期")
+
+    user_id = _require_user_id(current_user)
+    if int(task.get("user_id") or 0) != user_id:
+        raise HTTPException(status_code=403, detail="无权访问该扫描任务")
+
+    return _serialize_scan_task(task)
+
 @router.get("/asset-pool", response_model=List[Asset])
-async def get_asset_pool(force_refresh: bool = Query(False)):
+async def get_asset_pool(
+    force_refresh: bool = Query(False),
+    current_user: UserInDB = Depends(get_current_active_user),
+):
     """获取当前资产池并附带按资产类型路由后的最新价格。"""
     try:
-        return _build_asset_pool_response(_load_asset_pool_as_dicts(), force_refresh=force_refresh)
+        user_id = _require_user_id(current_user)
+        return _build_asset_pool_response(_load_asset_pool_as_dicts(user_id), force_refresh=force_refresh)
     except Exception as e:
         logger.error(f"获取资产池失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取资产池失败: {str(e)}")
@@ -335,21 +553,29 @@ async def search_asset_candidates(
         raise HTTPException(status_code=500, detail=f"搜索资产失败: {str(e)}")
 
 @router.post("/asset-pool")
-async def update_asset_pool(request: AssetPoolRequest):
+async def update_asset_pool(
+    request: AssetPoolRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
     """更新资产池"""
     try:
+        user_id = _require_user_id(current_user)
         new_pool = _dedupe_pool_assets([_normalize_pool_asset_entry(item) for item in request.tickers])
-        _save_asset_pool(new_pool)
+        _save_asset_pool(user_id, new_pool)
         return {"status": "success", "count": len(new_pool)}
     except Exception as e:
         logger.error(f"更新资产池失败: {e}")
         raise HTTPException(status_code=500, detail=f"更新资产池失败: {str(e)}")
 
 @router.post("/asset-pool/add")
-async def add_asset_to_pool(request: SingleAssetRequest):
+async def add_asset_to_pool(
+    request: SingleAssetRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
     """添加单个资产到资产池"""
     try:
-        current_pool = _load_asset_pool_as_dicts()
+        user_id = _require_user_id(current_user)
+        current_pool = _load_asset_pool_as_dicts(user_id)
         new_asset = _normalize_pool_asset_entry(
             {
                 "ticker": request.ticker,
@@ -364,7 +590,7 @@ async def add_asset_to_pool(request: SingleAssetRequest):
         if not exists:
             current_pool.append(new_asset)
             current_pool = _dedupe_pool_assets(current_pool)
-            _save_asset_pool(current_pool)
+            _save_asset_pool(user_id, current_pool)
             return {
                 "status": "success",
                 "message": f"已添加 {new_asset['ticker']}",
@@ -381,16 +607,20 @@ async def add_asset_to_pool(request: SingleAssetRequest):
         raise HTTPException(status_code=500, detail=f"添加资产失败: {str(e)}")
 
 @router.post("/asset-pool/delete")
-async def delete_asset_from_pool(request: SingleAssetRequest):
+async def delete_asset_from_pool(
+    request: SingleAssetRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
     """从资产池移除单个资产"""
     try:
-        current_pool = _load_asset_pool_as_dicts()
+        user_id = _require_user_id(current_user)
+        current_pool = _load_asset_pool_as_dicts(user_id)
         ticker = request.ticker.strip().upper()
         
         new_pool = [a for a in current_pool if a["ticker"] != ticker]
         
         if len(new_pool) < len(current_pool):
-            _save_asset_pool(new_pool)
+            _save_asset_pool(user_id, new_pool)
             return {"status": "success", "message": f"已移除 {ticker}", "pool": _build_asset_pool_response(new_pool)}
         else:
             return {"status": "success", "message": f"{ticker} 不在资产池中", "pool": _build_asset_pool_response(new_pool)}
@@ -399,10 +629,14 @@ async def delete_asset_from_pool(request: SingleAssetRequest):
         raise HTTPException(status_code=500, detail=f"移除资产失败: {str(e)}")
 
 @router.post("/asset-pool/update-alias")
-async def update_asset_alias(request: AliasUpdateRequest):
+async def update_asset_alias(
+    request: AliasUpdateRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
     """更新资产别名"""
     try:
-        current_pool = _load_asset_pool_as_dicts()
+        user_id = _require_user_id(current_user)
+        current_pool = _load_asset_pool_as_dicts(user_id)
         ticker = request.ticker.strip().upper()
         
         updated = False
@@ -413,7 +647,7 @@ async def update_asset_alias(request: AliasUpdateRequest):
                 break
         
         if updated:
-            _save_asset_pool(current_pool)
+            _save_asset_pool(user_id, current_pool)
             return {"status": "success", "message": f"已更新 {ticker} 别名", "pool": _build_asset_pool_response(current_pool)}
         else:
             raise HTTPException(status_code=404, detail="资产不存在")
@@ -559,12 +793,12 @@ def _dedupe_pool_assets(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return deduped
 
 
-def _load_asset_pool_as_dicts() -> List[Dict[str, Any]]:
+def _load_asset_pool_as_dicts(user_id: int) -> List[Dict[str, Any]]:
     """加载资产池并确保为统一结构。"""
-    raw_pool = _load_asset_pool()
+    raw_pool = _load_asset_pool(user_id)
     normalized = _dedupe_pool_assets(raw_pool)
     if raw_pool != normalized:
-        _save_asset_pool(normalized)
+        _save_asset_pool(user_id, normalized)
     return normalized
 
 
@@ -601,20 +835,12 @@ DEFAULT_ASSET_POOL = [
 ]
 
 
-def _load_asset_pool() -> List[Any]:
+def _load_asset_pool(user_id: int) -> List[Any]:
     """从 user_state.json 加载资产池，首次部署自动种子化默认资产。"""
-    if not os.path.exists(USER_STATE_FILE):
-        _save_asset_pool(DEFAULT_ASSET_POOL)
-        return list(DEFAULT_ASSET_POOL)
     try:
-        with open(USER_STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            pool = data.get("selected_tickers", [])
-            if not pool:
-                _save_asset_pool(DEFAULT_ASSET_POOL)
-                return list(DEFAULT_ASSET_POOL)
-            return pool
-    except Exception:
+        return list_user_asset_pool(int(user_id))
+    except Exception as exc:
+        logger.warning("读取用户资产池失败，回退默认资产池: %s", exc)
         return list(DEFAULT_ASSET_POOL)
 
 
@@ -720,20 +946,8 @@ def _build_asset_pool_response(pool_items: List[Dict[str, Any]], *, force_refres
     return assets
 
 
-def _save_asset_pool(tickers: List[Any]) -> None:
+def _save_asset_pool(user_id: int, tickers: List[Any]) -> None:
     """保存资产池到 user_state.json。"""
-    os.makedirs(os.path.dirname(USER_STATE_FILE), exist_ok=True)
-
-    current_data = {}
-    if os.path.exists(USER_STATE_FILE):
-        try:
-            with open(USER_STATE_FILE, "r", encoding="utf-8") as f:
-                current_data = json.load(f)
-        except Exception:
-            pass
-
-    current_data["selected_tickers"] = _dedupe_pool_assets([_normalize_pool_asset_entry(item) for item in tickers])
-
-    with open(USER_STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(current_data, f, ensure_ascii=False, indent=2)
+    normalized = _dedupe_pool_assets([_normalize_pool_asset_entry(item) for item in tickers])
+    save_user_asset_pool(int(user_id), normalized)
     _invalidate_asset_pool_response_cache()

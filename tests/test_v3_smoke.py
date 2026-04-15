@@ -8,13 +8,15 @@ from core.version import VERSION
 @pytest.mark.integration
 def test_version_consistency():
     """版本号在核心与 API 中保持一致"""
-    assert VERSION == "2.1.4"
+
+    assert VERSION == "2.2.0"
     assert app.version == VERSION
 
 
 @pytest.mark.integration
 def test_health_endpoint_ok():
     """/api/health 能正常返回且结构正确"""
+
     client = TestClient(app)
     resp = client.get("/api/health")
 

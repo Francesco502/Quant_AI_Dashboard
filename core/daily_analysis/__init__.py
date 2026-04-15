@@ -31,9 +31,10 @@ def _analyze_single(
     model: Optional[str] = None,
     provider_type: Optional[str] = None,
     base_url: Optional[str] = None,
+    shared_context: Optional[Dict[str, Any]] = None,
 ) -> Decision:
     """单标的分析主流程：构建上下文 → LLM → 解析"""
-    ctx = builder.build_analysis_input(ticker=ticker, market=market)
+    ctx = builder.build_analysis_input(ticker=ticker, market=market, shared_context=shared_context)
     messages = prompts.build_messages(ctx)
     text_context = ctx.get("text_context", "") or ""
 
@@ -93,6 +94,7 @@ def run_daily_analysis(
     base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """运行多标的决策分析，可选附带大盘复盘。model 为空时使用服务端默认（如 .env GEMINI_MODEL）。"""
+    shared_context = builder.build_shared_analysis_context(tickers, market=market)
     results: List[Dict[str, Any]] = []
     for t in tickers:
         dec = _analyze_single(
@@ -101,6 +103,7 @@ def run_daily_analysis(
             model=model,
             provider_type=provider_type,
             base_url=base_url,
+            shared_context=shared_context,
         )
         payload = {
             "ticker": dec.ticker,
@@ -128,11 +131,18 @@ def run_daily_analysis(
         },
     }
 
+    market_review_summary = shared_context.get("market_review_summary")
+    scanner_summary = shared_context.get("scanner_summary")
+    if market_review_summary or scanner_summary:
+        resp["shared_context"] = {
+            "market_review_summary": market_review_summary,
+            "scanner_summary": scanner_summary,
+            "limitations": shared_context.get("limitations") or [],
+        }
+
     if include_market_review:
         try:
-            from core import market_review
-
-            resp["market_review"] = market_review.daily_review(market=market)
+            resp["market_review"] = shared_context.get("market_review") or builder.build_shared_analysis_context(tickers, market=market).get("market_review")
         except Exception as e:  # pragma: no cover - 容错
             resp["market_review_error"] = str(e)
 

@@ -29,7 +29,7 @@ except Exception:
 
 @pytest.fixture
 def sample_price_data():
-    """鍒涘缓绀轰緥浠锋牸鏁版嵁"""
+    """Create sample price series."""
     dates = pd.date_range(start="2025-01-01", periods=100, freq="D")
     prices = np.random.uniform(100, 200, 100)
     return pd.Series(prices, index=dates, name="close")
@@ -37,7 +37,7 @@ def sample_price_data():
 
 @pytest.fixture
 def sample_ohlcv_data():
-    """鍒涘缓绀轰緥OHLCV鏁版嵁"""
+    """Create sample OHLCV data."""
     dates = pd.date_range(start="2025-01-01", periods=100, freq="D")
     data = {
         "open": np.random.uniform(100, 200, 100),
@@ -51,15 +51,15 @@ def sample_ohlcv_data():
 
 @pytest.fixture
 def sample_returns():
-    """鍒涘缓绀轰緥鏀剁泭鐜囨暟鎹?"""
+    """Create sample returns series."""
     dates = pd.date_range(start="2025-01-01", periods=100, freq="D")
-    returns = np.random.normal(0.001, 0.02, 100)  # 鍧囧€?.1%锛屾爣鍑嗗樊2%
+    returns = np.random.normal(0.001, 0.02, 100)  # Mean 0.1%, standard deviation 2%
     return pd.Series(returns, index=dates)
 
 
 @pytest.fixture
 def sample_account():
-    """鍒涘缓绀轰緥璐︽埛鏁版嵁"""
+    """Create sample account snapshot."""
     return {
         "cash": 1000000.0,
         "positions": {
@@ -96,7 +96,7 @@ def auth_client(auth_headers):
 
 @pytest.fixture
 def temp_dir():
-    """鍒涘缓涓存椂鐩綍"""
+    """Create a temporary directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield tmpdir
 
@@ -149,14 +149,14 @@ def mock_load_local_ohlcv_history():
 
 @pytest.fixture
 def mock_save_local_ohlcv_history():
-    """Mock save_local_ohlcv_history鍑芥暟"""
+    """Mock save_local_ohlcv_history."""
     with patch('core.data_store.save_local_ohlcv_history') as mock:
         yield mock
 
 
 @pytest.fixture
 def mock_openai_client():
-    """Mock OpenAI瀹㈡埛绔?"""
+    """Mock OpenAI client."""
     with patch('core.llm_client.OpenAI') as mock:
         client_mock = MagicMock()
         client_mock.chat.completions.create.return_value = MagicMock(
@@ -168,7 +168,7 @@ def mock_openai_client():
 
 @pytest.fixture
 def mock_llm_client():
-    """Mock LLM瀹㈡埛绔?"""
+    """Mock LLM client."""
     with patch('core.llm_client.LLMClient') as mock:
         client_mock = MagicMock()
         client_mock.generate.return_value = "Test response"
@@ -254,34 +254,33 @@ def mock_broker_adapter():
 
 @pytest.fixture
 def current_market_time():
-    """鎻愪緵褰撳墠甯傚満鏃堕棿锛堜氦鏄撴椂闂村唴锛?"""
-    # 宸ヤ綔鏃?10:00
+    """Provide a market-time timestamp during trading hours."""    # Trading day 10:00
     return datetime(2025, 3, 3, 10, 0, 0)
 
 
 @pytest.fixture
 def after_market_time():
-    """鎻愪緵闈炰氦鏄撴椂闂达紙鐩樺悗锛?"""
+    """Provide a timestamp outside trading hours."""
     # 20:00
     return datetime(2025, 3, 3, 20, 0, 0)
 
 
 @pytest.fixture
 def weekend_time():
-    """鎻愪緵鍛ㄦ湯鏃堕棿"""
+    """Provide a weekend timestamp."""
     # 鍛ㄥ叚
     return datetime(2025, 3, 8, 10, 0, 0)
 
 
 @pytest.fixture
 def trading_time_provider(current_market_time):
-    """鎻愪緵浜ゆ槗鏃堕棿鐨凾imeProvider鍑芥暟"""
+    """Provide a TimeProvider for trading hours."""
     return lambda: current_market_time
 
 
 @pytest.fixture
 def non_trading_time_provider(after_market_time):
-    """鎻愪緵闈炰氦鏄撴椂闂寸殑TimeProvider鍑芥暟"""
+    """Provide a TimeProvider for non-trading hours."""
     return lambda: after_market_time
 
 
@@ -305,7 +304,7 @@ def trending_price_data():
 
 @pytest.fixture
 def volatile_price_data():
-    """鍒涘缓楂樻尝鍔ㄤ环鏍兼暟鎹?"""
+    """Create volatile price data."""
     dates = pd.date_range(start="2025-01-01", periods=252, freq="B")
     prices = 100 + np.cumsum(np.random.normal(0, 5, 252))
     return pd.DataFrame({
@@ -319,7 +318,7 @@ def volatile_price_data():
 
 @pytest.fixture
 def flat_price_data():
-    """鍒涘缓绋冲畾浠锋牸鏁版嵁锛堜綆娉㈠姩锛?"""
+    """Create flat price data with very low volatility."""
     dates = pd.date_range(start="2025-01-01", periods=252, freq="B")
     prices = 100 + np.random.normal(0, 0.5, 252)
     return pd.DataFrame({
@@ -548,7 +547,7 @@ def conservative_limits():
 
 @pytest.fixture
 def aggressive_limits():
-    """鍒涘缓婵€杩涢闄╅檺鍒?"""
+    """Create aggressive risk limits."""
     from core.risk_types import RiskLimits
     return RiskLimits(
         max_position_size=0.2,
@@ -569,7 +568,7 @@ def aggressive_limits():
 
 @pytest.fixture
 def clean_data():
-    """鍒涘缓骞插噣鐨勬暟鎹?"""
+    """Create clean data with no anomalies."""
     dates = pd.date_range(start="2025-01-01", periods=100, freq="D")
     return pd.DataFrame({
         "open": np.random.uniform(100, 200, 100),
@@ -582,7 +581,7 @@ def clean_data():
 
 @pytest.fixture
 def data_with_nan():
-    """鍒涘缓鍖呭惈NaN鐨勬暟鎹?"""
+    """Create data containing NaN values."""
     dates = pd.date_range(start="2025-01-01", periods=100, freq="D")
     data = pd.DataFrame({
         "close": np.random.uniform(100, 200, 100),
@@ -611,7 +610,7 @@ def data_with_outliers():
 
 @pytest.fixture
 def correlated_assets():
-    """鍒涘缓楂樺害鐩稿叧鐨勮祫浜ф暟鎹?"""
+    """Create highly correlated asset series."""
     dates = pd.date_range(start="2025-01-01", periods=252, freq="B")
     base_returns = np.random.normal(0.001, 0.02, 252)
 
@@ -626,7 +625,7 @@ def correlated_assets():
 
 @pytest.fixture
 def uncorrelated_assets():
-    """鍒涘缓涓嶇浉鍏宠祫浜ф暟鎹?"""
+    """Create low-correlation asset series."""
     dates = pd.date_range(start="2025-01-01", periods=252, freq="B")
 
     return pd.DataFrame({
@@ -642,7 +641,7 @@ def uncorrelated_assets():
 
 @pytest.fixture
 def backtest_results():
-    """鍒涘缓鍥炴祴缁撴灉鏁版嵁"""
+    """Create sample backtest results."""
     return {
         "portfolio": {
             "metrics": {

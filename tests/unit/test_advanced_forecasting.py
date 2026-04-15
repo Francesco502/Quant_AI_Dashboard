@@ -13,7 +13,8 @@ from core.advanced_forecasting import (
     XGBoostForecaster,
     ProphetForecaster,
     EnsembleForecaster,
-    get_available_models
+    get_available_models,
+    quick_predict,
 )
 
 # 创建模拟价格数据
@@ -186,3 +187,41 @@ class TestEnsembleForecaster:
         assert np.isclose(pred['prediction'].iloc[0], 101.5)
         assert 'm1_pred' in pred.columns
         assert 'm2_pred' in pred.columns
+
+
+class TestQuickPredict:
+    @patch("core.data_service.load_price_data")
+    @patch("core.advanced_forecasting.ModelManager")
+    def test_quick_predict_prefers_local_first_refresh_path(
+        self,
+        mock_manager_cls,
+        mock_load_price_data,
+    ):
+        dates = pd.bdate_range(end=pd.Timestamp("2026-03-31"), periods=30)
+        price_series = pd.Series(np.linspace(100.0, 130.0, len(dates)), index=dates)
+        mock_load_price_data.return_value = pd.DataFrame({"AAPL": price_series})
+
+        prediction_index = pd.bdate_range(start=dates[-1] + pd.tseries.offsets.BDay(1), periods=7)
+        model = MagicMock()
+        model.predict.side_effect = [
+            pd.DataFrame({"prediction": np.linspace(131.0, 137.0, len(prediction_index))}, index=prediction_index),
+            pd.DataFrame({"prediction": np.linspace(124.0, 130.0, 7)}, index=prediction_index[:7]),
+        ]
+
+        registry = MagicMock()
+        registry.get_production_model.return_value = "prod-model"
+        registry.get_model_info.return_value = {"model_type": "xgboost"}
+
+        manager = MagicMock()
+        manager.registry = registry
+        manager.load_model_by_id.return_value = model
+        mock_manager_cls.return_value = manager
+
+        result = quick_predict("AAPL", horizon=7, model_type="xgboost")
+
+        assert result is not None
+        assert result["ticker"] == "AAPL"
+        assert not result["prediction"].empty
+        assert mock_load_price_data.call_args.args[0] == ["AAPL"]
+        assert mock_load_price_data.call_args.kwargs["refresh_stale"] is True
+        manager.train_model.assert_not_called()

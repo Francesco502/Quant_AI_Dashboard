@@ -2,9 +2,6 @@ name: Daily LLM Analysis
 
 on:
   workflow_dispatch: {}
-  schedule:
-    # 每个工作日 10:00 UTC（北京时间 18:00 左右）
-    - cron: "0 10 * * 1-5"
 
 jobs:
   run-daily-analysis:
@@ -47,4 +44,3 @@ jobs:
           NEWS_MAX_AGE_DAYS: ${{ secrets.NEWS_MAX_AGE_DAYS }}
         run: |
           python -m core.daily_analysis
-

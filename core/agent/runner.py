@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 from pathlib import Path
 
 from core import scratchpad
@@ -10,7 +10,13 @@ from .tools import get_default_tools
 from .agent import AgentState, run_agent as _run_agent_impl
 
 
-def run_agent(query: str, model: Optional[str] = None, *, max_iterations: int = 2) -> Dict[str, Any]:
+def run_agent(
+    query: str,
+    model: Optional[str] = None,
+    *,
+    max_iterations: int = 2,
+    tool_names: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
     """执行一轮 Agent 研究流程，返回统一结果结构。
 
     - query: 自然语言问题（如“比较 600519 和 000858 的估值与风险”）；
@@ -18,6 +24,9 @@ def run_agent(query: str, model: Optional[str] = None, *, max_iterations: int = 
     - max_iterations: 最多规划+工具调用轮数。
     """
     tools = dict(get_default_tools())
+    if tool_names is not None:
+        allowed = set(tool_names)
+        tools = {name: tool for name, tool in tools.items() if name in allowed}
 
     scratchpad_path: Optional[Path] = None
     if scratchpad.is_scratchpad_enabled():
@@ -40,4 +49,3 @@ def run_agent(query: str, model: Optional[str] = None, *, max_iterations: int = 
 
     result = _run_agent_impl(state)
     return result
-

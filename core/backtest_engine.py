@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.brokers.backtest_broker import BacktestBroker
 from core.trading_engine import TradingEngine
 from core.order_types import Order, OrderStatus
+from core.data_service import load_price_data
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +49,10 @@ class BacktestEngine:
 
     def run(
         self,
-        price_data: pd.DataFrame,
-        strategy_func: Callable[[pd.DataFrame, Dict], Dict[str, int]],
-        strategy_params: Dict = None
+        price_data: pd.DataFrame | Callable[[pd.DataFrame, Dict], Dict[str, int]],
+        strategy_func: Optional[Callable[[pd.DataFrame, Dict], Dict[str, int]]] = None,
+        strategy_params: Dict = None,
+        **legacy_kwargs: Any,
     ) -> Dict:
         """
         Run backtest.
@@ -63,8 +65,39 @@ class BacktestEngine:
         Returns:
             Dict with metrics, equity_curve, and trade_history
         """
+        if callable(price_data) and strategy_func is None:
+            strategy_func = price_data
+            tickers = legacy_kwargs.get("tickers") or []
+            start_date = legacy_kwargs.get("start_date")
+            end_date = legacy_kwargs.get("end_date")
+            if not tickers:
+                raise ValueError("tickers is required when using legacy BacktestEngine.run signature")
+            price_data = load_price_data(tickers, days=legacy_kwargs.get("days", 365))
+            if len(tickers) == 1 and tickers[0] not in price_data.columns and "close" in price_data.columns:
+                price_data = pd.DataFrame({tickers[0]: price_data["close"]})
+            if start_date:
+                price_data = price_data[price_data.index >= pd.Timestamp(start_date)]
+            if end_date:
+                price_data = price_data[price_data.index <= pd.Timestamp(end_date)]
+
+        if strategy_func is None:
+            raise ValueError("strategy_func is required")
+
         if strategy_params is None:
             strategy_params = {}
+
+        self.equity_curve = []
+        self.positions_history = []
+        self.broker = BacktestBroker(
+            initial_capital=self.initial_capital,
+            commission_rate=float(self.fees.get("commission", 0.0003)),
+            stamp_duty_rate=float(self.fees.get("stamp_duty", 0.001)),
+            base_slippage_bps=float(self.fees.get("slippage", 0.0005)) * 10000.0,
+        )
+        self.trading_engine = TradingEngine(self.broker)
+
+        if price_data is None or price_data.empty:
+            return self._calculate_metrics()
 
         dates = price_data.index.sort_values()
         tickers = price_data.columns.tolist()
@@ -93,7 +126,8 @@ class BacktestEngine:
             # 3. Run Strategy
             # Pass data up to current date
             current_history = price_data.loc[:date]
-            target_positions = strategy_func(current_history, strategy_params)
+            target_positions = self._call_strategy(strategy_func, current_history, strategy_params)
+            target_positions = self._normalize_targets(target_positions, current_prices, account_info=self.broker.get_account_info())
 
             # 4. Execute Rebalance via TradingEngine
             # This generates orders and places them in the broker (status=SUBMITTED)
@@ -122,9 +156,52 @@ class BacktestEngine:
 
         return self._calculate_metrics()
 
+    @staticmethod
+    def _call_strategy(strategy_func: Callable, current_history: pd.DataFrame, strategy_params: Dict) -> Dict[str, Any]:
+        try:
+            return strategy_func(current_history, strategy_params)
+        except TypeError:
+            return strategy_func(current_history, **strategy_params)
+
+    def _normalize_targets(
+        self,
+        targets: Dict[str, Any],
+        current_prices: Dict[str, float],
+        account_info: Dict[str, Any],
+    ) -> Dict[str, int]:
+        normalized: Dict[str, int] = {}
+        equity = float(account_info.get("equity") or account_info.get("total_assets") or self.initial_capital)
+        for ticker, target in (targets or {}).items():
+            try:
+                value = float(target)
+            except (TypeError, ValueError):
+                continue
+            price = float(current_prices.get(ticker) or 0)
+            if -1.0 <= value <= 1.0 and price > 0:
+                normalized[ticker] = max(int((equity * max(value, 0.0)) / price), 0)
+            else:
+                normalized[ticker] = max(int(value), 0)
+        return normalized
+
     def _calculate_metrics(self) -> Dict:
         if not self.equity_curve:
-            return {}
+            metrics = {
+                "total_return": 0.0,
+                "net_return_after_cost": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "volatility": 0.0,
+                "transaction_cost": 0.0,
+                "turnover": 0.0,
+            }
+            return {
+                **metrics,
+                "metrics": metrics,
+                "equity_curve": pd.DataFrame(columns=["equity", "cash", "returns"]),
+                "trade_history": [],
+                "positions_history": self.positions_history,
+                "weights": {},
+            }
 
         df = pd.DataFrame(self.equity_curve).set_index("date")
         df["returns"] = df["equity"].pct_change().fillna(0)
@@ -143,7 +220,7 @@ class BacktestEngine:
         avg_equity = float(df["equity"].mean()) if not df.empty else 0.0
         turnover = (total_notional / avg_equity) if avg_equity > 0 else 0.0
 
-        return {
+        metrics = {
             "total_return": total_return,
             "net_return_after_cost": total_return,
             "sharpe_ratio": sharpe,
@@ -151,9 +228,16 @@ class BacktestEngine:
             "volatility": volatility,
             "transaction_cost": total_commission,
             "turnover": turnover,
+        }
+
+        latest_positions = self.positions_history[-1]["positions"] if self.positions_history else {}
+        return {
+            **metrics,
+            "metrics": metrics,
             "equity_curve": df,
             "trade_history": trade_history,
-            "positions_history": self.positions_history
+            "positions_history": self.positions_history,
+            "weights": latest_positions,
         }
 
     # --------------------------------------------------------------------------
@@ -254,11 +338,12 @@ class BacktestEngine:
 
     def run_multi_strategy(
         self,
-        price_data: pd.DataFrame,
-        strategies: Dict[str, Tuple[Callable, Dict]],
+        price_data: pd.DataFrame | None = None,
+        strategies: Optional[Dict[str, Tuple[Callable, Dict]]] = None,
         weights: Dict[str, float] = None,
         benchmark_ticker: str = None,
-        benchmark_data: pd.DataFrame = None
+        benchmark_data: pd.DataFrame = None,
+        **legacy_kwargs: Any,
     ) -> Dict:
         """
         多策略组合回测
@@ -273,6 +358,20 @@ class BacktestEngine:
         Returns:
             包含组合结果和单策略结果的字典
         """
+        tickers = legacy_kwargs.get("tickers")
+        if price_data is None and tickers:
+            price_data = load_price_data(tickers, days=legacy_kwargs.get("days", 365))
+            start_date = legacy_kwargs.get("start_date")
+            end_date = legacy_kwargs.get("end_date")
+            if start_date:
+                price_data = price_data[price_data.index >= pd.Timestamp(start_date)]
+            if end_date:
+                price_data = price_data[price_data.index <= pd.Timestamp(end_date)]
+
+        if price_data is None or price_data.empty:
+            return {"error": "No price data provided"}
+
+        strategies = strategies or {}
         if not strategies:
             return {"error": "No strategies provided"}
 
@@ -288,7 +387,11 @@ class BacktestEngine:
 
         # 单策略回测
         individual_results = {}
-        for sid, (func, params) in strategies.items():
+        for sid, spec in strategies.items():
+            if isinstance(spec, tuple):
+                func, params = spec
+            else:
+                func, params = spec, {}
             engine = BacktestEngine(self.initial_capital, self.fees)
             individual_results[sid] = engine.run(price_data, func, params)
 
@@ -418,29 +521,41 @@ class BacktestEngine:
             return float(raw if raw is not None else 0.0)
 
         def evaluate_params(params: Dict) -> Tuple[Dict, float]:
-            """评估一组参数"""
+            """Evaluate one parameter combination with rolling-window cross-validation."""
             try:
-                # 使用较短的回测窗口进行快速评估
                 if isinstance(params, (list, tuple)):
                     params = dict(zip(param_names, params))
                 dates = price_data.index.sort_values()
-                if len(dates) > cv_days:
-                    # 使用滚动窗口
-                    end_idx = len(dates) - 1
-                    start_idx = max(0, end_idx - cv_days)
-                    sub_data = price_data.iloc[start_idx:end_idx]
-                else:
+                n = len(dates)
+                if n < cv_days * 2:
                     sub_data = price_data
+                    engine = BacktestEngine(self.initial_capital, self.fees)
+                    result = engine.run(sub_data, strategy_func, params)
+                    score = _objective_score(result)
+                    if score is None or (isinstance(score, (float, int)) and np.isnan(score)):
+                        score = -np.inf if maximize else np.inf
+                    return params, float(score)
 
-                engine = BacktestEngine(self.initial_capital, self.fees)
-                result = engine.run(sub_data, strategy_func, params)
+                # True rolling-window cross-validation: slide the window in
+                # increments of cv_days // 3, testing on cv_days days each time.
+                step = max(cv_days // 3, 1)
+                scores: List[float] = []
+                window_start = max(0, n - cv_days * 4)  # at most 4 windows
+                for test_end in range(window_start + cv_days, n, step):
+                    test_start = test_end - cv_days
+                    train_start = max(0, test_start - cv_days)
+                    # Use a training window + test window
+                    sub_data = price_data.iloc[train_start:test_end]
+                    engine = BacktestEngine(self.initial_capital, self.fees)
+                    result = engine.run(sub_data, strategy_func, params)
+                    score = _objective_score(result)
+                    if score is not None and isinstance(score, (float, int)) and not np.isnan(score):
+                        scores.append(float(score))
 
-                # 获取目标分数
-                score = _objective_score(result)
-                if score is None or (isinstance(score, (float, int)) and np.isnan(score)):
-                    score = -np.inf if maximize else np.inf
-
-                return params, float(score)
+                if not scores:
+                    return params, -np.inf if maximize else np.inf
+                avg_score = float(np.mean(scores))
+                return params, avg_score
             except Exception as e:
                 logger.warning(f"Error evaluating params {params}: {e}")
                 return params, -np.inf if maximize else np.inf
@@ -475,7 +590,7 @@ class BacktestEngine:
     def get_positions_at_date(self, date: datetime) -> Dict[str, float]:
         """获取指定日期的持仓权重"""
         for entry in self.positions_history:
-            if entry["date"] == date:
+            if pd.Timestamp(entry["date"]) == pd.Timestamp(date):
                 total = entry["total_equity"]
                 if total == 0:
                     return {}

@@ -21,7 +21,7 @@ const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "form-control glass-input flex w-full items-center justify-between px-3.5 py-2.5",
+      "form-control glass-input flex min-h-11 w-full items-center justify-between px-3.5 py-2.5",
       "focus:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(var(--rgb-ochre),0.5)] focus-visible:border-[rgba(var(--rgb-ochre),0.8)]",
       "disabled:cursor-not-allowed disabled:opacity-40",
       "[&>span]:line-clamp-1",

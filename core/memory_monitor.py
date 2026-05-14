@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import gc
 import logging
+import sys
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
 
@@ -55,21 +56,28 @@ class MemoryMonitor:
     def get_memory_status(self) -> MemoryStatus:
         """获取当前内存状态"""
         try:
-            import resource
-            # Unix/Linux/MacOS
-            usage = resource.getrusage(resource.RUSAGE_SELF)
-            used_mb = usage.ru_maxrss / 1024  # KB to MB (MacOS returns bytes)
-            if os.name == 'nt':
-                # Windows returns bytes, convert to MB
-                used_mb = usage.ru_maxrss / (1024 * 1024)
+            import psutil
+
+            process = psutil.Process(os.getpid())
+            used_mb = process.memory_info().rss / (1024 * 1024)
         except ImportError:
-            # 降级方案：使用 psutil
             try:
-                import psutil
-                process = psutil.Process(os.getpid())
-                used_mb = process.memory_info().rss / (1024 * 1024)
-            except ImportError:
-                # 最简降级：返回估算值
+                import resource
+
+                usage = resource.getrusage(resource.RUSAGE_SELF)
+                if sys.platform == "darwin" or os.name == "nt":
+                    used_mb = usage.ru_maxrss / (1024 * 1024)
+                else:
+                    used_mb = usage.ru_maxrss / 1024
+            except Exception:
+                logger.warning("无法获取精确内存使用，使用估算值")
+                used_mb = 0
+        except Exception:
+            import resource
+            try:
+                usage = resource.getrusage(resource.RUSAGE_SELF)
+                used_mb = usage.ru_maxrss / (1024 * 1024) if sys.platform == "darwin" else usage.ru_maxrss / 1024
+            except Exception:
                 logger.warning("无法获取精确内存使用，使用估算值")
                 used_mb = 0
 

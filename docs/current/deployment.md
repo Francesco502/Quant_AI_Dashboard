@@ -4,7 +4,7 @@
 
 Use [`docker-compose.yml`](../../docker-compose.yml), which builds [`Dockerfile.optimized`](../../Dockerfile.optimized).
 
-This is the standard `v2.2.0` full-stack deployment path:
+This is the standard `v2.3.0` full-stack deployment path:
 
 - frontend served on `8686`
 - backend API exposed on `8685`
@@ -31,7 +31,7 @@ docker compose logs -f
 ## Direct Single-Image Build
 
 ```bash
-docker build -f Dockerfile.optimized -t quant-ai-dashboard:2.2.0 .
+docker build -f Dockerfile.optimized -t quant-ai-dashboard:2.3.0 .
 ```
 
 ## Direct Single-Image Run
@@ -46,7 +46,7 @@ docker run -d \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/models:/app/models \
   -v $(pwd)/strategies:/app/strategies \
-  quant-ai-dashboard:2.2.0
+  quant-ai-dashboard:2.3.0
 ```
 
 ## Published Ports
@@ -70,6 +70,10 @@ Set these through `.env` or the deployment platform:
 - `API_EXPECT_SAME_ORIGIN=true` for same-origin deployment, or explicit `CORS_ORIGINS`
 - `TUSHARE_TOKEN` for A-share workflows
 - model-provider keys such as `OPENAI_API_KEY`, `ARK_API_KEY`, `DASHSCOPE_API_KEY`, or equivalent
+
+## Runtime Tuning
+
+- `UVICORN_LIMIT_CONCURRENCY` defaults to `32` in the optimized image. Lower it for very tight hosts, or raise it if the dashboard serves multiple simultaneous browser sessions.
 
 ## Recommended Deployment Root
 
@@ -95,6 +99,8 @@ Then verify in browser:
 - `/trading`
 - `/backtest`
 - `/dashboard-llm`
+- `/daily-workbench`
+- `/settings`
 
 ## Release Validation
 

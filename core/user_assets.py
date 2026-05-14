@@ -629,7 +629,7 @@ class UserAssetService:
             self.db.conn.commit()
 
         self._invalidate_user_cache(user_id)
-        return self.get_overview(user_id, sync_dca=False, force_refresh=True)
+        return self.get_overview(user_id, sync_dca=False, force_refresh=True, refresh_market=True)
 
     def update_asset(
         self,
@@ -720,7 +720,7 @@ class UserAssetService:
             self.db.conn.commit()
 
         self._invalidate_user_cache(user_id)
-        return self.get_overview(user_id, sync_dca=False, force_refresh=True)
+        return self.get_overview(user_id, sync_dca=False, force_refresh=True, refresh_market=True)
 
     def add_transaction(self, user_id: int, ticker: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         self._ensure_tables()
@@ -1003,6 +1003,32 @@ class UserAssetService:
             "trade_date": self._transaction_date(earliest_reset),
         }
 
+    @staticmethod
+    def _add_calendar_months(base_date: dt.date, months: int) -> dt.date:
+        """Return *base_date* shifted by *months* calendar months.
+
+        When the target month has fewer days than the source day-of-month the
+        result is clamped to the last day of the target month (following the
+        convention used by Python's ``dateutil.relativedelta``).
+        """
+        target_year = base_date.year + (base_date.month + months - 1) // 12
+        target_month = (base_date.month + months - 1) % 12 + 1
+        last_dom = calendar.monthrange(target_year, target_month)[1]
+        target_day = min(base_date.day, last_dom)
+        return dt.date(target_year, target_month, target_day)
+
+    @staticmethod
+    def _add_calendar_years(base_date: dt.date, years: int) -> dt.date:
+        """Return *base_date* shifted by *years* calendar years.
+
+        Handles February 29th by clamping to February 28th in non-leap years.
+        """
+        try:
+            return base_date.replace(year=base_date.year + years)
+        except ValueError:
+            # Feb 29 → Feb 28 in the target non-leap year.
+            return base_date.replace(year=base_date.year + years, day=28)
+
     def _calculate_period_changes(
         self,
         user_id: int,
@@ -1024,6 +1050,10 @@ class UserAssetService:
                 "week_change_pct": 0.0,
                 "month_change_pct": 0.0,
                 "year_change_pct": 0.0,
+                "day_ref_value": 0.0,
+                "week_ref_value": 0.0,
+                "month_ref_value": 0.0,
+                "year_ref_value": 0.0,
             }
 
         resolved_latest_date = latest_date
@@ -1039,6 +1069,10 @@ class UserAssetService:
                 "week_change_pct": 0.0,
                 "month_change_pct": 0.0,
                 "year_change_pct": 0.0,
+                "day_ref_value": 0.0,
+                "week_ref_value": 0.0,
+                "month_ref_value": 0.0,
+                "year_ref_value": 0.0,
             }
 
         resolved_flow_end_date = flow_end_date or resolved_latest_date
@@ -1046,34 +1080,47 @@ class UserAssetService:
             resolved_flow_end_date = resolved_latest_date
 
         current_market_value = units * latest_price
+
+        # Use actual calendar offsets for month and year instead of fixed-day windows.
+        month_ref_date = self._add_calendar_months(resolved_latest_date, -1)
+        year_ref_date = self._add_calendar_years(resolved_latest_date, -1)
+
         periods = {
             "day": resolved_latest_date - dt.timedelta(days=1),
             "week": resolved_latest_date - dt.timedelta(days=7),
-            "month": resolved_latest_date - dt.timedelta(days=30),
-            "year": resolved_latest_date - dt.timedelta(days=365),
+            "month": month_ref_date,
+            "year": year_ref_date,
         }
         result: Dict[str, float] = {}
 
         for name, ref_date in periods.items():
             net_flow = self._calculate_period_net_flow(transactions, ref_date, resolved_flow_end_date)
-            ref_market_value = self._snapshot_change_value(user_id, ticker, ref_date)
             opening_reset = self._infer_opening_reset_state(transactions, ref_date, resolved_flow_end_date)
-            if ref_market_value is None or ref_market_value <= 0:
-                ref_state = self._calculate_position_state(transactions, as_of=ref_date)
-                ref_units = ref_state["units"]
-                if ref_units <= 0 and abs(net_flow) <= 1e-10:
-                    ref_units = units
-                elif ref_units <= 0 and opening_reset is not None:
-                    ref_units = self._to_float(opening_reset.get("units"), 0.0)
+            ref_state = self._calculate_position_state(transactions, as_of=ref_date)
+            ref_units = ref_state["units"]
+            if ref_units <= 0 and abs(net_flow) <= 1e-10:
+                ref_units = units
+            elif ref_units <= 0 and opening_reset is not None:
+                ref_units = self._to_float(opening_reset.get("units"), 0.0)
 
-                if ref_units > 0:
-                    ref_price = self._reference_price(series, ref_date)
-                    if ref_price is None or ref_price <= 0:
-                        result[f"{name}_change"] = 0.0
-                        result[f"{name}_change_pct"] = 0.0
-                        continue
+            ref_market_value: Optional[float] = None
+            if ref_units > 0:
+                ref_price = self._reference_price(series, ref_date)
+                if ref_price is not None and ref_price > 0:
                     ref_market_value = ref_units * ref_price
-                elif abs(net_flow) <= 1e-10:
+                elif opening_reset is not None:
+                    reset_units = self._to_float(opening_reset.get("units"), 0.0)
+                    reset_price = self._to_float(opening_reset.get("price"), 0.0)
+                    if reset_units > 0 and reset_price > 0:
+                        ref_market_value = reset_units * reset_price
+
+            if ref_market_value is None or ref_market_value <= 0:
+                snapshot_value = self._snapshot_change_value(user_id, ticker, ref_date)
+                if snapshot_value is not None and snapshot_value > 0:
+                    ref_market_value = snapshot_value
+
+            if ref_market_value is None or ref_market_value <= 0:
+                if abs(net_flow) <= 1e-10:
                     ref_market_value = current_market_value
                 else:
                     ref_market_value = 0.0
@@ -1081,6 +1128,8 @@ class UserAssetService:
             change_value = current_market_value - ref_market_value - net_flow
             result[f"{name}_change"] = change_value
             result[f"{name}_change_pct"] = ((change_value / ref_market_value) * 100.0) if ref_market_value > 0 else 0.0
+            # Expose reference market value so the summary can compute an aggregate percentage.
+            result[f"{name}_ref_value"] = ref_market_value
 
         return result
 
@@ -1252,7 +1301,10 @@ class UserAssetService:
         occurrences: List[Dict[str, dt.date]] = []
         for due_date in due_dates:
             effective_date = due_date
-            if rule.get("shift_to_next_trading_day"):
+            # Delayed-confirmation (OTC) funds require a trading-day effective date
+            # because fund NAV is only published on trading days.  Auto-shift even
+            # when the user hasnʼt explicitly set shift_to_next_trading_day.
+            if rule.get("shift_to_next_trading_day") or delayed_confirmation:
                 while effective_date <= as_of and not calendar_service.is_trading_day(effective_date, market):
                     effective_date += dt.timedelta(days=1)
             if effective_date > as_of:
@@ -1379,7 +1431,13 @@ class UserAssetService:
                         else self._reference_price(series, effective_date)
                     )
                     if price is None or price <= 0:
-                        logger.warning("Skip DCA for %s on %s because price is unavailable", ticker, effective_date)
+                        logger.warning(
+                            "DCA skipped — price unavailable for %s on effective_date=%s (confirmation_date=%s). "
+                            "The fund NAV may not be published yet; reconciliation will retry on the next sync.",
+                            ticker,
+                            effective_date,
+                            confirmation_date,
+                        )
                         continue
 
                     amount = max(0.0, self._to_float(rule.get("amount"), 0.0))
@@ -1488,6 +1546,7 @@ class UserAssetService:
         *,
         force_refresh: bool = False,
         force_snapshot: bool = False,
+        refresh_market: bool = False,
     ) -> Dict[str, Any]:
         self._ensure_tables()
         if sync_dca:
@@ -1568,7 +1627,7 @@ class UserAssetService:
 
         fund_nav_df = pd.DataFrame()
         fund_nav_tickers = [str(item["ticker"]) for item in normalized_holdings if self._should_prefer_fund_nav(item)]
-        if fund_nav_tickers:
+        if refresh_market and fund_nav_tickers:
             try:
                 fund_nav_df = load_price_data_akshare(fund_nav_tickers, days=FUND_NAV_HISTORY_DAYS)
             except Exception as exc:  # noqa: BLE001
@@ -1576,7 +1635,7 @@ class UserAssetService:
 
         realtime_quotes: Dict[str, Dict[str, Any]] = {}
         realtime_candidates = [str(item["ticker"]) for item in normalized_holdings if self._supports_realtime_quote(item)]
-        if realtime_candidates:
+        if refresh_market and realtime_candidates:
             try:
                 realtime_quotes = load_cn_realtime_quotes_sina(realtime_candidates)
             except Exception as exc:  # noqa: BLE001
@@ -1593,7 +1652,16 @@ class UserAssetService:
             "week_change": 0.0,
             "month_change": 0.0,
             "year_change": 0.0,
+            "day_change_pct": 0.0,
+            "week_change_pct": 0.0,
+            "month_change_pct": 0.0,
+            "year_change_pct": 0.0,
         }
+        # Accumulated reference values for computing summary-level percentages.
+        day_ref_total = 0.0
+        week_ref_total = 0.0
+        month_ref_total = 0.0
+        year_ref_total = 0.0
         for holding in normalized_holdings:
             ticker = str(holding["ticker"])
             transactions = grouped_transactions.get(ticker, [])
@@ -1691,10 +1759,27 @@ class UserAssetService:
             summary["week_change"] += period_changes["week_change"]
             summary["month_change"] += period_changes["month_change"]
             summary["year_change"] += period_changes["year_change"]
+            day_ref_total += period_changes.get("day_ref_value", 0.0)
+            week_ref_total += period_changes.get("week_ref_value", 0.0)
+            month_ref_total += period_changes.get("month_ref_value", 0.0)
+            year_ref_total += period_changes.get("year_ref_value", 0.0)
 
         invested_total = summary["total_invested_amount"]
         summary["total_return_pct"] = (
             (summary["total_return"] / invested_total) * 100.0 if invested_total > 0 else 0.0
+        )
+        # Summary-level period percentages: aggregate-change / aggregate-reference-value.
+        summary["day_change_pct"] = (
+            (summary["day_change"] / day_ref_total) * 100.0 if day_ref_total > 0 else 0.0
+        )
+        summary["week_change_pct"] = (
+            (summary["week_change"] / week_ref_total) * 100.0 if week_ref_total > 0 else 0.0
+        )
+        summary["month_change_pct"] = (
+            (summary["month_change"] / month_ref_total) * 100.0 if month_ref_total > 0 else 0.0
+        )
+        summary["year_change_pct"] = (
+            (summary["year_change"] / year_ref_total) * 100.0 if year_ref_total > 0 else 0.0
         )
         summary["total_market_value"] = round(summary["total_market_value"], 2)
         summary["total_invested_amount"] = round(summary["total_invested_amount"], 2)
@@ -1704,6 +1789,10 @@ class UserAssetService:
         summary["week_change"] = round(summary["week_change"], 2)
         summary["month_change"] = round(summary["month_change"], 2)
         summary["year_change"] = round(summary["year_change"], 2)
+        summary["day_change_pct"] = round(summary["day_change_pct"], 4)
+        summary["week_change_pct"] = round(summary["week_change_pct"], 4)
+        summary["month_change_pct"] = round(summary["month_change_pct"], 4)
+        summary["year_change_pct"] = round(summary["year_change_pct"], 4)
         summary["updated_at"] = dt.datetime.now().isoformat(timespec="seconds")
 
         if self._should_persist_snapshots(user_id, assets, summary, force=force_snapshot):

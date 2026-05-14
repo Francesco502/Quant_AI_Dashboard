@@ -1,12 +1,14 @@
 "use client"
 
 import Link from "next/link"
-import { useCallback, useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts"
 import {
   Activity,
   Bot,
   ChartNoAxesColumn,
+  ChevronDown,
   Clock3,
   PlayCircle,
   RefreshCw,
@@ -26,9 +28,18 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CardDescription, CardTitle, GlassCard } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { SegmentedControl } from "@/components/ui/segmented-control"
+import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { HelpTooltip } from "@/components/ui/tooltip"
 import {
   api,
@@ -47,6 +58,7 @@ import { formatDateTimeInBeijing } from "@/lib/time"
 import { cn, formatCurrency } from "@/lib/utils"
 
 type WorkspaceTab = "overview" | "automation" | "manual"
+type TradeActionFilter = "all" | "BUY" | "SELL"
 type NoticeState = { tone: "success" | "error"; text: string } | null
 type RecentOrderRow = {
   order_id: string
@@ -65,6 +77,7 @@ const ORDER_TYPE_TEXT: Record<string, string> = {
   STOP: "止损",
   STOP_LIMIT: "止损限价",
 }
+const MOBILE_ACTIVITY_LIMIT = 5
 
 const FALLBACK_AUTO_CONFIG: AutoTradingConfig = {
   enabled: true,
@@ -119,6 +132,7 @@ function buildAccountFromSnapshot(snapshot: AutoTradingAccountSnapshot | null): 
     account_id: snapshot.account_id,
     account_name: snapshot.account_name,
     currency: "CNY",
+    initial_capital: snapshot.initial_capital,
     portfolio: {
       total_assets: totalAssets,
       cash: snapshot.portfolio?.cash ?? snapshot.balance ?? 0,
@@ -243,6 +257,34 @@ function SummaryMetric({
   )
 }
 
+function ConfigSection({
+  title,
+  description,
+  children,
+  defaultOpen = false,
+}: {
+  title: string
+  description: string
+  children: React.ReactNode
+  defaultOpen?: boolean
+}) {
+  return (
+    <details
+      open={defaultOpen}
+      className="group overflow-hidden rounded-[24px] border border-black/[0.06] bg-white/55"
+    >
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-4 px-4 py-3.5">
+        <div className="space-y-1">
+          <div className="text-sm font-semibold text-foreground/88">{title}</div>
+          <p className="text-xs leading-6 text-muted-foreground">{description}</p>
+        </div>
+        <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-foreground/48 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="space-y-4 border-t border-black/[0.05] px-4 py-4">{children}</div>
+    </details>
+  )
+}
+
 function StatusBanner({ notice }: { notice: NoticeState }) {
   if (!notice) return null
   const isSuccess = notice.tone === "success"
@@ -293,17 +335,23 @@ function withTimeout<T>(promise: Promise<T>, fallback: T, timeoutMs: number) {
 }
 
 export default function TradingPage() {
+  const searchParams = useSearchParams()
+  const routeTicker = (searchParams.get("symbol") || searchParams.get("ticker") || "").trim().toUpperCase()
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("overview")
   const [notice, setNotice] = useState<NoticeState>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [autoBusy, setAutoBusy] = useState<"save" | "run" | "reset" | "create" | null>(null)
+  const [resetDialogOpen, setResetDialogOpen] = useState(false)
 
   const [account, setAccount] = useState<PaperAccountInfo | null>(null)
   const [performance, setPerformance] = useState<PerformanceMetrics | null>(null)
   const [equityCurve, setEquityCurve] = useState<EquityCurve | null>(null)
   const [tradeHistory, setTradeHistory] = useState<TradeHistoryRecord[]>([])
   const [recentOrders, setRecentOrders] = useState<RecentOrderRow[]>([])
+  const [tradeFilter, setTradeFilter] = useState<TradeActionFilter>("all")
+  const [showAllTrades, setShowAllTrades] = useState(false)
+  const [showAllOrders, setShowAllOrders] = useState(false)
 
   const [assetOptions, setAssetOptions] = useState<Asset[]>([])
   const [autoStatus, setAutoStatus] = useState<AutoTradingStatusResponse | null>(null)
@@ -320,7 +368,7 @@ export default function TradingPage() {
     return () => window.clearTimeout(timer)
   }, [notice])
 
-  const loadWorkspace = useCallback(async (silent: boolean = false) => {
+  const loadWorkspace = useCallback(async (silent: boolean = false, refreshPrices: boolean = false) => {
     if (silent) {
       setRefreshing(true)
     } else {
@@ -329,7 +377,7 @@ export default function TradingPage() {
 
     try {
       const autoStatusPromise = api.trading.auto
-        .getStatus()
+        .getStatus(refreshPrices)
         .then(async (status) => {
           setAutoStatus(status)
           setAutoAccessDenied(false)
@@ -386,7 +434,7 @@ export default function TradingPage() {
       setManualTicker((current) => current || mergedAssets[0]?.ticker || "")
 
       void api.trading.paper
-        .getAccount(preferredAccountId ?? undefined)
+        .getAccount(preferredAccountId ?? undefined, { refresh: refreshPrices })
         .then(async (resolvedAccount) => {
           setAccount(resolvedAccount)
           const nextAccountId = resolvedAccount?.account_id
@@ -426,6 +474,12 @@ export default function TradingPage() {
   useEffect(() => {
     void loadWorkspace()
   }, [loadWorkspace])
+
+  useEffect(() => {
+    if (!routeTicker) return
+    setManualTicker(routeTicker)
+    setActiveTab("manual")
+  }, [routeTicker])
 
   const normalizedTicker = manualTicker.trim().toUpperCase()
   const positions = account?.portfolio.positions || []
@@ -504,7 +558,7 @@ export default function TradingPage() {
   )
 
   const handleRefresh = async () => {
-    await loadWorkspace(true)
+    await loadWorkspace(true, true)
   }
 
   const persistAutoConfig = async () => {
@@ -547,8 +601,8 @@ export default function TradingPage() {
 
   const handleResetAccount = async () => {
     if (!accountId) return
-    if (!window.confirm("这会清空当前模拟账户的持仓与历史成交，并将资金重置为设定值。是否继续？")) return
 
+    setResetDialogOpen(false)
     setAutoBusy("reset")
     try {
       await api.trading.paper.resetAccount(accountId, {
@@ -596,10 +650,34 @@ export default function TradingPage() {
         price: order.price,
         stop_price: order.stop_price,
       })
+      await api.audit
+        .recordEvent({
+          action: "PAPER_ORDER_SUBMIT",
+          resource: order.ticker,
+          resource_type: "paper_order",
+          details: {
+            account_id: accountId,
+            side: order.side,
+            order_type: order.order_type,
+            quantity: order.quantity,
+            price: order.price,
+          },
+        })
+        .catch(() => undefined)
       setNotice({ tone: "success", text: `${order.side === "BUY" ? "买入" : "卖出"}订单已提交。` })
       await loadWorkspace(true)
       setActiveTab("overview")
     } catch (error) {
+      await api.audit
+        .recordEvent({
+          action: "PAPER_ORDER_SUBMIT",
+          resource: order.ticker,
+          resource_type: "paper_order",
+          success: false,
+          details: { account_id: accountId, side: order.side, order_type: order.order_type, quantity: order.quantity },
+          error_message: toUiNotice(error, "提交手动订单失败"),
+        })
+        .catch(() => undefined)
       setNotice({ tone: "error", text: toUiNotice(error, "提交手动订单失败") })
     } finally {
       setAutoBusy(null)
@@ -632,6 +710,19 @@ export default function TradingPage() {
     : !autoAccessDenied
       ? "当前页可直接重跑"
       : "当前账户无自动交易权限"
+  const filteredTradeHistory = useMemo(
+    () =>
+      tradeFilter === "all"
+        ? tradeHistory
+        : tradeHistory.filter((trade) => trade.action.toUpperCase() === tradeFilter),
+    [tradeFilter, tradeHistory],
+  )
+  const visibleTradeHistory = showAllTrades
+    ? filteredTradeHistory
+    : filteredTradeHistory.slice(0, MOBILE_ACTIVITY_LIMIT)
+  const visibleRecentOrders = showAllOrders
+    ? recentOrders
+    : recentOrders.slice(0, MOBILE_ACTIVITY_LIMIT)
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 p-6 md:p-10">
@@ -670,11 +761,17 @@ export default function TradingPage() {
               ) : null}
             </div>
 
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[0.88rem] text-foreground/62">
-              <Link className="transition-colors duration-200 hover:text-foreground" href="/strategies">
+            <div className="flex flex-wrap items-center gap-2 text-[0.88rem] text-foreground/62">
+              <Link
+                className="inline-flex min-h-11 items-center rounded-full border border-border/60 bg-background/70 px-4 transition-colors duration-200 hover:border-[rgba(var(--rgb-ochre),0.45)] hover:text-foreground"
+                href="/strategies"
+              >
                 查看策略库
               </Link>
-              <Link className="transition-colors duration-200 hover:text-foreground" href="/backtest">
+              <Link
+                className="inline-flex min-h-11 items-center rounded-full border border-border/60 bg-background/70 px-4 transition-colors duration-200 hover:border-[rgba(var(--rgb-ochre),0.45)] hover:text-foreground"
+                href="/backtest"
+              >
                 进入回测中心
               </Link>
             </div>
@@ -719,17 +816,17 @@ export default function TradingPage() {
           </div>
 
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as WorkspaceTab)} className="space-y-8">
-            <TabsList className="inline-flex h-auto w-auto max-w-full justify-start gap-1.5 overflow-x-auto rounded-[22px] border border-black/[0.05] bg-[rgba(249,245,239,0.78)] p-1.5 shadow-none">
-              <TabsTrigger value="overview" className="rounded-xl px-4 py-2">
-                账户总览
-              </TabsTrigger>
-              <TabsTrigger value="automation" className="rounded-xl px-4 py-2">
-                自动交易
-              </TabsTrigger>
-              <TabsTrigger value="manual" className="rounded-xl px-4 py-2">
-                手动交易
-              </TabsTrigger>
-            </TabsList>
+            <SegmentedControl
+              value={activeTab}
+              onValueChange={setActiveTab}
+              ariaLabel="交易工作台视图"
+              className="max-w-full overflow-x-auto"
+              options={[
+                { value: "overview", label: "账户总览" },
+                { value: "automation", label: "自动交易" },
+                { value: "manual", label: "手动交易" },
+              ]}
+            />
 
             <TabsContent value="overview" className="space-y-6">
               <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
@@ -770,7 +867,7 @@ export default function TradingPage() {
                               contentStyle={{
                                 borderRadius: 18,
                                 border: "1px solid rgba(0,0,0,0.06)",
-                                backgroundColor: "rgba(255,255,255,0.95)",
+                                backgroundColor: "var(--chart-tooltip-bg)",
                               }}
                             />
                             <Area
@@ -843,7 +940,7 @@ export default function TradingPage() {
                         创建模拟账户
                       </Button>
                     ) : (
-                      <Button variant="outline" onClick={() => void handleResetAccount()} disabled={autoActionLocked}>
+                      <Button variant="outline" onClick={() => setResetDialogOpen(true)} disabled={autoActionLocked}>
                         <RotateCcw className="mr-2 h-4 w-4" />
                         重置到账户初始资金
                       </Button>
@@ -867,7 +964,41 @@ export default function TradingPage() {
                       <CardDescription>用于确认自动交易当前持有的标的与浮动盈亏。</CardDescription>
                     </div>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="space-y-3 lg:hidden">
+                    {positions.length > 0 ? (
+                      positions.map((position) => (
+                        <div key={`${position.ticker}-mobile`} className="rounded-[24px] border border-black/[0.06] bg-white/60 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-base font-medium text-foreground">{position.ticker}</div>
+                              <div className="mt-1 text-xs text-muted-foreground">持仓 {position.shares}</div>
+                            </div>
+                            <div className={cn("text-right text-sm font-semibold", toneClass(position.unrealized_pnl || 0))}>
+                              {formatSignedCurrency(position.unrealized_pnl || 0)}
+                            </div>
+                          </div>
+                          <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                            <div className="rounded-2xl bg-white/60 px-3 py-2">
+                              <div className="text-xs text-muted-foreground">成本</div>
+                              <div className="mt-1 font-medium">{formatCurrency(position.avg_cost)}</div>
+                            </div>
+                            <div className="rounded-2xl bg-white/60 px-3 py-2">
+                              <div className="text-xs text-muted-foreground">现价</div>
+                              <div className="mt-1 font-medium">{formatCurrency(position.current_price || position.avg_cost)}</div>
+                            </div>
+                            <div className="rounded-2xl bg-white/60 px-3 py-2">
+                              <div className="text-xs text-muted-foreground">市值</div>
+                              <div className="mt-1 font-medium">{formatCurrency(position.market_value || 0)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <EmptyState text="当前暂无持仓。" />
+                    )}
+                  </div>
+
+                  <div className="hidden overflow-x-auto lg:block">
                     <table className="w-full min-w-[640px] text-sm">
                       <thead>
                         <tr className="border-b border-black/[0.06] text-left text-muted-foreground">
@@ -913,7 +1044,71 @@ export default function TradingPage() {
                       <CardDescription>自动执行与手动下单都会在这里留下成交记录。</CardDescription>
                     </div>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="space-y-3 lg:hidden">
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        ["all", "全部"],
+                        ["BUY", "买入"],
+                        ["SELL", "卖出"],
+                      ] as const).map(([value, label]) => (
+                        <Button
+                          key={value}
+                          type="button"
+                          size="sm"
+                          variant={tradeFilter === value ? "default" : "outline"}
+                          onClick={() => {
+                            setTradeFilter(value)
+                            setShowAllTrades(false)
+                          }}
+                        >
+                          {label}
+                        </Button>
+                      ))}
+                    </div>
+                    {filteredTradeHistory.length > 0 ? (
+                      visibleTradeHistory.map((trade, index) => (
+                        <div key={`${trade.ticker}-${trade.trade_time}-${index}-mobile`} className="rounded-[24px] border border-black/[0.06] bg-white/60 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-base font-medium text-foreground">{trade.ticker}</div>
+                              <div className="mt-1 text-xs text-muted-foreground">{formatDateTime(trade.trade_time)}</div>
+                            </div>
+                            <Badge variant={trade.action.toUpperCase() === "BUY" ? "secondary" : "outline"}>
+                              {trade.action.toUpperCase() === "BUY" ? "买入" : "卖出"}
+                            </Badge>
+                          </div>
+                          <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                            <div className="rounded-2xl bg-white/60 px-3 py-2">
+                              <div className="text-xs text-muted-foreground">价格</div>
+                              <div className="mt-1 font-medium">{formatCurrency(trade.price)}</div>
+                            </div>
+                            <div className="rounded-2xl bg-white/60 px-3 py-2">
+                              <div className="text-xs text-muted-foreground">数量</div>
+                              <div className="mt-1 font-medium">{trade.shares}</div>
+                            </div>
+                            <div className="rounded-2xl bg-white/60 px-3 py-2">
+                              <div className="text-xs text-muted-foreground">费用</div>
+                              <div className="mt-1 font-medium">{formatCurrency(trade.fee || 0)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <EmptyState text="还没有成交记录。" />
+                    )}
+                    {filteredTradeHistory.length > MOBILE_ACTIVITY_LIMIT ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => setShowAllTrades((current) => !current)}
+                      >
+                        {showAllTrades ? "收起成交记录" : `展开全部 ${filteredTradeHistory.length} 条成交`}
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  <div className="hidden overflow-x-auto lg:block">
                     <table className="w-full min-w-[640px] text-sm">
                       <thead>
                         <tr className="border-b border-black/[0.06] text-left text-muted-foreground">
@@ -968,88 +1163,98 @@ export default function TradingPage() {
                         <CardDescription>在这里决定是否自动执行、多久执行一次、评估哪些标的以及通过哪些策略筛选。</CardDescription>
                       </div>
 
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <label className="flex items-center gap-3 rounded-[22px] border border-black/[0.05] bg-white/60 px-4 py-3">
-                          <Checkbox
-                            checked={configDraft.enabled}
-                            onCheckedChange={(checked) =>
-                              setConfigDraft((current) => ({ ...current, enabled: Boolean(checked) }))
-                            }
-                          />
-                          <div>
-                            <div className="text-sm font-medium text-foreground/85">开启自动交易</div>
-                            <div className="text-xs text-muted-foreground">关闭后只保留账户展示与手动下单。</div>
-                          </div>
-                        </label>
-
-                        <div className="rounded-[22px] border border-black/[0.05] bg-white/60 px-4 py-3">
-                          <div className="flex items-center gap-1 text-sm font-medium text-foreground/85">
-                            守护进程状态
-                            <HelpTooltip content="守护进程负责按设定频率评估策略并自动下单。" />
-                          </div>
-                          <div className="mt-2 flex items-center gap-2 text-sm">
-                            <span
-                              className="inline-flex h-2.5 w-2.5 rounded-full"
-                              style={{
-                                backgroundColor: daemonAccent,
-                              }}
+                      <ConfigSection
+                        title="1. 执行开关与账户"
+                        description="先确认是否启用、由哪个用户和账户执行，以及调度频率。"
+                        defaultOpen
+                      >
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <label className="flex items-center gap-3 rounded-[22px] border border-black/[0.05] bg-white/60 px-4 py-3">
+                            <Checkbox
+                              checked={configDraft.enabled}
+                              onCheckedChange={(checked) =>
+                                setConfigDraft((current) => ({ ...current, enabled: Boolean(checked) }))
+                              }
                             />
-                            <span className="text-foreground/80">{autoStatus?.daemon?.daemon_running ? "运行中" : "未运行"}</span>
+                            <div>
+                              <div className="text-sm font-medium text-foreground/85">开启自动交易</div>
+                              <div className="text-xs text-muted-foreground">关闭后只保留账户展示与手动下单。</div>
+                            </div>
+                          </label>
+
+                          <div className="rounded-[22px] border border-black/[0.05] bg-white/60 px-4 py-3">
+                            <div className="flex items-center gap-1 text-sm font-medium text-foreground/85">
+                              守护进程状态
+                              <HelpTooltip content="守护进程负责按设定频率评估策略并自动下单。" />
+                            </div>
+                            <div className="mt-2 flex items-center gap-2 text-sm">
+                              <span
+                                className="inline-flex h-2.5 w-2.5 rounded-full"
+                                style={{
+                                  backgroundColor: daemonAccent,
+                                }}
+                              />
+                              <span className="text-foreground/80">{autoStatus?.daemon?.daemon_running ? "运行中" : "未运行"}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label>执行账户用户名</Label>
-                          <Input
-                            value={configDraft.username}
-                            onChange={(event) =>
-                              setConfigDraft((current) => ({ ...current, username: event.target.value }))
-                            }
-                            placeholder="admin"
-                          />
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>执行账户用户名</Label>
+                            <Input
+                              value={configDraft.username}
+                              onChange={(event) =>
+                                setConfigDraft((current) => ({ ...current, username: event.target.value }))
+                              }
+                              placeholder="admin"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>模拟账户名称</Label>
+                            <Input
+                              value={configDraft.account_name}
+                              onChange={(event) =>
+                                setConfigDraft((current) => ({ ...current, account_name: event.target.value }))
+                              }
+                              placeholder="全市场自动模拟交易"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>初始资金</Label>
+                            <Input
+                              type="number"
+                              value={String(configDraft.initial_capital)}
+                              onChange={(event) =>
+                                setConfigDraft((current) => ({
+                                  ...current,
+                                  initial_capital: Number(event.target.value) || 100000,
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>执行频率（分钟）</Label>
+                            <Input
+                              type="number"
+                              min={5}
+                              value={String(configDraft.interval_minutes)}
+                              onChange={(event) =>
+                                setConfigDraft((current) => ({
+                                  ...current,
+                                  interval_minutes: Number(event.target.value) || 60,
+                                }))
+                              }
+                            />
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label>模拟账户名称</Label>
-                          <Input
-                            value={configDraft.account_name}
-                            onChange={(event) =>
-                              setConfigDraft((current) => ({ ...current, account_name: event.target.value }))
-                            }
-                            placeholder="全市场自动模拟交易"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>初始资金</Label>
-                          <Input
-                            type="number"
-                            value={String(configDraft.initial_capital)}
-                            onChange={(event) =>
-                              setConfigDraft((current) => ({
-                                ...current,
-                                initial_capital: Number(event.target.value) || 100000,
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>执行频率（分钟）</Label>
-                          <Input
-                            type="number"
-                            min={5}
-                            value={String(configDraft.interval_minutes)}
-                            onChange={(event) =>
-                              setConfigDraft((current) => ({
-                                ...current,
-                                interval_minutes: Number(event.target.value) || 60,
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
+                      </ConfigSection>
 
-                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                      <ConfigSection
+                        title="2. 风险阈值"
+                        description="控制策略评估窗口、持仓上限，以及收益、夏普和回撤过滤条件。"
+                      >
+                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         <div className="space-y-2">
                           <Label>
                             评估窗口
@@ -1152,120 +1357,131 @@ export default function TradingPage() {
                             }
                           />
                         </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>
-                          自动交易范围
-                          <HelpTooltip content="可选手动标的池、资产池或 A 股全市场。若选择 A 股全市场，系统会对全市场股票做自动评估与模拟下单，而不是只盯住资产池。" />
-                        </Label>
-                        <div className="grid gap-2 md:grid-cols-3">
-                          {[
-                            { id: "cn_a_share", label: "A股全市场", note: "面向全市场自动选股与交易" },
-                            { id: "asset_pool", label: "资产池", note: "仅在资产池中轮询与执行" },
-                            { id: "manual", label: "手动标的池", note: "由你手动指定自动交易标的" },
-                          ].map((option) => {
-                            const active = configDraft.universe_mode === option.id
-                            return (
-                              <button
-                                key={option.id}
-                                type="button"
-                                onClick={() =>
-                                  setConfigDraft((current) => ({
-                                    ...current,
-                                    universe_mode: option.id as AutoTradingConfig["universe_mode"],
-                                  }))
-                                }
-                                className={cn(
-                                  "rounded-[22px] border px-4 py-3 text-left transition",
-                                  active
-                                    ? "border-[rgba(var(--rgb-ochre),0.18)] bg-[rgba(var(--rgb-ochre),0.07)] shadow-[0_10px_24px_rgba(142,115,77,0.06)]"
-                                    : "border-black/[0.06] bg-white/60 hover:bg-white/80",
-                                )}
-                              >
-                                <div className="text-sm font-medium text-foreground/85">{option.label}</div>
-                                <div className="mt-1 text-xs leading-6 text-muted-foreground">{option.note}</div>
-                              </button>
-                            )
-                          })}
                         </div>
+                      </ConfigSection>
 
-                        {configDraft.universe_mode === "manual" ? (
-                          <div className="space-y-2">
-                            <MultiAssetPicker
-                              assets={assetOptions}
-                              selected={configDraft.universe}
-                              onChange={(tickers) =>
-                                setConfigDraft((current) => ({
-                                  ...current,
-                                  universe: tickers,
-                                }))
-                              }
-                              placeholder="选择自动评估的手动标的池"
-                              maxPreview={3}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              当前手动纳入 {selectedUniverseCount} 个标的，建议保持在 5 至 20 个之间，既能分散又不会明显稀释信号质量。
-                            </p>
-                          </div>
-                        ) : configDraft.universe_mode === "asset_pool" ? (
-                          <div className="rounded-[22px] border border-black/[0.05] bg-white/60 px-4 py-3 text-sm text-muted-foreground">
-                            将直接读取当前资产池作为自动交易范围。
-                            {universeSummary?.ticker_count ? ` 当前资产池共 ${universeSummary.ticker_count} 个标的。` : ""}
-                            {Array.isArray(universeSummary?.preview) && universeSummary.preview.length > 0
-                              ? ` 示例：${universeSummary.preview.slice(0, 6).join(" / ")}`
-                              : ""}
-                          </div>
-                        ) : (
-                          <div className="space-y-3 rounded-[22px] border border-black/[0.05] bg-white/60 px-4 py-4">
-                            <div className="text-sm text-muted-foreground">
-                              当前将覆盖 A 股全市场进行策略评估和模拟下单。
-                              {universeSummary?.ticker_count ? ` 当前可用标的约 ${universeSummary.ticker_count} 只。` : ""}
-                            </div>
-                            <div className="grid gap-3 md:grid-cols-[1fr_140px]">
-                              <div className="text-xs leading-6 text-muted-foreground">
-                                全市场模式会明显增加评估范围。首次运行可能较慢，后续会优先复用本地价格缓存。
-                                {Array.isArray(universeSummary?.preview) && universeSummary.preview.length > 0
-                                  ? ` 当前预览：${universeSummary.preview.slice(0, 8).join(" / ")}`
-                                  : ""}
-                              </div>
-                              <div className="space-y-2">
-                                <Label>
-                                  范围上限
-                                  <HelpTooltip content="0 表示不限制，直接使用全市场。若你希望加快评估，可临时限制候选数量，例如 800 或 1200。" />
-                                </Label>
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  step="100"
-                                  value={String(configDraft.universe_limit)}
-                                  onChange={(event) =>
+                      <ConfigSection
+                        title="3. 交易范围"
+                        description="选择自动评估的标的来源，手动池用于小范围验证，资产池和全市场用于扩大覆盖。"
+                      >
+                        <div className="space-y-2">
+                          <Label>
+                            自动交易范围
+                            <HelpTooltip content="可选手动标的池、资产池或 A 股全市场。若选择 A 股全市场，系统会对全市场股票做自动评估与模拟下单，而不是只盯住资产池。" />
+                          </Label>
+                          <div className="grid gap-2 md:grid-cols-3">
+                            {[
+                              { id: "cn_a_share", label: "A股全市场", note: "面向全市场自动选股与交易" },
+                              { id: "asset_pool", label: "资产池", note: "仅在资产池中轮询与执行" },
+                              { id: "manual", label: "手动标的池", note: "由你手动指定自动交易标的" },
+                            ].map((option) => {
+                              const active = configDraft.universe_mode === option.id
+                              return (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  onClick={() =>
                                     setConfigDraft((current) => ({
                                       ...current,
-                                      universe_limit: Math.max(0, Number(event.target.value) || 0),
+                                      universe_mode: option.id as AutoTradingConfig["universe_mode"],
                                     }))
                                   }
-                                />
+                                  className={cn(
+                                    "rounded-[22px] border px-4 py-3 text-left transition",
+                                    active
+                                      ? "border-[rgba(var(--rgb-ochre),0.18)] bg-[rgba(var(--rgb-ochre),0.07)] shadow-[0_10px_24px_rgba(142,115,77,0.06)]"
+                                      : "border-black/[0.06] bg-white/60 hover:bg-white/80",
+                                  )}
+                                >
+                                  <div className="text-sm font-medium text-foreground/85">{option.label}</div>
+                                  <div className="mt-1 text-xs leading-6 text-muted-foreground">{option.note}</div>
+                                </button>
+                              )
+                            })}
+                          </div>
+
+                          {configDraft.universe_mode === "manual" ? (
+                            <div className="space-y-2">
+                              <MultiAssetPicker
+                                assets={assetOptions}
+                                selected={configDraft.universe}
+                                onChange={(tickers) =>
+                                  setConfigDraft((current) => ({
+                                    ...current,
+                                    universe: tickers,
+                                  }))
+                                }
+                                placeholder="选择自动评估的手动标的池"
+                                maxPreview={3}
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                当前手动纳入 {selectedUniverseCount} 个标的，建议保持在 5 至 20 个之间，既能分散又不会明显稀释信号质量。
+                              </p>
+                            </div>
+                          ) : configDraft.universe_mode === "asset_pool" ? (
+                            <div className="rounded-[22px] border border-black/[0.05] bg-white/60 px-4 py-3 text-sm text-muted-foreground">
+                              将直接读取当前资产池作为自动交易范围。
+                              {universeSummary?.ticker_count ? ` 当前资产池共 ${universeSummary.ticker_count} 个标的。` : ""}
+                              {Array.isArray(universeSummary?.preview) && universeSummary.preview.length > 0
+                                ? ` 示例：${universeSummary.preview.slice(0, 6).join(" / ")}`
+                                : ""}
+                            </div>
+                          ) : (
+                            <div className="space-y-3 rounded-[22px] border border-black/[0.05] bg-white/60 px-4 py-4">
+                              <div className="text-sm text-muted-foreground">
+                                当前将覆盖 A 股全市场进行策略评估和模拟下单。
+                                {universeSummary?.ticker_count ? ` 当前可用标的约 ${universeSummary.ticker_count} 只。` : ""}
+                              </div>
+                              <div className="grid gap-3 md:grid-cols-[1fr_140px]">
+                                <div className="text-xs leading-6 text-muted-foreground">
+                                  全市场模式会明显增加评估范围。首次运行可能较慢，后续会优先复用本地价格缓存。
+                                  {Array.isArray(universeSummary?.preview) && universeSummary.preview.length > 0
+                                    ? ` 当前预览：${universeSummary.preview.slice(0, 8).join(" / ")}`
+                                    : ""}
+                                </div>
+                                <div className="space-y-2">
+                                  <Label>
+                                    范围上限
+                                    <HelpTooltip content="0 表示不限制，直接使用全市场。若你希望加快评估，可临时限制候选数量，例如 800 或 1200。" />
+                                  </Label>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    step="100"
+                                    value={String(configDraft.universe_limit)}
+                                    onChange={(event) =>
+                                      setConfigDraft((current) => ({
+                                        ...current,
+                                        universe_limit: Math.max(0, Number(event.target.value) || 0),
+                                      }))
+                                    }
+                                  />
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        )}
-                      </div>
+                          )}
+                        </div>
+                      </ConfigSection>
 
-                      <div className="flex flex-wrap gap-3">
-                        <Button onClick={() => void persistAutoConfig()} disabled={autoActionLocked}>
-                          <Settings2 className="mr-2 h-4 w-4" />
-                          保存配置
-                        </Button>
-                        <Button variant="outline" onClick={() => void handleRunNow(false)} disabled={autoActionLocked}>
-                          <PlayCircle className="mr-2 h-4 w-4" />
-                          保存并执行
-                        </Button>
-                        <Button variant="outline" onClick={() => void handleRunNow(true)} disabled={autoActionLocked}>
-                          <RotateCcw className="mr-2 h-4 w-4" />
-                          重置后执行
-                        </Button>
-                      </div>
+                      <ConfigSection
+                        title="4. 提交操作"
+                        description="先保存，再按需要手动触发一次；重置后执行会清空模拟账户状态。"
+                      >
+                        <div className="flex flex-wrap gap-3">
+                          <Button onClick={() => void persistAutoConfig()} disabled={autoActionLocked}>
+                            <Settings2 className="mr-2 h-4 w-4" />
+                            保存配置
+                          </Button>
+                          <Button variant="outline" onClick={() => void handleRunNow(false)} disabled={autoActionLocked}>
+                            <PlayCircle className="mr-2 h-4 w-4" />
+                            保存并执行
+                          </Button>
+                          <Button variant="outline" onClick={() => void handleRunNow(true)} disabled={autoActionLocked}>
+                            <RotateCcw className="mr-2 h-4 w-4" />
+                            重置后执行
+                          </Button>
+                        </div>
+                      </ConfigSection>
                     </GlassCard>
 
                     <GlassCard className="space-y-5 p-5">
@@ -1446,7 +1662,51 @@ export default function TradingPage() {
                       <CardTitle>最近订单</CardTitle>
                       <CardDescription>用于核对自动交易或手动交易最近发出的委托。</CardDescription>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="space-y-3 lg:hidden">
+                      {recentOrders.length > 0 ? (
+                        visibleRecentOrders.map((order) => (
+                          <div key={`${order.order_id}-mobile`} className="rounded-[24px] border border-black/[0.06] bg-white/60 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-base font-medium text-foreground">{order.symbol}</div>
+                                <div className="mt-1 text-xs text-muted-foreground">{formatDateTime(order.created_at)}</div>
+                              </div>
+                              <Badge variant={order.side.toUpperCase() === "BUY" ? "secondary" : "outline"}>
+                                {order.side.toUpperCase() === "BUY" ? "买入" : "卖出"}
+                              </Badge>
+                            </div>
+                            <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                              <div className="rounded-2xl bg-white/60 px-3 py-2">
+                                <div className="text-xs text-muted-foreground">类型</div>
+                                <div className="mt-1 font-medium">{ORDER_TYPE_TEXT[order.order_type.toUpperCase()] ?? order.order_type}</div>
+                              </div>
+                              <div className="rounded-2xl bg-white/60 px-3 py-2">
+                                <div className="text-xs text-muted-foreground">数量</div>
+                                <div className="mt-1 font-medium">{order.quantity}</div>
+                              </div>
+                              <div className="rounded-2xl bg-white/60 px-3 py-2">
+                                <div className="text-xs text-muted-foreground">状态</div>
+                                <div className="mt-1 font-medium">{order.status}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <EmptyState text="暂无最近订单记录。" />
+                      )}
+                      {recentOrders.length > MOBILE_ACTIVITY_LIMIT ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => setShowAllOrders((current) => !current)}
+                        >
+                          {showAllOrders ? "收起订单记录" : `展开全部 ${recentOrders.length} 条订单`}
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    <div className="hidden overflow-x-auto lg:block">
                       <table className="w-full min-w-[620px] text-sm">
                         <thead>
                           <tr className="border-b border-black/[0.06] text-left text-muted-foreground">
@@ -1526,6 +1786,25 @@ export default function TradingPage() {
               </p>
             </GlassCard>
           </div>
+
+          <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>重置模拟账户</DialogTitle>
+                <DialogDescription>
+                  这会清空当前模拟账户的持仓与历史成交，并将资金重置为 {formatCurrency(configDraft.initial_capital)}。
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setResetDialogOpen(false)}>
+                  取消
+                </Button>
+                <Button variant="destructive" onClick={() => void handleResetAccount()} disabled={!accountId || autoActionLocked}>
+                  确认重置
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </>
       )}
     </div>

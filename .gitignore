@@ -18,6 +18,7 @@ env/
 .vscode/
 .idea/
 .trae/
+.opencode/
 *.swp
 *.swo
 *~

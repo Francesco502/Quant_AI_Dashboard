@@ -178,16 +178,21 @@ class RiskMonitor:
             violations.extend(loss_result)
             max_risk_level = RiskLevel.CRITICAL
         
-        # 3. 集中度风险检查
-        concentration_result = self._check_concentration_risk(
-            projected_portfolio, current_prices
-        )
-        if concentration_result:
-            violations.extend(concentration_result)
-            max_risk_level = _higher_risk_level(max_risk_level, RiskLevel.MEDIUM)
-        
-        # 4. 流动性风险检查（简化版）
-        liquidity_result = self._check_liquidity_risk(symbol, quantity, price)
+        # 3. 集中度风险检查。纯减仓卖出只降低敞口，不因仍然偏高的既有集中度阻塞退出。
+        is_sell_reducing = str(side).upper() == "SELL" and abs(projected_position) < abs(current_position)
+        if not is_sell_reducing:
+            concentration_result = self._check_concentration_risk(
+                projected_portfolio, current_prices
+            )
+            if concentration_result:
+                violations.extend(concentration_result)
+                max_risk_level = _higher_risk_level(max_risk_level, RiskLevel.MEDIUM)
+
+        # 4. 流动性风险检查
+        avg_daily_volume = None
+        if isinstance(order.get("market_data"), dict):
+            avg_daily_volume = order["market_data"].get("avg_daily_volume")
+        liquidity_result = self._check_liquidity_risk(symbol, quantity, price, avg_daily_volume)
         if liquidity_result:
             violations.extend(liquidity_result)
             max_risk_level = _higher_risk_level(max_risk_level, RiskLevel.MEDIUM)
@@ -303,44 +308,90 @@ class RiskMonitor:
         portfolio: Dict,
         current_prices: Dict[str, float]
     ) -> List[str]:
-        """检查集中度风险"""
+        """检查集中度风险（含行业敞口）"""
         violations = []
-        
+
         total_equity = compute_equity(portfolio, current_prices)
         if total_equity <= 0:
             return violations
-        
+
         positions = portfolio.get("positions", {}) or {}
-        
-        # 计算总敞口
+        sector_exposures: Dict[str, float] = {}
+
         total_exposure = 0.0
         for symbol, quantity in positions.items():
             if quantity != 0:
                 price = current_prices.get(symbol, 0)
-                total_exposure += abs(quantity) * price
-        
+                exposure = abs(quantity) * price
+                total_exposure += exposure
+                # Accumulate per-sector exposure using a sector map from the
+                # portfolio or a metadata lookup, falling back to "unknown".
+                sector = self._resolve_sector(symbol, portfolio)
+                sector_exposures[sector] = sector_exposures.get(sector, 0.0) + exposure
+
         total_exposure_weight = total_exposure / total_equity if total_equity > 0 else 0
         if total_exposure_weight > self.risk_limits.max_total_exposure:
             violations.append(
                 f"总敞口超限: {total_exposure_weight:.2%} > {self.risk_limits.max_total_exposure:.2%}"
             )
-        
+
+        # Sector-level concentration check
+        sector_limit = getattr(self.risk_limits, "max_sector_exposure", 0.3)
+        for sector, exposure in sector_exposures.items():
+            sector_weight = exposure / total_equity
+            if sector_weight > sector_limit:
+                violations.append(
+                    f"行业 {sector} 敞口超限: {sector_weight:.2%} > {sector_limit:.2%}"
+                )
+
         return violations
+
+    @staticmethod
+    def _resolve_sector(symbol: str, portfolio: Dict) -> str:
+        """Resolve the sector for a symbol from portfolio metadata."""
+        position_meta = (portfolio.get("positions_meta") or {}).get(symbol, {})
+        if isinstance(position_meta, dict):
+            sector = position_meta.get("sector") or position_meta.get("industry")
+            if sector:
+                return str(sector)
+        return "unknown"
 
     def _check_liquidity_risk(
         self,
         symbol: str,
         quantity: int,
-        price: float
+        price: float,
+        avg_daily_volume: Optional[int] = None,
     ) -> List[str]:
-        """检查流动性风险（简化版）"""
-        violations = []
-        
-        # 这里可以扩展为检查成交量、买卖价差等
-        # 当前仅做占位实现
-        if abs(quantity) > 100000:  # 假设大单可能影响流动性
-            violations.append(f"订单规模较大，可能存在流动性风险: {abs(quantity)}")
-        
+        """Check liquidity risk.
+
+        Uses average daily volume when available (e.g., from a market data
+        snapshot), falling back to a simple quantity threshold.
+        """
+        violations: List[str] = []
+        order_value = abs(quantity) * max(price, 1e-6)
+
+        if avg_daily_volume and avg_daily_volume > 0:
+            participation_rate = abs(quantity) / avg_daily_volume
+            if participation_rate > 0.05:
+                violations.append(
+                    f"订单量占日均成交量 {participation_rate:.2%}，可能产生显著市场冲击"
+                )
+            if participation_rate > 0.20:
+                violations.append(
+                    f"订单量占日均成交量 {participation_rate:.2%}，存在严重流动性风险"
+                )
+        else:
+            # Fallback: flag unusually large orders based on notional value.
+            if abs(quantity) > 100000:
+                violations.append(
+                    f"订单规模较大 ({abs(quantity):,} 股)，可能存在流动性风险"
+                )
+            if order_value > 5_000_000:
+                violations.append(
+                    f"订单金额较大 (¥{order_value:,.0f})，可能对市场价格产生影响"
+                )
+
         return violations
 
     def start_monitoring(

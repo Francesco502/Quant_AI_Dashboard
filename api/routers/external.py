@@ -52,7 +52,7 @@ class ExternalDataRequest(BaseModel):
     end_date: str | None = Query(None, description="End date")
 
 
-@router.get("/economic")
+@router.get("/economic", deprecated=True)
 async def get_economic_data(
     start_date: str = Query("2010-01-01", description="Start date"),
     end_date: str | None = Query(None, description="End date"),
@@ -64,7 +64,7 @@ async def get_economic_data(
         raise HTTPException(status_code=500, detail=f"Failed to load economic data: {exc}") from exc
 
 
-@router.get("/industry")
+@router.get("/industry", deprecated=True)
 async def get_industry_data(
     start_date: str = Query("2010-01-01", description="Start date"),
     end_date: str | None = Query(None, description="End date"),
@@ -76,7 +76,7 @@ async def get_industry_data(
         raise HTTPException(status_code=500, detail=f"Failed to load industry data: {exc}") from exc
 
 
-@router.get("/sentiment")
+@router.get("/sentiment", deprecated=True)
 async def get_sentiment_data(
     start_date: str = Query("2010-01-01", description="Start date"),
     end_date: str | None = Query(None, description="End date"),
@@ -88,7 +88,7 @@ async def get_sentiment_data(
         raise HTTPException(status_code=500, detail=f"Failed to load sentiment data: {exc}") from exc
 
 
-@router.get("/flow")
+@router.get("/flow", deprecated=True)
 async def get_flow_data(
     start_date: str = Query("2010-01-01", description="Start date"),
     end_date: str | None = Query(None, description="End date"),
@@ -100,7 +100,7 @@ async def get_flow_data(
         raise HTTPException(status_code=500, detail=f"Failed to load flow data: {exc}") from exc
 
 
-@router.post("/all")
+@router.post("/all", deprecated=True)
 async def get_all_external_data(
     request: ExternalDataRequest,
     current_user: UserInDB = Depends(require_permission(Permission.VIEW_DATA)),
@@ -119,7 +119,7 @@ async def get_all_external_data(
         raise HTTPException(status_code=500, detail=f"Failed to load external data: {exc}") from exc
 
 
-@router.post("/merge")
+@router.post("/merge", deprecated=True)
 async def merge_price_with_external_data(
     request: ExternalDataRequest,
     tickers: List[str] = Query(..., description="Tickers to merge"),
@@ -152,7 +152,7 @@ async def merge_price_with_external_data(
         raise HTTPException(status_code=500, detail=f"Failed to merge external data: {exc}") from exc
 
 
-@router.post("/features")
+@router.post("/features", deprecated=True)
 async def get_external_features_endpoint(
     request: ExternalDataRequest,
     tickers: List[str] = Query(..., description="Tickers"),

@@ -8,7 +8,7 @@ Quant-AI Dashboard is a **personal quantitative analysis and learning system**.
 It is for research, paper trading, and strategy evaluation, not institutional production trading.
 
 - Positioning: personal-use learning system
-- Version: `2.2.0`
+- Version: `2.3.0`
 - Frontend: Next.js `16` on port `8686` (local dev)
 - Backend: FastAPI on port `8685` (local dev)
 
@@ -76,11 +76,15 @@ cd web && npm run build
 ## Key Routes
 
 - Frontend pages:
-  - `/portfolio-analysis`
+  - `/`
+  - `/portfolio`
   - `/market-scanner`
   - `/trading`
   - `/backtest`
-  - `/agent-research`
+  - `/dashboard-llm`
+  - `/daily-workbench`
+  - `/asset-pool`
+  - `/settings`
 
 - Backend API groups:
   - `/api/auth/*`
@@ -88,6 +92,9 @@ cd web && npm run build
   - `/api/trading/*`
   - `/api/portfolio/*`
   - `/api/user/*`
+  - `/api/daily-workbench/*`
+  - `/api/llm-analysis/*`
+  - `/api/agent/*`
   - `/api/monitoring/*`
   - `/api/stz/*`
 

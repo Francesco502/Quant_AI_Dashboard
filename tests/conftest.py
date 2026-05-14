@@ -1,4 +1,4 @@
-﻿"""Shared pytest fixtures for unit, integration, and e2e tests."""
+"""Shared pytest fixtures for unit, integration, and e2e tests."""
 
 import pytest
 import pandas as pd
@@ -157,7 +157,7 @@ def mock_save_local_ohlcv_history():
 @pytest.fixture
 def mock_openai_client():
     """Mock OpenAI client."""
-    with patch('core.llm_client.OpenAI') as mock:
+    with patch('openai.OpenAI') as mock:
         client_mock = MagicMock()
         client_mock.chat.completions.create.return_value = MagicMock(
             choices=[MagicMock(message=MagicMock(content="Test response"))]
@@ -169,7 +169,7 @@ def mock_openai_client():
 @pytest.fixture
 def mock_llm_client():
     """Mock LLM client."""
-    with patch('core.llm_client.LLMClient') as mock:
+    with patch('core.llm_client.BaseLLMClient') as mock:
         client_mock = MagicMock()
         client_mock.generate.return_value = "Test response"
         client_mock.chat.return_value = "Test chat response"

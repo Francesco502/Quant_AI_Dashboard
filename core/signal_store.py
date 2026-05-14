@@ -8,11 +8,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime
 from typing import Dict, List, Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from .data_store import BASE_DIR
 
@@ -112,7 +115,7 @@ class SignalStore:
             df.to_parquet(file_path, index=False)
             return True
         except Exception as e:
-            print(f"保存信号失败 ({ticker}): {e}")
+            logger.error(f"保存信号失败 ({ticker}): {e}")
             return False
 
     def load_signals(
@@ -156,7 +159,7 @@ class SignalStore:
 
             return df
         except Exception as e:
-            print(f"加载信号失败 ({date}): {e}")
+            logger.error(f"加载信号失败 ({date}): {e}")
             return pd.DataFrame()
 
     def update_signal_status(
@@ -187,7 +190,7 @@ class SignalStore:
                 return True
             return False
         except Exception as e:
-            print(f"更新信号状态失败: {e}")
+            logger.error(f"更新信号状态失败: {e}")
             return False
 
     def get_latest_signals(

@@ -3,18 +3,40 @@ import pandas as pd
 
 
 def simple_price_forecast(price_df: pd.DataFrame, horizon: int = 3) -> pd.DataFrame:
-    """Generate a lightweight demo forecast from recent average prices.
+    """Generate a lightweight trend-aware forecast from recent price history.
 
-    This helper intentionally stays simple so the project can run without a
-    heavy sequence model dependency. It uses the recent rolling mean as a base
-    level and applies small random perturbations for each future business day.
+    Uses exponential smoothing on the most recent close prices to estimate
+    a short-term trend, then projects forward with dampened momentum.
+    Suitable as a fallback when no ML model is available.
     """
     if price_df.empty:
         raise ValueError("price_df is empty and cannot be forecast.")
 
-    window = min(20, len(price_df))
-    recent = price_df.tail(window)
-    base = recent.mean(axis=0)
+    close_col = "close" if "close" in price_df.columns else price_df.columns[0]
+    series = price_df[close_col].astype(float)
+
+    window = min(20, len(series))
+    recent = series.tail(window)
+
+    # Simple exponential smoothing: alpha=0.3 gives moderate recency weight
+    alpha = 0.3
+    smoothed = recent.iloc[0]
+    for v in recent.iloc[1:]:
+        smoothed = alpha * v + (1 - alpha) * smoothed
+
+    # Estimate daily drift from the last few observations
+    if len(recent) >= 5:
+        drift = (recent.iloc[-1] - recent.iloc[-5]) / 5
+    else:
+        drift = 0.0
+
+    # Dampen drift for longer horizons to avoid extreme extrapolation
+    last_value = recent.iloc[-1]
+    forecasts = []
+    for step in range(1, horizon + 1):
+        dampened_drift = drift * (0.8 ** (step - 1))
+        forecast_value = last_value + dampened_drift * step
+        forecasts.append(forecast_value)
 
     last_date = price_df.index[-1]
     try:
@@ -23,22 +45,15 @@ def simple_price_forecast(price_df: pd.DataFrame, horizon: int = 3) -> pd.DataFr
             periods=horizon,
         )
     except TypeError:
-        # Fallback for older pandas versions that still require `closed`.
         future_dates = pd.bdate_range(
             start=last_date + pd.Timedelta(days=1),
             periods=horizon,
             closed="right",
         )
 
-    forecasts = []
-    current = base.copy()
-
-    for _ in range(horizon):
-        noise = np.random.normal(loc=0.0, scale=0.01, size=len(base))
-        current = current * (1 + noise)
-        forecasts.append(current.copy())
-
-    return pd.DataFrame(forecasts, index=future_dates, columns=price_df.columns)
+    result = pd.DataFrame({"forecast": forecasts}, index=future_dates)
+    result.index.name = "date"
+    return result
 
 
 # Future extension point for a project-grade sequence model implementation.

@@ -9,7 +9,7 @@ from core.advanced_forecasting import ModelManager
 router = APIRouter()
 
 
-@router.get("/registry")
+@router.get("/registry", deprecated=True)
 async def get_model_registry():
     """获取模型注册表"""
     try:
@@ -24,7 +24,7 @@ async def get_model_registry():
         raise HTTPException(status_code=500, detail=f"获取模型注册表失败: {str(e)}")
 
 
-@router.get("/production/{ticker}")
+@router.get("/production/{ticker}", deprecated=True)
 async def get_production_model(ticker: str):
     """获取指定标的的生产模型"""
     try:
@@ -46,7 +46,7 @@ async def get_production_model(ticker: str):
         raise HTTPException(status_code=500, detail=f"获取生产模型失败: {str(e)}")
 
 
-@router.get("/history/{ticker}")
+@router.get("/history/{ticker}", deprecated=True)
 async def get_model_history(ticker: str):
     """获取指定标的的模型历史"""
     try:
@@ -59,7 +59,7 @@ async def get_model_history(ticker: str):
         raise HTTPException(status_code=500, detail=f"获取模型历史失败: {str(e)}")
 
 
-@router.get("/available")
+@router.get("/available", deprecated=True)
 async def get_available_models():
     """获取可用模型列表"""
     try:

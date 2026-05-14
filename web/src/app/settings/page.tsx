@@ -1,16 +1,22 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { KeyRound, RefreshCw, Server, ShieldCheck, Wallet } from "lucide-react"
+import { Archive, CheckCircle2, CircleDashed, ClipboardCheck, Database, Download, KeyRound, RefreshCw, RotateCcw, Wallet } from "lucide-react"
 
-import { StatusNotice } from "@/components/data/status-notice"
 import { Button } from "@/components/ui/button"
 import { GlassCard, CardDescription, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { HelpTooltip } from "@/components/ui/tooltip"
-import { api, getEffectiveApiBaseUrl, type AutoTradingStatusResponse } from "@/lib/api"
+import { api, type BackupItem } from "@/lib/api"
 import { useSettings } from "@/lib/settings-context"
-import { formatDateTimeInBeijing } from "@/lib/time"
 import { formatCurrency } from "@/lib/utils"
 
 type AccountSummary = {
@@ -20,32 +26,8 @@ type AccountSummary = {
   initialCapital: number
 }
 
-type HealthSummary = {
-  online: boolean
-  latencyMs: number
-  securityReady: boolean
-  securityIssues: string[]
-  errorHint?: string
-}
-
-type DaemonSummary = {
-  running: boolean
-  enabled: boolean
-  lastStartedAt?: string
-  lastTradingRun?: string
-  lastError?: string | null
-}
-
-const EMPTY_HEALTH: HealthSummary = {
-  online: false,
-  latencyMs: 0,
-  securityReady: false,
-  securityIssues: [],
-}
-
-function formatDateTime(value?: string | null) {
-  return formatDateTimeInBeijing(value, {}, "暂无")
-}
+type RestoreMode = "configs" | "user_files" | "database"
+type PendingRestore = { filename: string; mode: RestoreMode } | null
 
 function MetricTile({
   label,
@@ -64,19 +46,44 @@ function MetricTile({
   )
 }
 
+function formatSize(bytes?: number) {
+  if (!bytes) return "-"
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+function restoreModeLabel(mode: RestoreMode) {
+  if (mode === "database") return "SQLite 数据库"
+  if (mode === "configs") return "系统配置"
+  return "导出文件与审计日志"
+}
+
 export default function SettingsPage() {
   const { dataSources, apiKeyStatus, configurationMode, isLoading } = useSettings()
   const [accountData, setAccountData] = useState<AccountSummary | null>(null)
   const [accountLoading, setAccountLoading] = useState(true)
-  const [healthStatus, setHealthStatus] = useState<HealthSummary>(EMPTY_HEALTH)
-  const [healthLoading, setHealthLoading] = useState(true)
-  const [daemonStatus, setDaemonStatus] = useState<DaemonSummary>({ running: false, enabled: false })
+  const [latestBackup, setLatestBackup] = useState<string | null>(null)
+  const [backupCount, setBackupCount] = useState(0)
+  const [backups, setBackups] = useState<BackupItem[]>([])
+  const [backupLoading, setBackupLoading] = useState(false)
+  const [backupMessage, setBackupMessage] = useState("")
+  const [pendingRestore, setPendingRestore] = useState<PendingRestore>(null)
 
   const loadAccountData = useCallback(async () => {
     setAccountLoading(true)
     try {
       const paperAccount = await api.trading.paper.getAccount()
-      const autoStatus = await api.trading.auto.getStatus().catch(() => null as AutoTradingStatusResponse | null)
       const portfolio = paperAccount?.portfolio
 
       if (!portfolio) {
@@ -88,7 +95,7 @@ export default function SettingsPage() {
         totalAssets: Number(portfolio.total_assets || 0),
         cash: Number(portfolio.cash || 0),
         marketValue: Number(portfolio.market_value || 0),
-        initialCapital: Number(autoStatus?.account?.initial_capital ?? autoStatus?.config?.initial_capital ?? 0),
+        initialCapital: Number(paperAccount?.initial_capital || 0),
       })
     } catch {
       setAccountData(null)
@@ -97,77 +104,209 @@ export default function SettingsPage() {
     }
   }, [])
 
-  const checkHealth = useCallback(async () => {
-    setHealthLoading(true)
+  const loadBackupData = useCallback(async () => {
     try {
-      const base = getEffectiveApiBaseUrl()
-      const start = performance.now()
-      const response = await fetch(`${base}/health`)
-      const latencyMs = Math.round(performance.now() - start)
-      const payload = (await response.json()) as {
-        security?: { ready?: boolean; issues?: string[] }
-      }
-
-      setHealthStatus({
-        online: response.ok,
-        latencyMs,
-        securityReady: Boolean(payload.security?.ready),
-        securityIssues: payload.security?.issues || [],
-      })
-    } catch (error) {
-      setHealthStatus({
-        online: false,
-        latencyMs: 0,
-        securityReady: false,
-        securityIssues: [],
-        errorHint: error instanceof Error ? error.message : "网络错误",
-      })
-    } finally {
-      setHealthLoading(false)
-    }
-  }, [])
-
-  const loadDaemonStatus = useCallback(async () => {
-    try {
-      const response = await api.trading.auto.getStatus()
-      setDaemonStatus({
-        running: Boolean(response.daemon?.daemon_running),
-        enabled: Boolean(response.config?.enabled),
-        lastStartedAt: response.daemon?.last_started_at,
-        lastTradingRun: response.daemon?.last_trading_run,
-        lastError: response.daemon?.last_trading_error ?? null,
-      })
+      const payload = await api.backup.list()
+      setBackupCount(payload.count)
+      setBackups(payload.backups)
+      setLatestBackup(payload.backups[0]?.filename ?? null)
     } catch {
-      setDaemonStatus({ running: false, enabled: false })
+      setBackupCount(0)
+      setBackups([])
+      setLatestBackup(null)
     }
   }, [])
+
+  const createBackup = useCallback(async () => {
+    setBackupLoading(true)
+    setBackupMessage("")
+    try {
+      const result = await api.backup.create({
+        include_database: true,
+        include_configs: true,
+        include_user_files: true,
+      })
+      setBackupMessage(`已创建备份：${result.filename}`)
+      await loadBackupData()
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "创建备份失败")
+    } finally {
+      setBackupLoading(false)
+    }
+  }, [loadBackupData])
+
+  const downloadBackup = useCallback(async (filename: string) => {
+    setBackupMessage("")
+    try {
+      const blob = await api.backup.download(filename)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "下载备份失败")
+    }
+  }, [])
+
+  const restoreBackup = useCallback(async () => {
+    if (!pendingRestore) return
+    setBackupLoading(true)
+    setBackupMessage("")
+    try {
+      const result = await api.backup.restore({
+        filename: pendingRestore.filename,
+        restore_configs: pendingRestore.mode === "configs",
+        restore_user_files: pendingRestore.mode === "user_files",
+        restore_database: pendingRestore.mode === "database",
+      })
+      setBackupMessage(`已恢复 ${result.restored.length} 个文件：${result.filename}`)
+      setPendingRestore(null)
+      await loadBackupData()
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "恢复备份失败")
+    } finally {
+      setBackupLoading(false)
+    }
+  }, [loadBackupData, pendingRestore])
 
   useEffect(() => {
     void loadAccountData()
-    void checkHealth()
-    void loadDaemonStatus()
-  }, [checkHealth, loadAccountData, loadDaemonStatus])
+    void loadBackupData()
+  }, [loadAccountData, loadBackupData])
 
   if (isLoading) {
-    return <div className="p-10 text-center text-sm text-muted-foreground">正在读取设置…</div>
+    return (
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <h1 className="page-title">系统设置</h1>
+          <p className="page-subtitle">正在读取设置…</p>
+        </div>
+        <GlassCard className="space-y-5">
+          <CardTitle className="flex items-center gap-2">
+            <ClipboardCheck className="h-5 w-5 text-tone-indigo" />
+            初始化向导
+          </CardTitle>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {["数据源优先级", "备份管理", "行情 API Key"].map((label) => (
+              <div key={label} className="data-panel-muted rounded-2xl px-4 py-4">
+                <div className="text-sm font-medium text-foreground/86">{label}</div>
+                <div className="mt-3 h-2 w-2/3 animate-pulse rounded-full bg-foreground/10" />
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      </div>
+    )
   }
 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
         <h1 className="page-title">系统设置</h1>
-        <p className="page-subtitle">管理模拟账户、后台任务与统一数据源配置，保持整套研究环境稳定可用。</p>
+        <p className="page-subtitle">只保留需要配置的账户与数据源项；运行健康看系统监控，自动执行看模拟交易。</p>
       </div>
+
+      <GlassCard className="space-y-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-2">
+            <CardTitle className="flex items-center gap-2">
+              <ClipboardCheck className="h-5 w-5 text-tone-indigo" />
+              初始化向导
+            </CardTitle>
+            <CardDescription>
+              2.2.1 把首次使用必须确认的事项集中到这里：账号、数据源、密钥、备份和自动纸面执行开关。
+            </CardDescription>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {[
+            { label: "管理员账户", ok: true, detail: "已进入受保护后台，可继续配置个人系统。" },
+            { label: "数据源优先级", ok: dataSources.length > 0, detail: dataSources.length > 0 ? dataSources.join(" / ") : "尚未读取到服务器数据源。" },
+            { label: "行情 API Key", ok: apiKeyStatus.Tushare || apiKeyStatus.AlphaVantage, detail: apiKeyStatus.Tushare || apiKeyStatus.AlphaVantage ? "至少一个行情密钥可用。" : "建议配置 Tushare 或 Alpha Vantage。" },
+            { label: "备份位置", ok: backupCount > 0, detail: latestBackup ? `最近备份：${latestBackup}` : "尚未发现备份，建议先创建一次。" },
+            { label: "LLM/AI 研究", ok: true, detail: "模型连通性在 LLM 研究工作台验证，设置页只保留初始化提醒。" },
+            { label: "自动纸面执行", ok: true, detail: "默认不做真实交易；纸面自动执行仍需在模拟交易页显式启用。" },
+          ].map((item) => (
+            <div key={item.label} className="data-panel-muted rounded-2xl px-4 py-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground/86">
+                {item.ok ? <CheckCircle2 className="h-4 w-4 text-tone-celadon" /> : <CircleDashed className="h-4 w-4 text-tone-ochre" />}
+                {item.label}
+              </div>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">{item.detail}</p>
+            </div>
+          ))}
+        </div>
+        {backupMessage ? <div className="rounded-2xl border border-border/60 px-4 py-3 text-sm text-muted-foreground">{backupMessage}</div> : null}
+      </GlassCard>
+
+      <GlassCard className="space-y-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-2">
+            <CardTitle className="flex items-center gap-2">
+              <Archive className="h-5 w-5 text-tone-ochre" />
+              备份管理
+            </CardTitle>
+            <CardDescription>
+              备份包含 SQLite 数据库、配置文件、导出文件和审计日志。恢复数据库会覆盖当前数据，请先下载当前备份。
+            </CardDescription>
+          </div>
+          <Button onClick={() => void createBackup()} disabled={backupLoading}>
+            {backupLoading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Archive className="mr-2 h-4 w-4" />}
+            创建完整备份
+          </Button>
+        </div>
+
+        {backups.length > 0 ? (
+          <div className="space-y-3">
+            {backups.slice(0, 5).map((backup) => (
+              <div
+                key={backup.filename}
+                className="rounded-[24px] border border-border/60 bg-background/58 px-4 py-4"
+              >
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-sm font-semibold text-foreground/88">{backup.filename}</div>
+                    <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {formatSize(backup.size_bytes)} · {formatDateTime(backup.created_at)} · 版本{" "}
+                      {backup.manifest?.version ? String(backup.manifest.version) : "-"}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => void downloadBackup(backup.filename)}>
+                      <Download className="mr-2 h-4 w-4" />
+                      下载
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setPendingRestore({ filename: backup.filename, mode: "configs" })}>
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      恢复配置
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setPendingRestore({ filename: backup.filename, mode: "user_files" })}>
+                      恢复文件
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => setPendingRestore({ filename: backup.filename, mode: "database" })}>
+                      <Database className="mr-2 h-4 w-4" />
+                      恢复数据库
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="data-empty">还没有备份。发布前建议先创建一次完整备份。</div>
+        )}
+      </GlassCard>
 
       <Tabs defaultValue="account" className="space-y-6">
         <TabsList>
           <TabsTrigger value="account" className="gap-2">
             <Wallet className="h-4 w-4" />
             模拟账户
-          </TabsTrigger>
-          <TabsTrigger value="daemon" className="gap-2">
-            <Server className="h-4 w-4" />
-            后台任务
           </TabsTrigger>
           <TabsTrigger value="data" className="gap-2">
             <KeyRound className="h-4 w-4" />
@@ -205,76 +344,6 @@ export default function SettingsPage() {
             ) : (
               <div className="data-empty">当前没有可用的模拟账户，请先前往模拟交易页面创建或恢复账户。</div>
             )}
-          </GlassCard>
-        </TabsContent>
-
-        <TabsContent value="daemon">
-          <GlassCard className="space-y-6">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-2">
-                <CardTitle className="flex items-center gap-2">
-                  运行状态
-                  <HelpTooltip content="聚合显示 API 可达性、发布安全状态，以及后台守护进程的最近执行信息。" />
-                </CardTitle>
-                <CardDescription>这里是发布前最该先看的页面，健康检查、权限保护和守护进程状态都会集中呈现。</CardDescription>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  void checkHealth()
-                  void loadDaemonStatus()
-                }}
-                disabled={healthLoading}
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                {healthLoading ? "检测中…" : "刷新状态"}
-              </Button>
-            </div>
-
-            <div className="space-y-4">
-              <div className={`flex items-center justify-between rounded-2xl border p-4 ${healthStatus.online ? "surface-tone-celadon" : "surface-tone-cinnabar"}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`h-2.5 w-2.5 rounded-full ${healthStatus.online ? "bg-[rgb(var(--rgb-celadon))]" : "bg-[rgb(var(--rgb-cinnabar))]"}`} />
-                  <span className="font-medium">API 服务</span>
-                </div>
-                <span className="text-sm">
-                  {healthLoading ? "检测中…" : healthStatus.online ? `运行中（${healthStatus.latencyMs}ms）` : "离线"}
-                </span>
-              </div>
-
-              <div className={`flex items-center justify-between rounded-2xl border p-4 ${healthStatus.securityReady ? "surface-tone-celadon" : "surface-tone-cinnabar"}`}>
-                <div className="flex items-center gap-3">
-                  <ShieldCheck className="h-4 w-4" />
-                  <span className="font-medium">发布安全</span>
-                </div>
-                <span className="text-sm">{healthStatus.securityReady ? "已就绪" : "未就绪"}</span>
-              </div>
-
-              {healthStatus.securityIssues.length > 0 ? (
-                <StatusNotice tone="error" compact title="安全问题">
-                  {healthStatus.securityIssues.join("；")}
-                </StatusNotice>
-              ) : null}
-
-              {healthStatus.errorHint ? (
-                <StatusNotice tone="error" compact title="健康检查失败">
-                  {healthStatus.errorHint}
-                </StatusNotice>
-              ) : null}
-
-              <div className="data-note text-sm text-muted-foreground">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-foreground/85">守护进程</span>
-                  <span>{daemonStatus.running ? "运行中" : daemonStatus.enabled ? "待调度" : "未启用"}</span>
-                </div>
-                <div className="mt-3 space-y-1">
-                  <div>最近启动：{formatDateTime(daemonStatus.lastStartedAt)}</div>
-                  <div>最近自动交易：{formatDateTime(daemonStatus.lastTradingRun)}</div>
-                  {daemonStatus.lastError ? <div className="text-tone-cinnabar">最近错误：{daemonStatus.lastError}</div> : null}
-                </div>
-              </div>
-            </div>
           </GlassCard>
         </TabsContent>
 
@@ -334,6 +403,32 @@ export default function SettingsPage() {
           </GlassCard>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={Boolean(pendingRestore)} onOpenChange={(open) => !open && setPendingRestore(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>确认恢复备份</DialogTitle>
+            <DialogDescription>
+              将从 {pendingRestore?.filename} 恢复 {pendingRestore ? restoreModeLabel(pendingRestore.mode) : ""}。
+              {pendingRestore?.mode === "database"
+                ? " 这会覆盖当前 SQLite 数据库，建议先创建并下载当前备份。"
+                : " 当前操作只恢复所选文件类型。"}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingRestore(null)}>
+              取消
+            </Button>
+            <Button
+              variant={pendingRestore?.mode === "database" ? "destructive" : "default"}
+              onClick={() => void restoreBackup()}
+              disabled={backupLoading}
+            >
+              {backupLoading ? "恢复中…" : "确认恢复"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

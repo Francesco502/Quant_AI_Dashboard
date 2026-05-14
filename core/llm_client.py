@@ -40,6 +40,30 @@ ANTHROPIC_PROVIDER_ALIASES = {
 }
 
 
+def _env_float(name: str, default: float, *, minimum: float = 0.1) -> float:
+    try:
+        value = float((os.getenv(name) or "").strip())
+        return value if value >= minimum else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    try:
+        value = int((os.getenv(name) or "").strip())
+        return value if value >= minimum else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _request_timeout_seconds() -> float:
+    return _env_float("LLM_REQUEST_TIMEOUT_SECONDS", 15.0)
+
+
+def _max_retries() -> int:
+    return _env_int("LLM_MAX_RETRIES", 0)
+
+
 @dataclass(frozen=True)
 class LLMConfig:
     provider: str
@@ -60,7 +84,11 @@ class OpenAICompatibleClient(BaseLLMClient):
         except Exception as exc:  # noqa: BLE001
             raise ImportError("openai package is required for OpenAI-compatible providers") from exc
 
-        kwargs = {"api_key": config.api_key}
+        kwargs = {
+            "api_key": config.api_key,
+            "timeout": _request_timeout_seconds(),
+            "max_retries": _max_retries(),
+        }
         if config.base_url:
             kwargs["base_url"] = config.base_url
         self._client = OpenAI(**kwargs)
@@ -120,7 +148,11 @@ class AnthropicClient(BaseLLMClient):
         except Exception as exc:  # noqa: BLE001
             raise ImportError("anthropic package is required for Claude") from exc
 
-        kwargs = {"api_key": config.api_key}
+        kwargs = {
+            "api_key": config.api_key,
+            "timeout": _request_timeout_seconds(),
+            "max_retries": _max_retries(),
+        }
         if config.base_url:
             kwargs["base_url"] = config.base_url
         self._client = anthropic.Anthropic(**kwargs)

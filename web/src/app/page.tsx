@@ -12,8 +12,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import {
-} from "lucide-react"
 
 import { MeasuredChart } from "@/components/charts/measured-chart"
 import {
@@ -49,7 +47,7 @@ const item = {
 const chartPalette = [SONG_COLORS.celadon, SONG_COLORS.indigo, SONG_COLORS.plum, SONG_COLORS.ochre]
 
 const tooltipStyle = {
-  backgroundColor: "rgba(248, 244, 238, 0.96)",
+  backgroundColor: "var(--chart-tooltip-bg)",
   borderRadius: "18px",
   border: "1px solid rgba(77, 71, 66, 0.10)",
   boxShadow: "0 18px 40px rgba(41, 33, 25, 0.10)",

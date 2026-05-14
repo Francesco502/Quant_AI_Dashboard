@@ -134,6 +134,8 @@ export default function LoginPage() {
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                   autoComplete="username"
+                  aria-describedby={error ? "login-error" : undefined}
+                  aria-invalid={error ? true : undefined}
                   required
                 />
               </div>
@@ -152,6 +154,8 @@ export default function LoginPage() {
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   autoComplete="current-password"
+                  aria-describedby={error ? "login-error" : undefined}
+                  aria-invalid={error ? true : undefined}
                   required
                 />
               </div>
@@ -159,6 +163,8 @@ export default function LoginPage() {
 
             {error ? (
               <div
+                id="login-error"
+                role="alert"
                 className="rounded-lg p-2.5 text-center text-[12px]"
                 style={{ backgroundColor: "rgba(182, 69, 60, 0.08)", color: SONG_COLORS.negative }}
               >

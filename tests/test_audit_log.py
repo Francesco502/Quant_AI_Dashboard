@@ -33,6 +33,26 @@ class TestAuditLogger:
         
         # 验证日志文件存在
         assert os.path.exists(audit_logger.log_file)
+
+    def test_multiple_loggers_write_to_their_own_log_files(self):
+        """测试多个审计日志实例互不复用错误的文件处理器"""
+        with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
+            first_logger = AuditLogger(log_dir=first_dir)
+            second_logger = AuditLogger(log_dir=second_dir)
+
+            second_logger.log(
+                action=AuditAction.VIEW,
+                user="test_user",
+                resource="data/MSFT",
+                resource_type="data",
+            )
+
+            assert os.path.exists(second_logger.log_file)
+
+            for logger in (first_logger, second_logger):
+                for handler in logger.logger.handlers[:]:
+                    handler.close()
+                    logger.logger.removeHandler(handler)
     
     def test_log_login(self, audit_logger):
         """测试记录登录"""
@@ -110,4 +130,3 @@ class TestAuditLogger:
         logger1 = get_audit_logger()
         logger2 = get_audit_logger()
         assert logger1 is logger2
-

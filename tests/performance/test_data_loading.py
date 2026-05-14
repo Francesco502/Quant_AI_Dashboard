@@ -32,7 +32,7 @@ class TestDataLoadingPerformance:
             mock_load.return_value = sample_price_data["AAPL"]
             
             start = time.time()
-            data = load_price_data(tickers=["AAPL"], days=365)
+            data = load_price_data(tickers=["AAPL"], days=365, refresh_stale=False)
             elapsed = time.time() - start
             
             assert data is not None
@@ -47,7 +47,11 @@ class TestDataLoadingPerformance:
             mock_load.side_effect = side_effect
             
             start = time.time()
-            data = load_price_data(tickers=["AAPL", "TSLA", "MSFT"], days=365)
+            data = load_price_data(
+                tickers=["AAPL", "TSLA", "MSFT"],
+                days=365,
+                refresh_stale=False,
+            )
             elapsed = time.time() - start
             
             assert data is not None
@@ -80,4 +84,3 @@ class TestDataLoadingPerformance:
                 # 确保关闭数据库连接
                 if hasattr(db, 'conn') and db.conn:
                     db.conn.close()
-

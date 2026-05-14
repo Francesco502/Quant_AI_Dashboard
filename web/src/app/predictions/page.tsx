@@ -15,13 +15,14 @@ import {
 
 import { MeasuredChart } from "@/components/charts/measured-chart"
 import { EmptyState } from "@/components/data/empty-state"
+import { MultiAssetPicker } from "@/components/shared/multi-asset-picker"
 import { Button } from "@/components/ui/button"
 import { CardDescription, CardTitle, GlassCard } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { api, type ForecastResult, type PricePoint } from "@/lib/api"
+import { api, type Asset, type DataFreshnessItem, type ForecastResult, type PricePoint } from "@/lib/api"
 import { SONG_COLORS } from "@/lib/chart-theme"
 import {
   buildErrorInsights,
@@ -38,10 +39,13 @@ export default function PredictionsPage() {
   const [lookback, setLookback] = useState("365")
   const [model, setModel] = useState("prophet")
   const [models, setModels] = useState<string[]>([])
+  const [assets, setAssets] = useState<Asset[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [result, setResult] = useState<ForecastResult | null>(null)
   const [history, setHistory] = useState<PricePoint[]>([])
+  const [freshness, setFreshness] = useState<DataFreshnessItem | null>(null)
+  const [showFuturePath, setShowFuturePath] = useState(false)
 
   useEffect(() => {
     void api.forecasting
@@ -58,6 +62,37 @@ export default function PredictionsPage() {
       })
   }, [])
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const cleanTicker = (params.get("ticker") || params.get("symbol") || "").trim().toUpperCase()
+    if (cleanTicker) {
+      setTicker(cleanTicker)
+    }
+  }, [])
+
+  useEffect(() => {
+    void (async () => {
+      const [pool, personalAssets] = await Promise.all([
+        api.stz.getAssetPool().catch(() => []),
+        api.user.assets.getOverview(false).catch(() => ({ assets: [] })),
+      ])
+      const mergedAssets = new Map<string, Asset>()
+      for (const asset of pool || []) {
+        mergedAssets.set(asset.ticker, asset)
+      }
+      for (const asset of personalAssets.assets || []) {
+        if (!mergedAssets.has(asset.ticker)) {
+          mergedAssets.set(asset.ticker, {
+            ticker: asset.ticker,
+            name: asset.asset_name || asset.ticker,
+            alias: asset.asset_name || undefined,
+          })
+        }
+      }
+      setAssets(Array.from(mergedAssets.values()))
+    })()
+  }, [])
+
   const handlePredict = async () => {
     const cleanTicker = ticker.trim()
     if (!cleanTicker) {
@@ -68,15 +103,63 @@ export default function PredictionsPage() {
     setLoading(true)
     setError("")
     setResult(null)
+    setShowFuturePath(false)
 
     try {
-      const [prediction, historyResponse] = await Promise.all([
-        api.forecasting.getPrediction(cleanTicker, Number(horizon) || 5, model, Number(lookback) || 365),
+      const freshnessResponse = await api.dataFreshness.getPrices([cleanTicker], 5)
+      const nextFreshness = freshnessResponse.items[0] ?? null
+      setFreshness(nextFreshness)
+      if (nextFreshness?.should_block) {
+        await api.audit
+          .recordEvent({
+            action: "PREDICTION_BLOCKED_STALE_DATA",
+            resource: cleanTicker,
+            resource_type: "prediction",
+            success: false,
+            details: { model, horizon, lookback, freshness: nextFreshness },
+            error_message: nextFreshness.message,
+          })
+          .catch(() => undefined)
+        setError(`已阻止预测：${cleanTicker} 数据不可用或已过期。${nextFreshness.message}`)
+        setHistory([])
+        return
+      }
+
+      const [batchResponse, historyResponse] = await Promise.all([
+        api.forecasting.predict({
+          tickers: [cleanTicker],
+          horizon: Number(horizon) || 5,
+          model_type: model,
+        }),
         api.data.getPrices([cleanTicker], Number(lookback) || 365),
       ])
+      const prediction = batchResponse.results?.[cleanTicker]
+      if (!prediction) {
+        setError(`未能为 ${cleanTicker} 生成预测结果。`)
+        setHistory([])
+        return
+      }
       setResult(prediction)
       setHistory(historyResponse?.data?.[cleanTicker] ?? [])
+      await api.audit
+        .recordEvent({
+          action: "PREDICTION_RUN",
+          resource: cleanTicker,
+          resource_type: "prediction",
+          details: { model, horizon: Number(horizon) || 5, lookback_days: Number(lookback) || 365 },
+        })
+        .catch(() => undefined)
     } catch (requestError) {
+      await api.audit
+        .recordEvent({
+          action: "PREDICTION_RUN",
+          resource: cleanTicker,
+          resource_type: "prediction",
+          success: false,
+          details: { model, horizon, lookback },
+          error_message: requestError instanceof Error ? requestError.message : "预测失败",
+        })
+        .catch(() => undefined)
       setError(requestError instanceof Error ? requestError.message : "预测失败。")
       setHistory([])
     } finally {
@@ -123,12 +206,24 @@ export default function PredictionsPage() {
       </section>
 
       <GlassCard className="space-y-5 p-5 md:p-6">
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.95fr_0.8fr_0.8fr_0.95fr]">
+          <Field
+            label="资产池"
+            hint="可从资产池或个人资产中快速选择，仍支持右侧手动修正。"
+          >
+            <MultiAssetPicker
+              assets={assets}
+              selected={ticker ? [ticker.trim().toUpperCase()] : []}
+              onChange={(tickers) => setTicker(tickers.at(-1) ?? "")}
+              placeholder={assets.length > 0 ? "选择预测标的" : "资产池加载中"}
+              maxPreview={1}
+            />
+          </Field>
           <Field
             label="标的代码"
-            hint="支持股票、基金、ETF 等代码，保持与数据源中的代码格式一致。"
+            hint="支持从 URL 带入 ticker，也可直接输入股票、基金、ETF 代码。"
           >
-            <Input value={ticker} onChange={(event) => setTicker(event.target.value)} />
+            <Input value={ticker} onChange={(event) => setTicker(event.target.value.toUpperCase())} />
           </Field>
           <Field
             label="预测天数"
@@ -171,6 +266,17 @@ export default function PredictionsPage() {
           </p>
         </div>
       </GlassCard>
+
+      {freshness ? (
+        <div
+          className={`rounded-[24px] border px-4 py-3 text-sm leading-7 ${
+            freshness.is_stale ? "surface-tone-cinnabar" : "surface-tone-celadon"
+          }`}
+        >
+          数据源 {freshness.source}，最后更新 {freshness.last_date ?? "-"}，距今 {freshness.age_days ?? "-"} 天。
+          {freshness.message}
+        </div>
+      ) : null}
 
       {error ? (
         <div className="surface-tone-cinnabar rounded-[24px] border p-4 text-sm leading-7">
@@ -224,13 +330,18 @@ export default function PredictionsPage() {
               </CardDescription>
             </div>
 
-            <MeasuredChart height={360}>
+              <div className="text-xs text-muted-foreground lg:hidden">先看历史与预测是否衔接，再展开逐日路径核对细节。</div>
+              <MeasuredChart height={380}>
               {(width, height) => (
                 <AreaChart width={width} height={height} data={chartRows}>
                   <defs>
                     <linearGradient id="prediction-history-fill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={SONG_COLORS.celadon} stopOpacity={0.24} />
                       <stop offset="95%" stopColor={SONG_COLORS.celadon} stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="confidence-band-fill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={SONG_COLORS.indigo} stopOpacity={0.12} />
+                      <stop offset="100%" stopColor={SONG_COLORS.indigo} stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={SONG_COLORS.grid} />
@@ -255,8 +366,8 @@ export default function PredictionsPage() {
                     labelFormatter={(label) => `日期 ${label}`}
                     contentStyle={{
                       borderRadius: 16,
-                      border: "1px solid rgba(77,71,66,0.08)",
-                      background: "rgba(255,255,255,0.92)",
+                      border: "1px solid var(--chart-tooltip-border)",
+                      background: "var(--chart-tooltip-bg)",
                     }}
                   />
                   {latestHistory != null ? (
@@ -273,6 +384,20 @@ export default function PredictionsPage() {
                     stroke={SONG_COLORS.celadon}
                     strokeWidth={2.2}
                     fill="url(#prediction-history-fill)"
+                    connectNulls
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="forecastUpper"
+                    stroke="none"
+                    fill="url(#confidence-band-fill)"
+                    connectNulls
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="forecastLower"
+                    stroke="none"
+                    fill="transparent"
                     connectNulls
                   />
                   <Line
@@ -329,8 +454,8 @@ export default function PredictionsPage() {
                       labelFormatter={(label) => `日期 ${String(label).slice(0, 10)}`}
                       contentStyle={{
                         borderRadius: 16,
-                        border: "1px solid rgba(77,71,66,0.08)",
-                        background: "rgba(255,255,255,0.92)",
+                        border: "1px solid var(--chart-tooltip-border)",
+                        background: "var(--chart-tooltip-bg)",
                       }}
                     />
                     {latestHistory != null ? (
@@ -356,12 +481,52 @@ export default function PredictionsPage() {
                 />
                 <CardDescription>把预测点拆成逐日表格，便于教学讲解和复盘留档。</CardDescription>
               </div>
-              <div className="overflow-hidden rounded-2xl border border-border/60">
+              <div className="space-y-3 lg:hidden">
+                {(showFuturePath ? result.predictions : result.predictions.slice(0, 3)).map((point) => {
+                  const delta =
+                    latestHistory != null
+                      ? (point.price - latestHistory) / Math.max(latestHistory, 1e-6)
+                      : null
+                  return (
+                    <div key={point.date} className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs text-muted-foreground">日期</div>
+                          <div className="mt-1 font-medium">{point.date.slice(0, 10)}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs text-muted-foreground">预测价格</div>
+                          <div className="mt-1 text-lg font-semibold tabular-nums">{formatPrice(point.price)}</div>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex items-center justify-between rounded-xl bg-background/50 px-3 py-2 text-sm">
+                        <span className="text-muted-foreground">较最新价格</span>
+                        <span style={{ color: delta != null && delta < 0 ? SONG_COLORS.cinnabar : SONG_COLORS.celadon }}>
+                          {delta != null ? `${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)}%` : "--"}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+                {result.predictions.length > 3 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setShowFuturePath((current) => !current)}
+                  >
+                    {showFuturePath ? "收起未来路径" : `展开全部 ${result.predictions.length} 个预测点`}
+                  </Button>
+                ) : null}
+              </div>
+              <div className="hidden overflow-hidden rounded-2xl border border-border/60 lg:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>日期</TableHead>
                       <TableHead>预测价格</TableHead>
+                      <TableHead>置信区间</TableHead>
+                      <TableHead>信号</TableHead>
                       <TableHead>较最新价格</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -371,10 +536,39 @@ export default function PredictionsPage() {
                         latestHistory != null
                           ? (point.price - latestHistory) / Math.max(latestHistory, 1e-6)
                           : null
+                      const hasBounds = point.lower != null && point.upper != null
                       return (
                         <TableRow key={point.date}>
                           <TableCell>{point.date.slice(0, 10)}</TableCell>
-                          <TableCell className="font-medium">{formatPrice(point.price)}</TableCell>
+                          <TableCell className="font-medium tabular-nums">{formatPrice(point.price)}</TableCell>
+                          <TableCell className="text-xs tabular-nums">
+                            {hasBounds ? `${formatPrice(point.lower!)} ~ ${formatPrice(point.upper!)}` : "--"}
+                          </TableCell>
+                          <TableCell>
+                            {point.signal ? (
+                              <span
+                                className="inline-block rounded-full px-2 py-0.5 text-xs font-medium"
+                                style={{
+                                  background:
+                                    point.signal === "buy"
+                                      ? "rgba(var(--rgb-cinnabar), 0.1)"
+                                      : point.signal === "sell"
+                                        ? "rgba(var(--rgb-celadon), 0.1)"
+                                        : "rgba(var(--rgb-ink), 0.06)",
+                                  color:
+                                    point.signal === "buy"
+                                      ? "rgb(var(--rgb-cinnabar))"
+                                      : point.signal === "sell"
+                                        ? "rgb(var(--rgb-celadon))"
+                                        : "rgb(var(--rgb-ink))",
+                                }}
+                              >
+                                {point.signal === "buy" ? "看涨" : point.signal === "sell" ? "看跌" : "持有"}
+                              </span>
+                            ) : (
+                              "--"
+                            )}
+                          </TableCell>
                           <TableCell
                             style={{ color: delta != null && delta < 0 ? SONG_COLORS.cinnabar : SONG_COLORS.celadon }}
                           >

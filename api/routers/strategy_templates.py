@@ -12,6 +12,7 @@ from datetime import datetime
 
 from api.auth import get_current_active_user, UserInDB
 from core.database import get_database
+from core.review_audit import get_review_audit_service
 
 router = APIRouter(prefix="/strategy-templates", tags=["strategy-templates"])
 logger = logging.getLogger(__name__)
@@ -59,6 +60,29 @@ class BacktestHistoryCreate(BaseModel):
     initial_capital: float
     metrics: Dict[str, Any]
     equity_curve: Optional[List[Dict[str, Any]]] = None
+
+
+def _record_template_audit(
+    current_user: UserInDB,
+    *,
+    action: str,
+    resource: str,
+    details: Optional[Dict[str, Any]] = None,
+    success: bool = True,
+    error_message: Optional[str] = None,
+) -> None:
+    try:
+        get_review_audit_service().record_event(
+            user=current_user.username,
+            action=action,
+            resource=resource,
+            resource_type="strategy_template",
+            details=details or {},
+            success=success,
+            error_message=error_message,
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to write strategy template audit event", exc_info=True)
 
 
 # --- Endpoints ---
@@ -159,7 +183,7 @@ async def create_template(
         """, (template_id,))
         row = cursor.fetchone()
 
-        return {
+        response = {
             "id": row["id"],
             "template_name": row["template_name"],
             "strategy_id": row["strategy_id"],
@@ -171,6 +195,17 @@ async def create_template(
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+        _record_template_audit(
+            current_user,
+            action="STRATEGY_TEMPLATE_CREATE",
+            resource=str(template_id),
+            details={
+                "template_name": request.template_name,
+                "strategy_id": request.strategy_id,
+                "strategy_type": request.strategy_type,
+            },
+        )
+        return response
 
     except Exception as e:
         logger.error(f"创建策略模板失败: {e}")
@@ -281,7 +316,17 @@ async def update_template(
         db.conn.commit()
 
         # 返回更新后的模板
-        return await get_template(template_id, current_user)
+        response = await get_template(template_id, current_user)
+        _record_template_audit(
+            current_user,
+            action="STRATEGY_TEMPLATE_UPDATE",
+            resource=str(template_id),
+            details={
+                "updated_fields": request.model_dump(exclude_none=True),
+                "template_name": response.template_name if hasattr(response, "template_name") else None,
+            },
+        )
+        return response
 
     except HTTPException:
         raise
@@ -304,7 +349,7 @@ async def delete_template(
 
         # 检查所有权
         cursor.execute("""
-            SELECT user_id FROM strategy_templates WHERE id = ?
+            SELECT user_id, template_name, strategy_id, strategy_type FROM strategy_templates WHERE id = ?
         """, (template_id,))
         row = cursor.fetchone()
         if not row:
@@ -317,6 +362,16 @@ async def delete_template(
         """, (template_id,))
 
         db.conn.commit()
+        _record_template_audit(
+            current_user,
+            action="STRATEGY_TEMPLATE_DELETE",
+            resource=str(template_id),
+            details={
+                "template_name": row["template_name"],
+                "strategy_id": row["strategy_id"],
+                "strategy_type": row["strategy_type"],
+            },
+        )
 
         return {"success": True, "message": "策略模板已删除"}
 

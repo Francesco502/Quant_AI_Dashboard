@@ -2,7 +2,7 @@
 
 Personal quantitative analysis, paper trading, strategy research, and decision-support workspace.
 
-Current release line: **v2.2.0**
+Current release line: **v2.3.0**
 
 ## Repository Layout
 

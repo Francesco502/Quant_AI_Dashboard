@@ -111,24 +111,29 @@ def _add_distribution_columns(pred_df: pd.DataFrame, last_observed_price: float,
     highs: List[float] = []
     probs: List[float] = []
     confs: List[float] = []
+    # Use the last *observed* price as the anchor so that multi-step
+    # confidence intervals grow with sqrt(step) rather than compounding
+    # from successive point estimates (which causes spurious drift).
+    anchor = prev
     signals: List[str] = []
-    for p in pred_df["prediction"].astype(float).tolist():
+    for step_idx, p in enumerate(pred_df["prediction"].astype(float).tolist(), start=1):
         if use_log_return:
-            r = float(np.log(max(p, 1e-6) / prev))
+            r = float(np.log(max(p, 1e-6) / anchor))
         else:
-            r = float(p / prev - 1.0)
-        low_r = r - DEFAULT_CONFIDENCE_Z * sigma
-        high_r = r + DEFAULT_CONFIDENCE_Z * sigma
-        low = prev * (float(np.exp(low_r)) if use_log_return else 1.0 + low_r)
-        high = prev * (float(np.exp(high_r)) if use_log_return else 1.0 + high_r)
-        prob = float(_normal_cdf(r / sigma))
+            r = float(p / anchor - 1.0)
+        # Uncertainty scales with forecast horizon:  σ_step = σ * √step
+        step_sigma = sigma * float(np.sqrt(step_idx))
+        low_r = r - DEFAULT_CONFIDENCE_Z * step_sigma
+        high_r = r + DEFAULT_CONFIDENCE_Z * step_sigma
+        low = anchor * (float(np.exp(low_r)) if use_log_return else 1.0 + low_r)
+        high = anchor * (float(np.exp(high_r)) if use_log_return else 1.0 + high_r)
+        prob = float(_normal_cdf(r / step_sigma)) if step_sigma > 1e-10 else 0.5
         conf, sig = _confidence_and_signal(prob)
         lows.append(float(low))
         highs.append(float(high))
         probs.append(prob)
         confs.append(conf)
         signals.append(sig)
-        prev = float(max(p, 1e-6))
     out = pred_df.copy()
     out["lower_bound"] = lows
     out["upper_bound"] = highs
@@ -796,7 +801,9 @@ def run_forecast(ticker: str, horizon: int = 30, model_type: str = "prophet") ->
         if not models:
             raise ValueError("No base model is available for ensemble")
         return _format_forecast_result(ticker, "Ensemble", horizon, EnsembleForecaster(models=models, weights=DEFAULT_BASE_WEIGHTS).fit(s).predict(horizon), regime)
-    raise ValueError("Unsupported model type")
+    if mt in {"lstm", "gru"}:
+        raise ValueError(f"{mt.upper()} is not available in this runtime profile. Use xgboost, lightgbm, or ensemble instead.")
+    raise ValueError(f"Unsupported model type: {mt!r}")
 
 
 def advanced_price_forecast(price_df: pd.DataFrame, horizon: int = 5, model_type: str = "xgboost", return_confidence: bool = False, use_enhanced_features: bool = True) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]]:

@@ -174,7 +174,7 @@ async def run_daily(
         raise HTTPException(status_code=500, detail=f"Run daily analysis failed: {exc}") from exc
 
 
-@router.get("/backtest")
+@router.get("/backtest", deprecated=True)
 async def backtest(ticker: str, horizon_days: int = 5) -> Dict[str, Any]:
     """Backtest LLM decisions for one ticker."""
     if not ticker:

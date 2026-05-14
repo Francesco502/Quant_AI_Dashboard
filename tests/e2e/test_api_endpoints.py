@@ -1,4 +1,4 @@
-﻿"""In-process E2E smoke tests for protected API endpoints."""
+"""In-process E2E smoke tests for protected API endpoints."""
 
 from __future__ import annotations
 

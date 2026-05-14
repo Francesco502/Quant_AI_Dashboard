@@ -10,6 +10,7 @@ import json
 import os
 import hashlib
 import logging
+import uuid
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -168,7 +169,7 @@ def set_cached(endpoint: str, params: dict, data: dict) -> None:
         "url": "",
         "cached_at": datetime.now(timezone.utc).isoformat(),
     }
-    tmp_path = filepath.with_suffix(f"{filepath.suffix}.tmp")
+    tmp_path = filepath.with_name(f".{filepath.name}.{uuid.uuid4().hex}.tmp")
     try:
         safe_entry = _make_json_safe(entry)
         with open(tmp_path, "w", encoding="utf-8") as f:

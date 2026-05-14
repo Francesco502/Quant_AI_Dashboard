@@ -1,6 +1,6 @@
 # Quant-AI Dashboard Frontend
 
-Next.js frontend for Quant-AI Dashboard `v2.2.0`.
+Next.js frontend for Quant-AI Dashboard `v2.3.0`.
 
 ## Runtime Baseline
 

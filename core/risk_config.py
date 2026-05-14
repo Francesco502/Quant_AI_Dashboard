@@ -8,9 +8,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Dict, Any, Optional
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from .risk_types import RiskLimits, PositionLimit
 from .position_manager import SectorInfo
@@ -93,7 +96,7 @@ def load_risk_config() -> Dict[str, Any]:
         
         return config
     except Exception as e:
-        print(f"加载风险配置失败: {e}，使用默认配置")
+        logger.error(f"加载风险配置失败: {e}，使用默认配置")
         return get_default_risk_config()
 
 
@@ -108,7 +111,7 @@ def save_risk_config(config: Dict[str, Any]) -> bool:
         
         return True
     except Exception as e:
-        print(f"保存风险配置失败: {e}")
+        logger.error(f"保存风险配置失败: {e}")
         return False
 
 

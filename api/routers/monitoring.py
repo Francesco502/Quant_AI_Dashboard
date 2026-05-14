@@ -6,9 +6,11 @@ from datetime import datetime
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from api.auth import UserInDB, get_current_active_user
+from api.dependencies import Permission, require_permission
 from core.monitoring import (
     Alert,
     AlertChannel,
@@ -29,7 +31,11 @@ from core.monitoring import (
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/monitoring", tags=["system-monitoring"])
+router = APIRouter(
+    prefix="/monitoring",
+    tags=["system-monitoring"],
+    dependencies=[Depends(get_current_active_user)],
+)
 
 _alert_manager: Optional[AlertManager] = None
 
@@ -115,6 +121,11 @@ def _get_alert_manager() -> AlertManager:
 
 @router.get("/health")
 async def get_health_status() -> Dict[str, Any]:
+    """Run all registered health checks and return component-level status.
+
+    Checks memory, CPU, disk, and optional custom probes. Used by the
+    dashboard health widget and external uptime monitors.
+    """
     try:
         return {"status": "success", "data": get_system_monitor().check_health()}
     except Exception as exc:  # noqa: BLE001
@@ -124,6 +135,10 @@ async def get_health_status() -> Dict[str, Any]:
 
 @router.get("/metrics")
 async def get_system_metrics() -> Dict[str, Any]:
+    """Collect a snapshot of current system-level resource metrics.
+
+    Returns CPU%, memory usage, and disk I/O for the host process.
+    """
     try:
         return {"status": "success", "data": get_system_monitor().collect_metrics()}
     except Exception as exc:  # noqa: BLE001
@@ -133,6 +148,7 @@ async def get_system_metrics() -> Dict[str, Any]:
 
 @router.get("/metrics/detailed")
 async def get_detailed_metrics() -> Dict[str, Any]:
+    """Collect an expanded set of system metrics including per-core CPU and network I/O."""
     try:
         return {"status": "success", "data": get_system_monitor().collect_detailed_metrics()}
     except Exception as exc:  # noqa: BLE001
@@ -142,6 +158,10 @@ async def get_detailed_metrics() -> Dict[str, Any]:
 
 @router.get("/metrics/history")
 async def get_metrics_history(metric_name: str, minutes: int = 60) -> Dict[str, Any]:
+    """Return time-series history for a specific metric over the given window.
+
+    Useful for rendering sparkline charts in the monitoring dashboard.
+    """
     try:
         history = get_system_monitor().get_metrics_history(metric_name, minutes)
         return {
@@ -159,6 +179,7 @@ async def get_metrics_history(metric_name: str, minutes: int = 60) -> Dict[str, 
 
 @router.get("/metrics/statistics")
 async def get_metric_statistics(window_minutes: int = 60) -> Dict[str, Any]:
+    """Return min/max/avg/p95 statistics for all tracked metrics over the window."""
     try:
         stats = get_system_monitor().get_all_metric_statistics(window_minutes)
         return {"status": "success", "data": stats}
@@ -169,6 +190,7 @@ async def get_metric_statistics(window_minutes: int = 60) -> Dict[str, Any]:
 
 @router.get("/summary")
 async def get_system_summary() -> Dict[str, Any]:
+    """Return a high-level system health summary suitable for the overview dashboard."""
     try:
         return {"status": "success", "data": get_system_monitor().get_system_summary()}
     except Exception as exc:  # noqa: BLE001
@@ -178,6 +200,7 @@ async def get_system_summary() -> Dict[str, Any]:
 
 @router.get("/status")
 async def get_monitoring_status() -> Dict[str, Any]:
+    """Return the monitoring subsystem runtime status (uptime, collection counts, last-check timestamps)."""
     try:
         status = get_system_monitor().get_monitoring_status()
         return {
@@ -200,6 +223,7 @@ async def get_monitoring_status() -> Dict[str, Any]:
 
 @router.get("/alert/rules")
 async def get_alert_rules() -> Dict[str, Any]:
+    """List all configured alert rules with their thresholds, severities, and channel bindings."""
     try:
         config = get_monitoring_config()
         rules = [
@@ -223,6 +247,7 @@ async def get_alert_rules() -> Dict[str, Any]:
 
 @router.get("/alert/channels")
 async def get_alert_channels() -> Dict[str, Any]:
+    """List configured notification channels (email, webhook, Telegram, etc.) with their enabled state."""
     try:
         config = get_monitoring_config()
         channels = [
@@ -246,7 +271,15 @@ async def get_alert_channels() -> Dict[str, Any]:
 
 
 @router.post("/alert/test")
-async def test_alert_channel(payload: AlertChannelTestRequest) -> Dict[str, Any]:
+async def test_alert_channel(
+    payload: AlertChannelTestRequest,
+    current_user: UserInDB = Depends(require_permission(Permission.MANAGE_SYSTEM)),
+) -> Dict[str, Any]:
+    """Send a test alert through the specified channel to verify configuration.
+
+    Requires MANAGE_SYSTEM permission.
+    """
+    del current_user
     try:
         channel = _build_channel(payload.channel_type, payload.config)
         if not getattr(channel, "enabled", True):
@@ -282,6 +315,7 @@ async def test_alert_channel(payload: AlertChannelTestRequest) -> Dict[str, Any]
 
 @router.get("/alert/history")
 async def get_alert_history(limit: int = 100, severity: Optional[str] = None) -> Dict[str, Any]:
+    """Return recent alert history, optionally filtered by severity level."""
     try:
         severity_enum = None
         if severity:
@@ -301,6 +335,7 @@ async def get_alert_history(limit: int = 100, severity: Optional[str] = None) ->
 
 @router.get("/alert/statistics")
 async def get_alert_statistics() -> Dict[str, Any]:
+    """Return aggregate alert counts grouped by severity and rule."""
     try:
         return {"status": "success", "data": _get_alert_manager().get_alert_statistics()}
     except Exception as exc:  # noqa: BLE001
@@ -309,7 +344,14 @@ async def get_alert_statistics() -> Dict[str, Any]:
 
 
 @router.post("/restart")
-async def restart_monitoring() -> Dict[str, Any]:
+async def restart_monitoring(
+    current_user: UserInDB = Depends(require_permission(Permission.MANAGE_SYSTEM)),
+) -> Dict[str, Any]:
+    """Restart the background system monitor process.
+
+    Requires MANAGE_SYSTEM permission.
+    """
+    del current_user
     try:
         monitor = restart_system_monitor()
         return {
@@ -327,6 +369,7 @@ async def restart_monitoring() -> Dict[str, Any]:
 
 @router.get("/config")
 async def get_monitoring_config_api() -> Dict[str, Any]:
+    """Return the current monitoring configuration (thresholds, intervals, rate limits)."""
     try:
         config = get_monitoring_config()
         return {

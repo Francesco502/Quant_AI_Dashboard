@@ -1,4 +1,4 @@
-﻿"""Integration tests for trading flow."""
+"""Integration tests for trading flow."""
 
 import numpy as np
 import pandas as pd

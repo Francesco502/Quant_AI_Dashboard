@@ -2,7 +2,7 @@
 
 ## Goal
 
-Use this guide to turn the current worktree into a releasable `v2.2.0` candidate with a reproducible validation record.
+Use this guide to turn the current worktree into a releasable `v2.3.0` candidate with a reproducible validation record.
 
 ## 1. Freeze Scope
 
@@ -16,6 +16,7 @@ Generated artifacts that should not be committed:
 
 - `output/`
 - `.playwright-cli/`
+- `.opencode/`
 - `tmp/`
 - coverage output
 - local logs
@@ -29,12 +30,16 @@ python -m compileall -q api core tests
 python -m pytest tests/unit -q
 python -m pytest tests/integration -q
 python -m pytest tests/test_v3_smoke.py -q
+python -m pytest tests/e2e -m "e2e_inprocess" -q
 
 cd web
+npm audit --audit-level=low
 npm run lint
 npm run build
+NEXT_PUBLIC_API_URL=/api NEXT_STATIC_EXPORT=1 NEXT_TELEMETRY_DISABLED=1 NODE_ENV=production npx next build
 cd ..
 
+python -m playwright install chromium
 python scripts/release_check.py
 ```
 
@@ -47,7 +52,7 @@ output/reports/release_check_report.txt
 ## 3. Validate The Release Image
 
 ```powershell
-docker build -f Dockerfile.optimized -t quant-ai-dashboard:2.2.0 .
+docker build -f Dockerfile.optimized -t quant-ai-dashboard:2.3.0 .
 ```
 
 For compose-based verification:
@@ -76,7 +81,7 @@ Before tagging:
 Release is ready only when all of the following are true:
 
 - worktree scope is intentional
-- compile, unit, integration, smoke, frontend build, and external release validation all pass
+- compile, unit, integration, smoke, in-process E2E, frontend build, static-export build, and external release validation all pass
 - Docker optimized image builds successfully
 - login, dashboard, portfolio, trading, backtest, and research pages render against the target backend
 - rollback instructions and deployment environment are known

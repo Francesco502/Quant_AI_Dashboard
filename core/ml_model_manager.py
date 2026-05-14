@@ -1,6 +1,12 @@
 """
 ML 模型懒加载管理器 (2核2GB服务器专用)
 
+.. deprecated::
+    This module is not wired into the active forecasting pipeline.
+    The ``ModelManager`` class in ``advanced_forecasting.py`` is the active
+    model lifecycle manager.  This module is retained for reference but
+    should not be used in new code.
+
 特性：
 - 按需加载 ML 模型（Prophet/XGBoost/LightGBM/LSTM）
 - 自动卸载不常用的模型

@@ -1,6 +1,7 @@
 "use client"
 
-import { ChevronDown, ListFilter } from "lucide-react"
+import * as React from "react"
+import { ChevronDown, ListFilter, Search } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -36,8 +37,20 @@ export function MultiAssetPicker({
   className,
   maxPreview = 2,
 }: MultiAssetPickerProps) {
+  const [query, setQuery] = React.useState("")
   const normalizedSelected = selected.map((item) => item.trim().toUpperCase())
   const selectedAssets = assets.filter((asset) => normalizedSelected.includes(asset.ticker.trim().toUpperCase()))
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredAssets = React.useMemo(() => {
+    if (!normalizedQuery) return assets
+    return assets.filter((asset) => {
+      const haystack = [asset.ticker, asset.alias, asset.name, asset.asset_type]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+      return haystack.includes(normalizedQuery)
+    })
+  }, [assets, normalizedQuery])
   const previewText =
     selectedAssets.length === 0
       ? placeholder
@@ -59,7 +72,7 @@ export function MultiAssetPicker({
         <Button
           variant="outline"
           className={cn(
-            "h-10 w-full justify-between rounded-2xl border-border/70 bg-background/85 px-3 text-left text-sm",
+            "min-h-11 w-full min-w-0 justify-between rounded-2xl border-border/70 bg-background/85 px-3 text-left text-sm sm:h-10 sm:min-h-0",
             className,
           )}
         >
@@ -75,13 +88,25 @@ export function MultiAssetPicker({
           </span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="glass-dropdown w-[320px] rounded-2xl p-2">
+      <DropdownMenuContent align="start" className="glass-dropdown w-[min(92vw,420px)] rounded-2xl p-2">
         <DropdownMenuLabel className="px-2 py-2 text-xs font-medium text-foreground/55">
           从资产池中选择要分析的标的
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <div className="relative my-2">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/38" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索代码、名称或别名"
+            className="min-h-11 w-full rounded-2xl border border-border/70 bg-background/80 pl-9 pr-3 text-sm outline-none transition focus:border-[rgba(var(--rgb-ochre),0.55)] sm:h-10 sm:min-h-0"
+          />
+        </div>
         <div className="max-h-72 overflow-y-auto">
-          {assets.map((asset) => {
+          {filteredAssets.length === 0 ? (
+            <div className="px-3 py-6 text-center text-sm text-muted-foreground">没有匹配的标的。</div>
+          ) : null}
+          {filteredAssets.map((asset) => {
             const checked = normalizedSelected.includes(asset.ticker.trim().toUpperCase())
             return (
               <DropdownMenuCheckboxItem

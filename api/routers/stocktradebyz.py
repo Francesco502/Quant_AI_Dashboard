@@ -3,6 +3,7 @@ StockTradebyZ 战法与资产池管理 API
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from starlette.concurrency import run_in_threadpool
 from typing import List, Dict, Optional, Any
 from pydantic import BaseModel
 import pandas as pd
@@ -412,7 +413,7 @@ def _run_strategy_task(task_id: str, request: RunStrategyRequest, user_id: int) 
 #  路由实现
 # ----------------------------------------------------------------------
 
-@router.post("/scan/market")
+@router.post("/scan/market", deprecated=True)
 async def scan_market(request: ScanMarketRequest):
     """
     全市场扫描
@@ -490,7 +491,7 @@ async def run_strategy(
         raise HTTPException(status_code=500, detail=f"运行战法失败: {str(e)}")
 
 
-@router.post("/run-async")
+@router.post("/run-async", deprecated=True)
 async def run_strategy_async(
     request: RunStrategyRequest,
     current_user: UserInDB = Depends(get_current_active_user),
@@ -511,7 +512,7 @@ async def run_strategy_async(
     return _serialize_scan_task(task)
 
 
-@router.get("/run-status/{task_id}")
+@router.get("/run-status/{task_id}", deprecated=True)
 async def get_strategy_run_status(
     task_id: str,
     current_user: UserInDB = Depends(get_current_active_user),
@@ -534,7 +535,12 @@ async def get_asset_pool(
     """获取当前资产池并附带按资产类型路由后的最新价格。"""
     try:
         user_id = _require_user_id(current_user)
-        return _build_asset_pool_response(_load_asset_pool_as_dicts(user_id), force_refresh=force_refresh)
+        pool_items = await run_in_threadpool(_load_asset_pool_as_dicts, user_id)
+        return await run_in_threadpool(
+            _build_asset_pool_response,
+            pool_items,
+            force_refresh=force_refresh,
+        )
     except Exception as e:
         logger.error(f"获取资产池失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取资产池失败: {str(e)}")

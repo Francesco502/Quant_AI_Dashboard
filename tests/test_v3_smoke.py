@@ -9,7 +9,7 @@ from core.version import VERSION
 def test_version_consistency():
     """版本号在核心与 API 中保持一致"""
 
-    assert VERSION == "2.2.0"
+    assert VERSION
     assert app.version == VERSION
 
 

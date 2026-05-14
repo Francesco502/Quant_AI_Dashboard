@@ -1,15 +1,15 @@
 """Application version metadata."""
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 VERSION = __version__
 
 VERSION_INFO = {
     "version": __version__,
     "major": 2,
-    "minor": 2,
+    "minor": 3,
     "patch": 0,
     "prerelease": None,
-    "build_date": "2026-04-15",
+    "build_date": "2026-05-09",
 }
 
 

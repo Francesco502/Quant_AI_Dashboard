@@ -14,12 +14,15 @@ import os
 import json
 import logging
 import socket
+import hashlib
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
 from pathlib import Path
 import threading
+
+from starlette.requests import Request
 
 
 logger = logging.getLogger(__name__)
@@ -112,12 +115,21 @@ class AuditLogger:
         # 日志文件（按日期分割）
         self.log_file = self.log_dir / f"audit_{datetime.now().strftime('%Y%m%d')}.log"
 
-        # 配置日志记录器
-        self.logger = logging.getLogger("audit")
+        # 配置日志记录器。每个日志目录使用独立 logger，避免多个 AuditLogger
+        # 实例复用全局 "audit" 文件处理器导致写入错误目录。
+        logger_id = hashlib.sha1(str(self.log_dir.resolve()).encode("utf-8")).hexdigest()[:12]
+        self.logger = logging.getLogger(f"audit.{logger_id}")
         self.logger.setLevel(logging.INFO)
+        self.logger.propagate = True
 
         # 文件处理器（线程安全）
-        if not self.logger.handlers:
+        log_file_path = str(self.log_file.resolve())
+        has_file_handler = any(
+            isinstance(handler, logging.FileHandler)
+            and getattr(handler, "baseFilename", None) == log_file_path
+            for handler in self.logger.handlers
+        )
+        if not has_file_handler:
             # 确保目录存在
             self.log_dir.mkdir(parents=True, exist_ok=True)
 

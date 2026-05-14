@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import { ChevronDown, LayoutDashboard, RefreshCw, Settings } from "lucide-react"
+import { toast } from "sonner"
 
 import { HealthStatus } from "@/components/monitor/HealthStatus"
 import { AlertHistory } from "@/components/monitor/AlertHistory"
@@ -10,6 +11,7 @@ import { SystemMetricsPanel } from "@/components/monitor/SystemMetricsPanel"
 import { NoteBlock } from "@/components/data/note-block"
 import { GlassCard } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { CardSkeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
 
 function StatTile({ label, value }: { label: string; value: string }) {
@@ -53,6 +55,7 @@ export default function SystemMonitorPage() {
   const [uptime, setUptime] = useState(0)
   const [metricsCount, setMetricsCount] = useState(0)
   const [healthChecksCount, setHealthChecksCount] = useState(0)
+  const [statusLoading, setStatusLoading] = useState(true)
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -62,6 +65,7 @@ export default function SystemMonitorPage() {
   }, [])
 
   const loadStatus = async () => {
+    setStatusLoading(true)
     try {
       const res = await api.monitoring.getMonitoringStatus()
       if (res.data) {
@@ -70,6 +74,9 @@ export default function SystemMonitorPage() {
       }
     } catch (error) {
       console.error("Failed to load status:", error)
+      toast.error("加载监控状态失败")
+    } finally {
+      setStatusLoading(false)
     }
   }
 
@@ -119,11 +126,15 @@ export default function SystemMonitorPage() {
           </Button>
         </div>
 
+        {statusLoading ? (
+          <CardSkeleton rows={3} />
+        ) : (
         <div className="grid gap-3 md:grid-cols-3">
           <StatTile label="运行时长" value={formatUptime(uptime)} />
           <StatTile label="指标数" value={metricsCount.toString()} />
           <StatTile label="检查项" value={healthChecksCount.toString()} />
         </div>
+        )}
       </GlassCard>
 
       <div className="grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">

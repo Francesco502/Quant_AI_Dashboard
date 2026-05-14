@@ -1,7 +1,7 @@
 "use client"
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
-import { AlertCircle, CheckCircle, PencilLine, Plus, RefreshCcw, Trash2 } from "lucide-react"
+import { type ChangeEvent, useCallback, useEffect, useMemo, useState } from "react"
+import { AlertCircle, CheckCircle, PencilLine, Plus, RefreshCcw, Trash2, Upload } from "lucide-react"
 
 import {
   AssetSearchResult,
@@ -15,7 +15,7 @@ import {
 } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 import { cn, formatCurrency } from "@/lib/utils"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion } from "framer-motion"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -23,6 +23,7 @@ import { CardDescription, CardTitle, GlassCard } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -63,7 +64,7 @@ const assetTypeOptions: Array<{
   label: string
   hint: string
 }> = [
-  { value: "fund", label: "场外基金", hint: "优先按基金净值估值，适合联接基金、债券基金、货币基金。" },
+  { value: "fund", label: "场外基金", hint: "优先按基金净值估值，适合联接基金、债券基金、货币基金等。" },
   { value: "etf", label: "场内 ETF / LOF", hint: "优先按场内交易价格估值，适合 ETF、LOF 等交易型资产。" },
   { value: "stock", label: "股票", hint: "优先按股票行情估值，适合 A 股、港股、美股等个股。" },
   { value: "other", label: "其他", hint: "保留给暂时无法明确归类的资产，系统会尽量匹配可用数据源。" },
@@ -84,7 +85,7 @@ function createDefaultDcaRule(): UserAssetDcaRule {
 }
 
 const OVERVIEW_CACHE_PREFIX = "user-assets-overview:"
-const OVERVIEW_CACHE_VERSION = 3
+const OVERVIEW_CACHE_VERSION = 4
 const OVERVIEW_CACHE_TTL_MS = 12 * 60 * 60 * 1000
 
 type OverviewCachePayload = {
@@ -213,9 +214,9 @@ function assetTypeLabel(assetType?: string | null) {
 function valuationHint(assetType?: string | null) {
   const normalized = inferAssetType("", undefined, assetType)
   if (normalized === "fund") return "基金净值估值"
-  if (normalized === "etf") return "场内交易价估值"
-  if (normalized === "stock") return "行情价估值"
-  return "自动匹配估值"
+  if (normalized === "etf") return "场内交易价格估值"
+  if (normalized === "stock") return "行情价格估值"
+  return "自动匹配估值方式"
 }
 
 function buildDcaRuleForSubmit(form: FormState): UserAssetDcaRule {
@@ -250,7 +251,7 @@ function validateForm(form: FormState) {
   if (!form.asset_name.trim()) return "资产名称不能为空"
   if (!form.asset_type) return "请选择资产类型"
   if (Number(form.avg_cost || 0) <= 0) return "请填写有效的当前持仓成本价"
-  if (Number(form.units || 0) <= 0) return "请填写有效的当前持有数 / 份额"
+  if (Number(form.units || 0) <= 0) return "请填写有效的当前持有数量 / 份额"
   if (form.dca_enabled && Number(form.dca_rule.amount || 0) <= 0) return "启用定投时，每次定投金额必须大于 0"
   return null
 }
@@ -289,7 +290,7 @@ function describeDca(rule?: UserAssetDcaRule | null) {
   }
 
   const weekday = weeklyOptions.find((item) => item.value === String(rule.weekday ?? 3))?.label || "周四"
-  return `${weekday} · ${formatCurrency(rule.amount || 0)}`
+  return `${weekday} / ${formatCurrency(rule.amount || 0)}`
 }
 
 function renderPendingDcaDescription(pending?: UserAssetPendingDca | null) {
@@ -302,10 +303,10 @@ function renderPendingDcaDescription(pending?: UserAssetPendingDca | null) {
     pending.estimated_units > 0
 
   if (!estimateReady) {
-    return `已于 ${pending.execution_date} 发起，预计 ${pending.confirmation_date} 确认；${pending.price_basis_date} 净值待公布，确认后再开始计算收益`
+    return `已于 ${pending.execution_date} 发起，预计 ${pending.confirmation_date} 确认，${pending.price_basis_date} 净值待公布，确认后再开始计算收益。`
   }
 
-  return `已于 ${pending.execution_date} 发起，预计 ${pending.confirmation_date} 确认；按 ${pending.price_basis_date} 净值 ${pending.estimated_price!.toFixed(4)} 预计确认 ${formatPendingQuantity(pending.estimated_units)} 份，收益从确认后开始计算`
+  return `已于 ${pending.execution_date} 发起，预计 ${pending.confirmation_date} 确认，按 ${pending.price_basis_date} 净值 ${pending.estimated_price!.toFixed(4)} 预计确认 ${formatPendingQuantity(pending.estimated_units)} 份，收益从确认后开始计算。`
 }
 
 function AssetTypeField({
@@ -351,8 +352,7 @@ function AssetIdentityEditor({
       <div className="flex flex-col gap-1">
         <div className="text-sm font-medium text-foreground">资产信息</div>
         <p className="text-sm leading-7 text-foreground/66">
-          资产类型会影响估值时优先调用的数据源。场外基金建议选择“场外基金”，ETF 和 LOF 建议选择“场内 ETF / LOF”。
-        </p>
+          资产类型会影响估值时优先调用的数据源。场外基金建议选择“场外基金”，ETF 和 LOF 建议选择“场内 ETF / LOF”。</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -368,7 +368,7 @@ function AssetIdentityEditor({
         <div className="space-y-2">
           <Label>资产名称</Label>
           <Input
-            placeholder="如 博时黄金ETF联接C"
+            placeholder="如 博时黄金 ETF 联接 C"
             value={form.asset_name}
             onChange={(event) => onChange((prev) => ({ ...prev, asset_name: event.target.value }))}
           />
@@ -378,6 +378,51 @@ function AssetIdentityEditor({
           value={form.asset_type}
           onValueChange={(value) => onChange((prev) => ({ ...prev, asset_type: value }))}
         />
+      </div>
+    </div>
+  )
+}
+
+function HoldingEditor({
+  form,
+  onChange,
+  title = "当前持仓",
+  description = "修改后会按新的成本和份额重新计算持仓收益，保存前可以在这里一次性确认。",
+}: {
+  form: FormState
+  onChange: (updater: (prev: FormState) => FormState) => void
+  title?: string
+  description?: string
+}) {
+  return (
+    <div className="data-panel space-y-4 rounded-2xl p-5">
+      <div className="flex flex-col gap-1">
+        <div className="text-sm font-medium text-foreground">{title}</div>
+        <p className="text-sm leading-7 text-foreground/66">{description}</p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label>当前持仓成本价</Label>
+          <Input
+            type="number"
+            step="0.0001"
+            placeholder="1.1326"
+            value={form.avg_cost}
+            onChange={(event) => onChange((prev) => ({ ...prev, avg_cost: event.target.value }))}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label>当前持有数量 / 份额</Label>
+          <Input
+            type="number"
+            step="0.0001"
+            placeholder="2648.88"
+            value={form.units}
+            onChange={(event) => onChange((prev) => ({ ...prev, units: event.target.value }))}
+          />
+        </div>
       </div>
     </div>
   )
@@ -409,8 +454,7 @@ function DcaEditor({
         <div className="space-y-1">
           <div className="text-sm font-medium text-foreground/80">纳入定投补算</div>
           <div className="text-sm leading-7 text-foreground/66">
-            开启后，系统会按设定的频率和金额自动补算；遇到非交易日会顺延到下一个交易日。
-          </div>
+            开启后，系统会按设定的频率和金额自动补算；遇到非交易日会顺延到下一个交易日。</div>
         </div>
       </label>
 
@@ -429,16 +473,16 @@ function DcaEditor({
                   },
                 }))
               }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="选择频率" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="weekly">每周</SelectItem>
-                <SelectItem value="monthly">每月</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="选择频率" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="weekly">每周</SelectItem>
+                  <SelectItem value="monthly">每月</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
           <div className="space-y-2">
             <Label>{form.dca_rule.frequency === "weekly" ? "执行日" : "每月几号"}</Label>
@@ -507,9 +551,73 @@ function DcaEditor({
         </div>
       ) : (
         <div className="data-empty data-empty-compact text-sm leading-7 text-foreground/66">
-          当前只会跟踪这笔持仓的收益变化，不会自动生成定投记录。
-        </div>
+          当前只会跟踪这笔持仓的收益变化，不会自动生成定投记录。</div>
       )}
+    </div>
+  )
+}
+
+function AssetEditSummary({
+  asset,
+  form,
+}: {
+  asset: UserAssetRow
+  form: FormState
+}) {
+  const resolvedType = inferAssetType(form.ticker, form.asset_name, form.asset_type)
+  const estimatedPositionCost = Number(form.avg_cost || 0) * Number(form.units || 0)
+  const dcaSummary = form.dca_enabled ? describeDca(buildDcaRuleForSubmit(form)) : "未启用"
+
+  return (
+    <div className="overflow-hidden rounded-[28px] border border-[rgba(var(--rgb-ink),0.08)] bg-[linear-gradient(135deg,rgba(var(--rgb-ochre),0.14),rgba(var(--rgb-xuan),0.92))] p-5 shadow-[0_16px_34px_rgba(41,33,25,0.08)]">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">修改资产</Badge>
+            <Badge variant="outline">{assetTypeLabel(resolvedType)}</Badge>
+            <Badge variant="outline">{valuationHint(resolvedType)}</Badge>
+          </div>
+
+          <div>
+            <div className="text-xl font-semibold tracking-tight text-foreground">
+              {form.asset_name.trim() || asset.asset_name || asset.ticker}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-foreground/66">
+              <span>{form.ticker.trim() || asset.ticker}</span>
+              {asset.pending_dca ? (
+                <Badge className="surface-tone-ochre hover:bg-[rgba(var(--rgb-ochre),0.14)]">有待确认定投</Badge>
+              ) : null}
+            </div>
+          </div>
+
+          <p className="max-w-2xl text-sm leading-7 text-foreground/72">
+            编辑入口固定在左侧资产信息区域，点击后会在这个弹窗里集中修改资产信息、持仓成本、份额和定投设置，不再需要横向滚动到表格最右侧处理。          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[420px]">
+          <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.7)] p-4 backdrop-blur-sm">
+            <div className="text-[0.72rem] font-medium uppercase tracking-[0.2em] text-foreground/48">当前市值</div>
+            <div className="mt-2 text-lg font-semibold tabular-nums text-foreground">{formatCurrency(asset.market_value)}</div>
+            <div className="mt-1 text-xs text-foreground/60">{asset.last_price_date || "等待最新估值"}</div>
+          </div>
+
+          <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.7)] p-4 backdrop-blur-sm">
+            <div className="text-[0.72rem] font-medium uppercase tracking-[0.2em] text-foreground/48">持仓投入</div>
+            <div className="mt-2 text-lg font-semibold tabular-nums text-foreground">
+              {estimatedPositionCost > 0 ? formatCurrency(estimatedPositionCost) : "-"}
+            </div>
+            <div className="mt-1 text-xs text-foreground/60">按当前输入的成本和份额预估</div>
+          </div>
+
+          <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.7)] p-4 backdrop-blur-sm">
+            <div className="text-[0.72rem] font-medium uppercase tracking-[0.2em] text-foreground/48">定投状态</div>
+            <div className="mt-2 text-sm font-medium text-foreground">{dcaSummary}</div>
+            <div className={cn("mt-2 text-xs", signedClass(asset.total_return))}>
+              当前累计收益 {formatSignedCurrency(asset.total_return)}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -520,13 +628,18 @@ export function PersonalAssetsPanel() {
   const [transactions, setTransactions] = useState<UserAssetTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [reconciling, setReconciling] = useState(false)
+  const [importingCsv, setImportingCsv] = useState(false)
   const [savingDialog, setSavingDialog] = useState(false)
-  const [savingInline, setSavingInline] = useState(false)
-  const [editingTicker, setEditingTicker] = useState<string | null>(null)
-  const [inlineForm, setInlineForm] = useState<FormState | null>(null)
+  const [savingEditDialog, setSavingEditDialog] = useState(false)
   const [transactionTicker, setTransactionTicker] = useState<string | null>(null)
+  const [expandedAssetTicker, setExpandedAssetTicker] = useState<string | null>(null)
+  const [showAllMobileTransactions, setShowAllMobileTransactions] = useState(false)
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [dialogForm, setDialogForm] = useState<FormState>(createEmptyForm())
+  const [editForm, setEditForm] = useState<FormState>(createEmptyForm())
+  const [editingAsset, setEditingAsset] = useState<UserAssetRow | null>(null)
+  const [assetPendingDelete, setAssetPendingDelete] = useState<UserAssetRow | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [searchResults, setSearchResults] = useState<AssetSearchResult[]>([])
   const [searching, setSearching] = useState(false)
@@ -547,10 +660,10 @@ export function PersonalAssetsPanel() {
   }, [user?.username])
 
   const loadOverview = useCallback(
-    async (syncDca = true, signal?: AbortSignal) => {
+    async (syncDca = false, signal?: AbortSignal, refreshMarket = false) => {
       setLoading(true)
       try {
-        const result = await apiClient.user.assets.getOverview(syncDca, signal ? { signal } : undefined)
+        const result = await apiClient.user.assets.getOverview(syncDca, signal ? { signal } : undefined, refreshMarket)
         setOverview(result)
         writeCachedOverview(result, user?.username)
         setTransactionTicker((current) => current ?? result.assets[0]?.ticker ?? null)
@@ -627,21 +740,15 @@ export function PersonalAssetsPanel() {
   const assets = overview?.assets ?? []
   const summary = overview?.summary
   const isInitialLoading = loading && !overview
-
-  const isEditing = useCallback(
-    (ticker: string) => editingTicker === ticker && inlineForm !== null,
-    [editingTicker, inlineForm]
-  )
-
-  const startEdit = (asset: UserAssetRow) => {
-    setEditingTicker(asset.ticker)
-    setInlineForm(createFormFromAsset(asset))
-  }
-
-  const cancelEdit = () => {
-    setEditingTicker(null)
-    setInlineForm(null)
-  }
+  const mobileTransactionGroups = useMemo(() => {
+    const rows = showAllMobileTransactions ? transactions : transactions.slice(0, 8)
+    const groups = new Map<string, UserAssetTransaction[]>()
+    for (const item of rows) {
+      const key = item.trade_date || "未记录日期"
+      groups.set(key, [...(groups.get(key) || []), item])
+    }
+    return Array.from(groups.entries()).map(([date, rows]) => ({ date, rows }))
+  }, [showAllMobileTransactions, transactions])
 
   const openAddDialog = () => {
     setDialogForm(createEmptyForm())
@@ -651,15 +758,26 @@ export function PersonalAssetsPanel() {
     setIsAddDialogOpen(true)
   }
 
-  const handleDelete = async (ticker: string) => {
-    if (!window.confirm(`确认删除 ${ticker} 的个人资产记录吗？`)) return
+  const closeEditDialog = () => {
+    setIsEditDialogOpen(false)
+    setEditingAsset(null)
+    setEditForm(createEmptyForm())
+  }
 
+  const openEditDialog = (asset: UserAssetRow) => {
+    setEditingAsset(asset)
+    setEditForm(createFormFromAsset(asset))
+    setIsEditDialogOpen(true)
+  }
+
+  const handleDelete = async (ticker: string) => {
     try {
       await apiClient.user.assets.remove(ticker)
       await loadOverview(false)
       await loadTransactions(transactionTicker === ticker ? undefined : transactionTicker)
       if (transactionTicker === ticker) setTransactionTicker(null)
-      if (editingTicker === ticker) cancelEdit()
+      if (editingAsset?.ticker === ticker) closeEditDialog()
+      setAssetPendingDelete(null)
       pushMessage("success", "个人资产已删除")
     } catch (error) {
       console.error(error)
@@ -680,6 +798,27 @@ export function PersonalAssetsPanel() {
       pushMessage("error", `执行定投补算失败：${String(error)}`)
     } finally {
       setReconciling(false)
+    }
+  }
+
+  const handleImportCsv = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) return
+    setImportingCsv(true)
+    try {
+      const result = await apiClient.user.assets.importCsv(file)
+      setOverview(result)
+      writeCachedOverview(result, user?.username)
+      setTransactionTicker(result.assets[0]?.ticker ?? null)
+      await loadTransactions(result.assets[0]?.ticker ?? null)
+      const errorText = result.errors.length > 0 ? `，${result.errors.length} 行未导入` : ""
+      pushMessage("success", `已从 CSV 导入 ${result.imported_count} 条个人资产${errorText}`)
+    } catch (error) {
+      console.error(error)
+      pushMessage("error", `CSV 导入失败：${String(error)}`)
+    } finally {
+      setImportingCsv(false)
     }
   }
 
@@ -717,30 +856,30 @@ export function PersonalAssetsPanel() {
     }
   }
 
-  const handleConfirmInlineEdit = async (originalTicker: string) => {
-    if (!inlineForm) return
+  const handleSaveEditDialog = async () => {
+    if (!editingAsset) return
 
-    const error = validateForm(inlineForm)
+    const error = validateForm(editForm)
     if (error) {
       pushMessage("error", error)
       return
     }
 
-    setSavingInline(true)
+    setSavingEditDialog(true)
     try {
-      const payload = buildPayload(inlineForm)
-      const result = await apiClient.user.assets.update(originalTicker, payload)
+      const payload = buildPayload(editForm)
+      const result = await apiClient.user.assets.update(editingAsset.ticker, payload)
       setOverview(result)
       writeCachedOverview(result, user?.username)
       setTransactionTicker(payload.ticker)
       await loadTransactions(payload.ticker)
       pushMessage("success", "个人资产已更新，并按新数据重新计算")
-      cancelEdit()
+      closeEditDialog()
     } catch (error) {
       console.error(error)
       pushMessage("error", `更新个人资产失败：${String(error)}`)
     } finally {
-      setSavingInline(false)
+      setSavingEditDialog(false)
     }
   }
 
@@ -765,7 +904,9 @@ export function PersonalAssetsPanel() {
       {
         label: "本周变化",
         value: summary ? formatSignedCurrency(summary.week_change) : "-",
-        extra: summary ? `日 ${formatSignedCurrency(summary.day_change)}` : "-",
+        extra: summary
+          ? `${summary.week_change_pct.toFixed(2)}% / 日 ${formatSignedCurrency(summary.day_change)}（${summary.day_change_pct.toFixed(2)}%）`
+          : "-",
         className: summary ? signedClass(summary.week_change) : "",
       },
     ],
@@ -773,7 +914,7 @@ export function PersonalAssetsPanel() {
   )
 
   const selectedSearchSummary = selectedSearchAsset
-    ? `${selectedSearchAsset.ticker} · ${assetTypeLabel(selectedSearchAsset.asset_type)}`
+    ? `${selectedSearchAsset.ticker} / ${assetTypeLabel(selectedSearchAsset.asset_type)}`
     : null
 
   return (
@@ -803,17 +944,30 @@ export function PersonalAssetsPanel() {
       ) : null}
 
       <GlassCard className="space-y-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="space-y-1">
             <h2 className="section-title flex items-center gap-2">
               个人资产
               <Badge variant="secondary">{assets.length}</Badge>
-              {loading ? <Badge variant="outline">正在读取</Badge> : null}
+              {loading ? <Badge variant="outline">同步中</Badge> : null}
             </h2>
+            <p className="max-w-2xl text-sm leading-7 text-foreground/66">
+              编辑入口已经固定到资产信息区，桌面端突出主操作，移动端改成卡片布局，“修改资产”和“查看流水”的优先级也重新梳理过。            </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => loadOverview(true)} disabled={loading}>
+            <label className="inline-flex h-9 cursor-pointer items-center justify-center rounded-xl border border-[rgba(var(--rgb-ink),0.1)] bg-[rgba(var(--rgb-xuan),0.84)] px-5 py-2 text-sm font-medium tracking-wide text-foreground/80 shadow-sm transition hover:bg-[rgba(var(--rgb-xuan),0.96)]">
+              <Upload className="mr-2 h-4 w-4" />
+              {importingCsv ? "导入中…" : "CSV 导入"}
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="sr-only"
+                disabled={importingCsv}
+                onChange={(event) => void handleImportCsv(event)}
+              />
+            </label>
+            <Button variant="outline" onClick={() => loadOverview(false, undefined, true)} disabled={loading}>
               <RefreshCcw className={cn("mr-2 h-4 w-4", loading && "animate-spin")} />
               刷新估值
             </Button>
@@ -828,249 +982,333 @@ export function PersonalAssetsPanel() {
           </div>
         </div>
 
-        <div className="data-panel-muted relative overflow-hidden rounded-2xl">
-          <div className="overflow-x-auto">
-            <Table className="min-w-[1260px]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="sticky left-0 z-20 bg-background/90 backdrop-blur">资产</TableHead>
-                  <TableHead className="text-right">成本价</TableHead>
-                <TableHead className="text-right">持有数 / 份额</TableHead>
-                <TableHead>定投</TableHead>
-                <TableHead className="text-right">当前净值 / 价格</TableHead>
-                <TableHead className="text-right">当前市值</TableHead>
-                <TableHead className="text-right">累计收益</TableHead>
-                <TableHead className="text-right">日</TableHead>
-                <TableHead className="text-right">周</TableHead>
-                <TableHead className="text-right">月</TableHead>
-                <TableHead className="text-right">年</TableHead>
-                <TableHead className="text-right">操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isInitialLoading ? (
-                <TableRow>
-                  <TableCell colSpan={12} className="h-32 text-center">
-                    <div className="flex flex-col items-center gap-3 py-4">
-                      <RefreshCcw className="h-5 w-5 animate-spin text-foreground/56" />
-                      <div className="space-y-1">
-                        <div className="text-sm font-medium text-foreground/80">正在读取已保存的个人资产</div>
-                        <div className="text-sm leading-7 text-foreground/66">如果你之前已经录入过资产，请稍等片刻，系统会按最新净值重新计算。</div>
+        <div className="space-y-3 lg:hidden">
+          {isInitialLoading ? (
+            <div className="data-panel-muted rounded-[28px] px-5 py-8 text-center">
+              <RefreshCcw className="mx-auto h-5 w-5 animate-spin text-foreground/56" />
+              <div className="mt-3 text-sm font-medium text-foreground/80">正在读取已保存的个人资产</div>
+              <div className="mt-2 text-sm leading-7 text-foreground/66">系统会按最新净值刷新你的持仓表现。</div>
+            </div>
+          ) : assets.length === 0 ? (
+            <div className="data-panel-muted rounded-[28px] px-5 py-8 text-center">
+              <div className="text-sm leading-7 text-foreground/66">还没有个人资产记录，现在可以直接添加第一笔。</div>
+              <Button className="mt-4" onClick={openAddDialog}>
+                <Plus className="mr-2 h-4 w-4" />
+                添加个人资产
+              </Button>
+            </div>
+          ) : (
+            assets.map((asset) => {
+              const resolvedType = inferAssetType(asset.ticker, asset.asset_name, asset.asset_type)
+              const pendingDcaDescription = renderPendingDcaDescription(asset.pending_dca)
+              const showingTransactions = transactionTicker === asset.ticker
+              const detailsExpanded = expandedAssetTicker === asset.ticker
+
+              return (
+                <motion.div
+                  key={`${asset.ticker}-card`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ type: "spring", bounce: 0, duration: 0.28 }}
+                  whileHover={{ y: -1 }}
+                  className={cn(
+                    "group/asset-card relative overflow-hidden rounded-[28px] border p-4 shadow-[0_14px_34px_rgba(41,33,25,0.06)] transition-[transform,border-color,background-color,box-shadow] duration-300",
+                    showingTransactions
+                      ? "border-[rgba(var(--rgb-ochre),0.24)] bg-[linear-gradient(160deg,rgba(var(--rgb-ochre),0.12),rgba(var(--rgb-xuan),0.96))] shadow-[0_18px_40px_rgba(41,33,25,0.09)]"
+                      : "border-[rgba(var(--rgb-ink),0.08)] bg-[rgba(var(--rgb-xuan),0.88)] hover:border-[rgba(var(--rgb-ink),0.14)] hover:bg-[rgba(var(--rgb-xuan),0.96)] hover:shadow-[0_18px_40px_rgba(41,33,25,0.08)]"
+                  )}
+                >
+                  <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-[rgba(var(--rgb-ochre),0.6)] to-transparent opacity-0 transition-opacity duration-300 group-hover/asset-card:opacity-100" />
+
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 text-left transition-colors hover:text-foreground"
+                        onClick={() => setTransactionTicker(asset.ticker)}
+                      >
+                        <div className="truncate text-base font-medium text-foreground">{asset.asset_name || asset.ticker}</div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[0.82rem] text-foreground/66">
+                          <span>{asset.ticker}</span>
+                          <Badge variant="outline">{assetTypeLabel(resolvedType)}</Badge>
+                          <span>{valuationHint(resolvedType)}</span>
+                          {asset.dca_rule?.enabled ? <Badge variant="secondary">定投中</Badge> : null}
+                        </div>
+                      </button>
+                      <Badge variant={showingTransactions ? "secondary" : "outline"} className="shrink-0">
+                        {showingTransactions ? "流水已锁定" : "查看流水"}
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.72)] px-3 py-3">
+                        <div className="text-[0.72rem] uppercase tracking-[0.18em] text-foreground/48">当前市值</div>
+                        <div className="mt-2 text-lg font-semibold tabular-nums text-foreground">{formatCurrency(asset.market_value)}</div>
+                        <div className="mt-1 text-xs text-foreground/56">{asset.last_price_date || "等待最新估值"}</div>
+                      </div>
+                      <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.72)] px-3 py-3">
+                        <div className="text-[0.72rem] uppercase tracking-[0.18em] text-foreground/48">累计收益</div>
+                        <div className={cn("mt-2 text-lg font-semibold tabular-nums", signedClass(asset.total_return))}>
+                          {formatSignedCurrency(asset.total_return)}
+                        </div>
+                        <div className="mt-1 text-xs text-foreground/56">{asset.total_return_pct.toFixed(2)}%</div>
                       </div>
                     </div>
-                  </TableCell>
-                </TableRow>
-              ) : assets.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={12} className="h-32 text-center">
-                    <div className="space-y-3 py-4">
-                      <div className="text-sm leading-7 text-foreground/66">还没有个人资产记录，现在可以直接添加第一笔。</div>
-                      <Button onClick={openAddDialog}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        添加个人资产
+
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.56)] px-3 py-2">
+                        <div className="text-xs text-foreground/48">日变化</div>
+                        <div className={cn("mt-1 font-semibold tabular-nums", signedClass(asset.day_change))}>
+                          {formatSignedCurrency(asset.day_change)}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.56)] px-3 py-2">
+                        <div className="text-xs text-foreground/48">周变化</div>
+                        <div className={cn("mt-1 font-semibold tabular-nums", signedClass(asset.week_change))}>
+                          {formatSignedCurrency(asset.week_change)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {detailsExpanded ? (
+                      <div className="rounded-[24px] border border-[rgba(var(--rgb-ink),0.08)] bg-[rgba(var(--rgb-xuan),0.72)] px-4 py-3">
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <div>
+                            <div className="text-xs text-foreground/48">成本价</div>
+                            <div className="mt-1 font-mono tabular-nums">{asset.avg_cost.toFixed(4)}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-foreground/48">持有份额</div>
+                            <div className="mt-1 font-mono tabular-nums">{formatQuantity(asset.units)}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-foreground/48">当前净值</div>
+                            <div className="mt-1 font-mono tabular-nums">{asset.current_price > 0 ? asset.current_price.toFixed(4) : "-"}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-foreground/48">定投状态</div>
+                            <div className="mt-1">{asset.dca_rule?.enabled ? "已启用" : "未启用"}</div>
+                          </div>
+                        </div>
+                        <div className="mt-3 text-sm leading-7 text-foreground/66">{describeDca(asset.dca_rule)}</div>
+                        {asset.pending_dca && pendingDcaDescription ? (
+                          <div className="surface-tone-ochre mt-3 rounded-2xl px-3 py-2 text-sm leading-7">
+                            {pendingDcaDescription}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button className="h-10 rounded-2xl" onClick={() => openEditDialog(asset)}>
+                        <PencilLine className="mr-2 h-4 w-4" />
+                        修改资产
+                      </Button>
+                      <Button
+                        variant={showingTransactions ? "secondary" : "outline"}
+                        className="h-10 rounded-2xl"
+                        onClick={() => setTransactionTicker(asset.ticker)}
+                      >
+                        {showingTransactions ? "正在查看流水" : "查看流水"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="h-10 rounded-2xl"
+                        onClick={() =>
+                          setExpandedAssetTicker((current) => (current === asset.ticker ? null : asset.ticker))
+                        }
+                      >
+                        {detailsExpanded ? "收起详情" : "更多详情"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="h-10 rounded-2xl justify-center text-tone-cinnabar hover:bg-[rgba(var(--rgb-cinnabar),0.08)] hover:text-tone-cinnabar"
+                        onClick={() => setAssetPendingDelete(asset)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        删除资产
                       </Button>
                     </div>
-                  </TableCell>
+                  </div>
+                </motion.div>
+              )
+            })
+          )}
+        </div>
+
+        <div className="data-panel-muted relative hidden overflow-hidden rounded-[28px] lg:block">
+          <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-[rgba(var(--rgb-ochre),0.58)] to-transparent" />
+          <div className="overflow-x-auto">
+            <Table className="min-w-[1320px]">
+              <TableHeader>
+                <TableRow className="border-b border-[rgba(var(--rgb-ink),0.08)]">
+                  <TableHead className="sticky left-0 z-20 bg-background/95 backdrop-blur">资产</TableHead>
+                  <TableHead className="text-right">成本价</TableHead>
+                  <TableHead className="text-right">持有数 / 份额</TableHead>
+                  <TableHead>定投设置</TableHead>
+                  <TableHead className="text-right">当前净值 / 价格</TableHead>
+                  <TableHead className="text-right">当前市值</TableHead>
+                  <TableHead className="text-right">累计收益</TableHead>
+                  <TableHead className="text-right">日</TableHead>
+                  <TableHead className="text-right">周</TableHead>
+                  <TableHead className="text-right">月</TableHead>
+                  <TableHead className="text-right">年</TableHead>
+                  <TableHead className="text-right">删除</TableHead>
                 </TableRow>
-              ) : (
-                <AnimatePresence>
-                  {assets.map((asset) => {
-                    const editingThisRow = isEditing(asset.ticker)
-                    const draft = editingThisRow && inlineForm ? inlineForm : null
+              </TableHeader>
+              <TableBody>
+                {isInitialLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={12} className="h-32 text-center">
+                      <div className="flex flex-col items-center gap-3 py-4">
+                        <RefreshCcw className="h-5 w-5 animate-spin text-foreground/56" />
+                        <div className="space-y-1">
+                          <div className="text-sm font-medium text-foreground/80">正在读取已保存的个人资产</div>
+                          <div className="text-sm leading-7 text-foreground/66">如果你之前已经录入过资产，请稍等片刻，系统会按最新净值重新计算。</div>
+                        </div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : assets.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={12} className="h-32 text-center">
+                      <div className="space-y-3 py-4">
+                        <div className="text-sm leading-7 text-foreground/66">还没有个人资产记录，现在可以直接添加第一笔。</div>
+                        <Button onClick={openAddDialog}>
+                          <Plus className="mr-2 h-4 w-4" />
+                          添加个人资产
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  assets.map((asset) => {
                     const resolvedType = inferAssetType(asset.ticker, asset.asset_name, asset.asset_type)
                     const pendingDcaDescription = renderPendingDcaDescription(asset.pending_dca)
+                    const showingTransactions = transactionTicker === asset.ticker
 
                     return (
-                      <Fragment key={asset.ticker}>
-                        <MotionTableRow
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95 }}
-                          transition={{ type: "spring", bounce: 0, duration: 0.3 }}
-                          className={editingThisRow ? "bg-black/[0.02]" : ""}
-                        >
-                          <TableCell className="sticky left-0 z-20 bg-background/90 backdrop-blur">
-                            <button
-                            type="button"
-                            className="text-left transition-colors hover:text-foreground"
-                            onClick={() => setTransactionTicker(asset.ticker)}
+                      <MotionTableRow
+                        key={asset.ticker}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ type: "spring", bounce: 0, duration: 0.3 }}
+                        className={cn(
+                          "group/asset-row border-b border-[rgba(var(--rgb-ink),0.05)] transition-colors duration-200 hover:bg-[rgba(var(--rgb-ink),0.02)]",
+                          showingTransactions && "bg-[linear-gradient(90deg,rgba(var(--rgb-ochre),0.08),rgba(var(--rgb-xuan),0.26))]"
+                        )}
+                      >
+                        <TableCell className="sticky left-0 z-20 bg-background/92 p-0 align-top backdrop-blur">
+                          <div
+                            className={cn(
+                              "m-2 rounded-[24px] border px-4 py-4 transition-[border-color,background-color,box-shadow] duration-200",
+                              showingTransactions
+                                ? "border-[rgba(var(--rgb-ochre),0.24)] bg-[linear-gradient(150deg,rgba(var(--rgb-ochre),0.12),rgba(var(--rgb-xuan),0.95))] shadow-[0_16px_34px_rgba(41,33,25,0.08)]"
+                                : "border-[rgba(var(--rgb-ink),0.07)] bg-[rgba(var(--rgb-xuan),0.86)] group-hover/asset-row:border-[rgba(var(--rgb-ink),0.12)] group-hover/asset-row:bg-[rgba(var(--rgb-xuan),0.96)]"
+                            )}
                           >
-                            <div className="font-medium">{asset.asset_name || asset.ticker}</div>
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[0.82rem] text-foreground/66">
-                              <span>{asset.ticker}</span>
-                              <Badge variant="outline">{assetTypeLabel(resolvedType)}</Badge>
-                              <span>{valuationHint(resolvedType)}</span>
-                              {asset.dca_rule?.enabled ? <Badge variant="secondary">定投中</Badge> : null}
-                              {asset.pending_dca ? (
-                                <Badge className="surface-tone-ochre hover:bg-[rgba(var(--rgb-ochre),0.14)]">
-                                  已定投，份额待确认
-                                </Badge>
-                              ) : null}
-                            </div>
-                          </button>
-                        </TableCell>
-
-                        <TableCell className="text-right font-mono tabular-nums">
-                          {draft ? (
-                            <Input
-                              type="number"
-                              step="0.0001"
-                              value={draft.avg_cost}
-                              onChange={(event) =>
-                                setInlineForm((prev) => (prev ? { ...prev, avg_cost: event.target.value } : prev))
-                              }
-                              className="ml-auto h-9 w-28 text-right"
-                            />
-                          ) : (
-                            asset.avg_cost.toFixed(4)
-                          )}
-                        </TableCell>
-
-                        <TableCell className="text-right font-mono tabular-nums">
-                          {draft ? (
-                            <Input
-                              type="number"
-                              step="0.0001"
-                              value={draft.units}
-                              onChange={(event) =>
-                                setInlineForm((prev) => (prev ? { ...prev, units: event.target.value } : prev))
-                              }
-                              className="ml-auto h-9 w-32 text-right"
-                            />
-                          ) : (
-                            formatQuantity(asset.units)
-                          )}
-                        </TableCell>
-
-                        <TableCell>
-                          {draft ? (
-                            <div className="space-y-1">
-                              <Badge variant={draft.dca_enabled ? "secondary" : "outline"}>
-                                {draft.dca_enabled ? "定投已开启" : "未启用"}
-                              </Badge>
-                              <div className="text-sm leading-7 text-foreground/66">
-                                {draft.dca_enabled ? describeDca(buildDcaRuleForSubmit(draft)) : "在下方编辑定投设置"}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="space-y-1">
-                              <Badge variant={asset.dca_rule?.enabled ? "secondary" : "outline"}>
-                                {asset.dca_rule?.enabled ? "定投中" : "未启用"}
-                              </Badge>
-                              <div className="text-sm leading-7 text-foreground/66">{describeDca(asset.dca_rule)}</div>
-                              {asset.pending_dca && pendingDcaDescription ? (
-                                <div className="surface-tone-ochre rounded-xl px-3 py-2 text-sm leading-7">
-                                  {pendingDcaDescription}
+                            <button
+                              type="button"
+                              className="w-full text-left transition-colors hover:text-foreground"
+                              onClick={() => setTransactionTicker(asset.ticker)}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="font-medium text-foreground">{asset.asset_name || asset.ticker}</div>
+                                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[0.82rem] text-foreground/66">
+                                    <span>{asset.ticker}</span>
+                                    <Badge variant="outline">{assetTypeLabel(resolvedType)}</Badge>
+                                    <span>{valuationHint(resolvedType)}</span>
+                                    {asset.dca_rule?.enabled ? <Badge variant="secondary">定投中</Badge> : null}
+                                    {asset.pending_dca ? (
+                                      <Badge className="surface-tone-ochre hover:bg-[rgba(var(--rgb-ochre),0.14)]">
+                                        已定投，份额待确认
+                                      </Badge>
+                                    ) : null}
+                                  </div>
                                 </div>
-                              ) : null}
+                                <Badge variant={showingTransactions ? "secondary" : "outline"} className="shrink-0">
+                                  {showingTransactions ? "流水展开中" : "点击查看流水"}
+                                </Badge>
+                              </div>
+                            </button>
+
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              <Button size="sm" className="h-8 px-3.5" onClick={() => openEditDialog(asset)}>
+                                <PencilLine className="mr-2 h-3.5 w-3.5" />
+                                修改资产
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant={showingTransactions ? "secondary" : "outline"}
+                                className="h-8 px-3.5"
+                                onClick={() => setTransactionTicker(asset.ticker)}
+                              >
+                                {showingTransactions ? "正在查看流水" : "查看流水"}
+                              </Button>
                             </div>
-                          )}
+                          </div>
                         </TableCell>
 
-                        <TableCell className="text-right font-mono tabular-nums">
+                        <TableCell className="py-5 text-right font-mono tabular-nums">{asset.avg_cost.toFixed(4)}</TableCell>
+                        <TableCell className="py-5 text-right font-mono tabular-nums">{formatQuantity(asset.units)}</TableCell>
+                        <TableCell className="py-5">
+                          <div className="max-w-[240px] space-y-2">
+                            <Badge variant={asset.dca_rule?.enabled ? "secondary" : "outline"}>
+                              {asset.dca_rule?.enabled ? "定投中" : "未启用"}
+                            </Badge>
+                            <div className="text-sm leading-7 text-foreground/66">{describeDca(asset.dca_rule)}</div>
+                            {asset.pending_dca && pendingDcaDescription ? (
+                              <div className="surface-tone-ochre rounded-xl px-3 py-2 text-sm leading-7">
+                                {pendingDcaDescription}
+                              </div>
+                            ) : null}
+                          </div>
+                        </TableCell>
+
+                        <TableCell className="py-5 text-right font-mono tabular-nums">
                           {asset.current_price > 0 ? asset.current_price.toFixed(4) : "-"}
                           <div className="text-[0.82rem] text-foreground/66">{asset.last_price_date || "暂无估值日"}</div>
                         </TableCell>
-
-                        <TableCell className="text-right tabular-nums">{formatCurrency(asset.market_value)}</TableCell>
-
-                        <TableCell className={cn("text-right font-medium tabular-nums", signedClass(asset.total_return))}>
+                        <TableCell className="py-5 text-right tabular-nums">{formatCurrency(asset.market_value)}</TableCell>
+                        <TableCell className={cn("py-5 text-right font-medium tabular-nums", signedClass(asset.total_return))}>
                           {formatSignedCurrency(asset.total_return)}
                           <div className="text-[0.82rem] text-foreground/66">{asset.total_return_pct.toFixed(2)}%</div>
                         </TableCell>
-
-                        <TableCell className={cn("text-right tabular-nums", signedClass(asset.day_change))}>
+                        <TableCell className={cn("py-5 text-right tabular-nums", signedClass(asset.day_change))}>
                           {formatSignedCurrency(asset.day_change)}
                         </TableCell>
-                        <TableCell className={cn("text-right tabular-nums", signedClass(asset.week_change))}>
+                        <TableCell className={cn("py-5 text-right tabular-nums", signedClass(asset.week_change))}>
                           {formatSignedCurrency(asset.week_change)}
                         </TableCell>
-                        <TableCell className={cn("text-right tabular-nums", signedClass(asset.month_change))}>
+                        <TableCell className={cn("py-5 text-right tabular-nums", signedClass(asset.month_change))}>
                           {formatSignedCurrency(asset.month_change)}
                         </TableCell>
-                        <TableCell className={cn("text-right tabular-nums", signedClass(asset.year_change))}>
+                        <TableCell className={cn("py-5 text-right tabular-nums", signedClass(asset.year_change))}>
                           {formatSignedCurrency(asset.year_change)}
                         </TableCell>
 
-                        <TableCell className="text-right">
-                          {draft ? (
-                            <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="sm" onClick={cancelEdit}>
-                                取消
-                              </Button>
-                              <Button size="sm" onClick={() => handleConfirmInlineEdit(asset.ticker)} disabled={savingInline}>
-                                {savingInline ? <RefreshCcw className="mr-2 h-4 w-4 animate-spin" /> : null}
-                                确认更新
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="flex justify-end gap-1">
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-8 w-8"
-                                onClick={() => startEdit(asset)}
-                                aria-label={`编辑 ${asset.ticker}`}
-                                title="编辑资产"
-                              >
-                                <PencilLine className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-8 w-8 text-tone-cinnabar hover:bg-[rgba(var(--rgb-cinnabar),0.1)] hover:text-tone-cinnabar"
-                                aria-label={`删除 ${asset.ticker}`}
-                                title="删除资产"
-                                onClick={() => handleDelete(asset.ticker)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          )}
+                        <TableCell className="py-5 text-right align-top">
+                          <div className="flex justify-end">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 px-3 text-tone-cinnabar hover:bg-[rgba(var(--rgb-cinnabar),0.1)] hover:text-tone-cinnabar"
+                              aria-label={`删除 ${asset.ticker}`}
+                              title="删除资产"
+                              onClick={() => setAssetPendingDelete(asset)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              删除
+                            </Button>
+                          </div>
                         </TableCell>
                       </MotionTableRow>
-
-                      {draft ? (
-                        <MotionTableRow 
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          transition={{ type: "spring", bounce: 0, duration: 0.3 }}
-                          className="bg-black/[0.02]"
-                        >
-                          <TableCell colSpan={12} className="px-5 py-4">
-                            <div className="data-panel space-y-4 rounded-2xl p-4">
-                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                  <div className="text-sm font-medium">编辑资产与定投</div>
-                                  <div className="text-sm leading-7 text-foreground/66">
-                                    资产代码、名称、类型、成本价、持有数和定投规则都可以在这里修改；确认后系统会按新数据重新计算。
-                                  </div>
-                                </div>
-                                <Badge variant="outline">{draft.ticker || asset.ticker}</Badge>
-                              </div>
-
-                              <AssetIdentityEditor
-                                form={draft}
-                                onChange={(updater) => setInlineForm((prev) => (prev ? updater(prev) : prev))}
-                              />
-
-                              <DcaEditor
-                                form={draft}
-                                onChange={(updater) => setInlineForm((prev) => (prev ? updater(prev) : prev))}
-                                dense
-                              />
-                            </div>
-                          </TableCell>
-                        </MotionTableRow>
-                      ) : null}
-                    </Fragment>
-                  )
-                })}
-                </AnimatePresence>
-              )}
-            </TableBody>
-          </Table>
+                    )
+                  })
+                )}
+              </TableBody>
+            </Table>
           </div>
         </div>
       </GlassCard>
@@ -1079,11 +1317,11 @@ export function PersonalAssetsPanel() {
         <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle>最近交易流水</CardTitle>
-            <CardDescription>展示手工重置、手动买卖和自动定投生成的记录。</CardDescription>
+            <CardDescription>展示手工录入、手动买卖和自动定投生成的记录。</CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant={transactionTicker === null ? "default" : "outline"} size="sm" onClick={() => setTransactionTicker(null)}>
-              全部
+              全部资产
             </Button>
             {assets.map((asset) => (
               <Button
@@ -1098,7 +1336,65 @@ export function PersonalAssetsPanel() {
           </div>
         </div>
 
-        <div className="data-panel-muted overflow-x-auto rounded-2xl">
+        <div className="space-y-3 lg:hidden">
+          {isInitialLoading ? (
+            <div className="data-panel-muted rounded-[24px] px-5 py-8 text-center text-sm text-foreground/66">
+              正在读取最近交易流水...
+            </div>
+          ) : transactions.length === 0 ? (
+            <div className="data-panel-muted rounded-[24px] px-5 py-8 text-center text-sm text-foreground/66">
+              暂无交易流水记录。
+            </div>
+          ) : (
+            <>
+              {mobileTransactionGroups.map((group) => (
+                <div key={`${group.date}-mobile-group`} className="space-y-2">
+                  <div className="sticky top-20 z-10 inline-flex rounded-full border border-border/60 bg-background/90 px-3 py-1 text-xs font-medium text-foreground/62 backdrop-blur">
+                    {group.date}
+                  </div>
+                  {group.rows.map((item) => (
+                    <div key={`${item.id}-mobile`} className="rounded-[24px] border border-[rgba(var(--rgb-ink),0.08)] bg-[rgba(var(--rgb-xuan),0.78)] p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-foreground">{item.ticker}</div>
+                          <div className="mt-1 text-xs text-foreground/56">来源 {item.source || "-"}</div>
+                        </div>
+                        <Badge variant="outline">{item.transaction_type}</Badge>
+                      </div>
+                      <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                        <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.72)] px-3 py-2">
+                          <div className="text-xs text-foreground/48">数量</div>
+                          <div className="mt-1 font-mono tabular-nums">{Number(item.quantity || 0).toFixed(2)}</div>
+                        </div>
+                        <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.72)] px-3 py-2">
+                          <div className="text-xs text-foreground/48">价格</div>
+                          <div className="mt-1 font-mono tabular-nums">{Number(item.price || 0).toFixed(4)}</div>
+                        </div>
+                        <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.72)] px-3 py-2">
+                          <div className="text-xs text-foreground/48">金额</div>
+                          <div className="mt-1 font-medium tabular-nums">{formatCurrency(Number(item.amount || 0))}</div>
+                        </div>
+                      </div>
+                      <div className="mt-3 text-xs leading-6 text-foreground/58">备注 {item.note || "-"}</div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              {transactions.length > 8 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setShowAllMobileTransactions((current) => !current)}
+                >
+                  {showAllMobileTransactions ? "收起交易流水" : `展开全部 ${transactions.length} 条流水`}
+                </Button>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        <div className="data-panel-muted hidden overflow-x-auto rounded-2xl lg:block">
           <Table className="min-w-[760px]">
             <TableHeader>
               <TableRow>
@@ -1122,7 +1418,7 @@ export function PersonalAssetsPanel() {
               ) : transactions.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="h-20 text-center text-foreground/66">
-                    暂无交易流水。
+                    暂无交易流水记录。
                   </TableCell>
                 </TableRow>
               ) : (
@@ -1144,11 +1440,71 @@ export function PersonalAssetsPanel() {
         </div>
       </GlassCard>
 
+      <Dialog open={Boolean(assetPendingDelete)} onOpenChange={(open) => !open && setAssetPendingDelete(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>删除个人资产</DialogTitle>
+            <DialogDescription>
+              确认删除 {assetPendingDelete?.asset_name || assetPendingDelete?.ticker || "该资产"} 的个人资产记录？删除后会同步刷新持仓和交易流水。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssetPendingDelete(null)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => assetPendingDelete && void handleDelete(assetPendingDelete.ticker)}
+            >
+              确认删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={isEditDialogOpen} onOpenChange={(open) => (!open ? closeEditDialog() : setIsEditDialogOpen(open))}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto p-0 sm:max-w-4xl">
+          {editingAsset ? (
+            <div className="overflow-hidden rounded-3xl">
+              <DialogHeader className="border-b border-border/70 px-6 py-5">
+                <DialogTitle>修改个人资产</DialogTitle>
+                <DialogDescription className="mt-2 text-sm leading-7 text-foreground/66">
+                  这次修改会集中调整资产信息、持仓成本、份额和定投设置，保存后系统会重新计算收益表现。
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-5 px-6 py-5">
+                <AssetEditSummary asset={editingAsset} form={editForm} />
+                <AssetIdentityEditor form={editForm} onChange={(updater) => setEditForm((prev) => updater(prev))} />
+                <HoldingEditor form={editForm} onChange={(updater) => setEditForm((prev) => updater(prev))} />
+                <DcaEditor form={editForm} onChange={(updater) => setEditForm((prev) => updater(prev))} />
+              </div>
+
+              <DialogFooter className="border-t border-border/70 px-6 py-5">
+                <Button variant="outline" onClick={closeEditDialog}>
+                  取消
+                </Button>
+                <Button onClick={handleSaveEditDialog} disabled={savingEditDialog}>
+                  {savingEditDialog ? (
+                    <RefreshCcw className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <PencilLine className="mr-2 h-4 w-4" />
+                  )}
+                  保存修改
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent className="max-h-[88vh] overflow-y-auto p-0 sm:max-w-3xl">
+        <DialogContent className="max-h-[88vh] overflow-y-auto p-0 sm:max-w-4xl">
           <div className="overflow-hidden rounded-3xl">
             <DialogHeader className="border-b border-border/70 px-6 py-5">
               <DialogTitle>添加个人资产</DialogTitle>
+              <DialogDescription className="mt-2 text-sm leading-7 text-foreground/66">
+                先确认资产，再一次性录入当前持仓成本、份额和定投设置，后续修改也会使用同样的弹窗流程。
+              </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-5 px-6 py-5">
@@ -1182,37 +1538,7 @@ export function PersonalAssetsPanel() {
                 </div>
               ) : null}
 
-              <div className="data-panel space-y-4 rounded-2xl p-5">
-                <div className="flex flex-col gap-1">
-                  <div className="text-sm font-medium text-foreground">当前持仓</div>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="dialog-asset-cost">当前持仓成本价</Label>
-                    <Input
-                      id="dialog-asset-cost"
-                      type="number"
-                      step="0.0001"
-                      placeholder="1.1326"
-                      value={dialogForm.avg_cost}
-                      onChange={(event) => setDialogForm((prev) => ({ ...prev, avg_cost: event.target.value }))}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="dialog-asset-units">当前持有数 / 份额</Label>
-                    <Input
-                      id="dialog-asset-units"
-                      type="number"
-                      step="0.0001"
-                      placeholder="2648.88"
-                      value={dialogForm.units}
-                      onChange={(event) => setDialogForm((prev) => ({ ...prev, units: event.target.value }))}
-                    />
-                  </div>
-                </div>
-              </div>
+              <HoldingEditor form={dialogForm} onChange={(updater) => setDialogForm((prev) => updater(prev))} />
 
               <DcaEditor form={dialogForm} onChange={(updater) => setDialogForm((prev) => updater(prev))} />
             </div>

@@ -16,7 +16,7 @@ export function EmptyState({
   className?: string
 }) {
   return (
-    <div className={cn("data-empty text-muted-foreground", compact && "data-empty-compact", className)}>
+    <div role="status" className={cn("data-empty text-muted-foreground", compact && "data-empty-compact", className)}>
       {title ? <div className="mb-2 text-sm font-medium text-foreground/84">{title}</div> : null}
       <div className="text-sm leading-7">{description}</div>
       {action ? <div className="mt-4 flex justify-center">{action}</div> : null}

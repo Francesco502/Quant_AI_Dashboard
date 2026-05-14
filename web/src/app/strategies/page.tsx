@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useStrategies } from "@/lib/use-strategies"
 import { StrategyLearningCard } from "@/components/trading/StrategyLearningCard"
+import { CardSkeleton } from "@/components/ui/skeleton"
 import { getTodayInBeijing } from "@/lib/time"
 
 type StrategyResultRow = {
@@ -34,6 +35,8 @@ type HistoryEntry = {
   file: string
   count: number
 }
+
+type StrategyTab = "run" | "learn" | "history"
 
 const normalizeRows = (payload: unknown): StrategyResultRow[] => {
   if (!Array.isArray(payload)) return []
@@ -80,6 +83,7 @@ export default function StrategiesPage() {
   const [running, setRunning] = useState(false)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [lastResult, setLastResult] = useState<StrategyResult | null>(null)
+  const [activeTab, setActiveTab] = useState<StrategyTab>("run")
 
   const selectableStrategies = useMemo(
     () =>
@@ -168,8 +172,12 @@ export default function StrategiesPage() {
         <h1 className="page-title">量化策略工作台</h1>
       </div>
 
-      <Tabs defaultValue="run" className="space-y-4">
-        <TabsList>
+      {strategiesLoading ? (
+        <CardSkeleton rows={4} />
+      ) : (
+
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as StrategyTab)} className="space-y-4">
+        <TabsList aria-label="策略工作台视图" className="max-w-full overflow-x-auto">
           <TabsTrigger value="run">执行策略</TabsTrigger>
           <TabsTrigger value="learn">策略教学</TabsTrigger>
           <TabsTrigger value="history">历史记录</TabsTrigger>
@@ -227,7 +235,9 @@ export default function StrategiesPage() {
             </GlassCard>
 
             <div className="space-y-4">
-              {lastResult ? (
+              {running && !lastResult ? (
+                <CardSkeleton rows={4} />
+              ) : lastResult ? (
                 <GlassCard className="space-y-4 p-5">
                   <div className="flex items-center justify-between gap-3">
                     <div className="space-y-1">
@@ -240,28 +250,49 @@ export default function StrategiesPage() {
                   </div>
 
                   {lastResult.data && lastResult.data.length > 0 ? (
-                    <div className="overflow-hidden rounded-2xl border border-border/60">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>代码</TableHead>
-                            <TableHead>名称</TableHead>
-                            <TableHead>策略别名</TableHead>
-                            <TableHead className="text-right">最新价</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {lastResult.data.map((row, index) => (
-                            <TableRow key={`${row.ticker}-${index}`}>
-                              <TableCell className="font-medium">{row.ticker}</TableCell>
-                              <TableCell>{row.name || "-"}</TableCell>
-                              <TableCell>{row.selector_alias || "-"}</TableCell>
-                              <TableCell className="text-right">{Number(row.last_close).toFixed(2)}</TableCell>
+                    <>
+                      <div className="space-y-3 lg:hidden">
+                        {lastResult.data.map((row, index) => (
+                          <div key={`${row.ticker}-${index}`} className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="font-mono text-base font-semibold">{row.ticker}</div>
+                                <div className="mt-1 truncate text-sm text-muted-foreground">{row.name || "未命名标的"}</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-xs text-muted-foreground">最新价</div>
+                                <div className="mt-1 font-semibold tabular-nums">{Number(row.last_close).toFixed(2)}</div>
+                              </div>
+                            </div>
+                            <div className="mt-3 rounded-xl bg-background/50 px-3 py-2 text-sm text-foreground/72">
+                              策略别名：{row.selector_alias || "-"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="hidden overflow-hidden rounded-2xl border border-border/60 lg:block">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>代码</TableHead>
+                              <TableHead>名称</TableHead>
+                              <TableHead>策略别名</TableHead>
+                              <TableHead className="text-right">最新价</TableHead>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
+                          </TableHeader>
+                          <TableBody>
+                            {lastResult.data.map((row, index) => (
+                              <TableRow key={`${row.ticker}-${index}`}>
+                                <TableCell className="font-medium">{row.ticker}</TableCell>
+                                <TableCell>{row.name || "-"}</TableCell>
+                                <TableCell>{row.selector_alias || "-"}</TableCell>
+                                <TableCell className="text-right">{Number(row.last_close).toFixed(2)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </>
                   ) : (
                     <div className="flex items-center gap-2 rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
                       <AlertCircle className="h-4 w-4" />
@@ -292,36 +323,58 @@ export default function StrategiesPage() {
             {history.length === 0 ? (
               <div className="text-sm text-muted-foreground">暂无历史记录。</div>
             ) : (
-              <div className="overflow-hidden rounded-2xl border border-border/60">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>日期</TableHead>
-                      <TableHead>文件</TableHead>
-                      <TableHead className="text-right">条数</TableHead>
-                      <TableHead className="text-right">操作</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {history.map((entry) => (
-                      <TableRow key={`${entry.date}-${entry.file}`}>
-                        <TableCell className="font-medium">{entry.date}</TableCell>
-                        <TableCell className="text-muted-foreground">{entry.file}</TableCell>
-                        <TableCell className="text-right">{entry.count}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" onClick={() => void openHistory(entry.date)}>
-                            查看
-                          </Button>
-                        </TableCell>
+              <>
+                <div className="space-y-3 lg:hidden">
+                  {history.map((entry) => (
+                    <div key={`${entry.date}-${entry.file}`} className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-semibold">{entry.date}</div>
+                          <div className="mt-1 break-all text-sm leading-6 text-muted-foreground">{entry.file}</div>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <div className="text-xs text-muted-foreground">条数</div>
+                          <div className="mt-1 font-semibold tabular-nums">{entry.count}</div>
+                        </div>
+                      </div>
+                      <Button className="mt-3 w-full" variant="outline" onClick={() => void openHistory(entry.date)}>
+                        查看
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden overflow-hidden rounded-2xl border border-border/60 lg:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>日期</TableHead>
+                        <TableHead>文件</TableHead>
+                        <TableHead className="text-right">条数</TableHead>
+                        <TableHead className="text-right">操作</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {history.map((entry) => (
+                        <TableRow key={`${entry.date}-${entry.file}`}>
+                          <TableCell className="font-medium">{entry.date}</TableCell>
+                          <TableCell className="text-muted-foreground">{entry.file}</TableCell>
+                          <TableCell className="text-right">{entry.count}</TableCell>
+                          <TableCell className="text-right">
+                            <Button variant="ghost" size="sm" onClick={() => void openHistory(entry.date)}>
+                              查看
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
             )}
           </GlassCard>
         </TabsContent>
       </Tabs>
+      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-﻿"""Integration tests for backtest API endpoints."""
+"""Integration tests for backtest API endpoints."""
 
 from __future__ import annotations
 

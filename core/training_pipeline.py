@@ -1,4 +1,4 @@
-﻿"""
+"""
 Offline training pipeline for model retraining, evaluation, and prediction generation.
 
 Responsibilities:

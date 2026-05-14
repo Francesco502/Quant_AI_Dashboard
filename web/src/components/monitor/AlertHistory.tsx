@@ -5,6 +5,7 @@ import { motion } from "framer-motion"
 import { AlertCircle, AlertTriangle, Bell, CheckCircle2, Filter, RefreshCw, XCircle } from "lucide-react"
 
 import { EmptyState } from "@/components/data/empty-state"
+import { toast } from "sonner"
 import { PanelHeader } from "@/components/data/panel-header"
 import { StatusPill } from "@/components/data/status-pill"
 import { Badge } from "@/components/ui/badge"
@@ -88,6 +89,7 @@ export function AlertHistory({
       setAlerts(response.data ?? [])
     } catch (error: unknown) {
       console.error("Failed to load alerts:", error)
+      toast.error("加载告警记录失败")
     } finally {
       setLoading(false)
     }
@@ -99,6 +101,7 @@ export function AlertHistory({
       setStats(response.data)
     } catch (error: unknown) {
       console.error("Failed to load alert statistics:", error)
+      toast.error("加载告警统计失败")
     }
   }, [])
 
@@ -164,7 +167,7 @@ export function AlertHistory({
                   type="button"
                   onClick={() => setFilterSeverity(option.value)}
                   className={cn(
-                    "rounded-full border px-3.5 py-1.5 text-[0.84rem] font-medium transition-[background-color,border-color,color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
+                    "inline-flex min-h-11 items-center rounded-full border px-4 py-2 text-[0.84rem] font-medium transition-[background-color,border-color,color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] sm:min-h-0 sm:px-3.5 sm:py-1.5",
                     active
                       ? "border-[rgba(var(--rgb-ochre),0.18)] bg-[rgba(var(--rgb-ochre),0.12)] text-foreground shadow-[0_8px_18px_rgba(41,33,25,0.04)]"
                       : "border-black/[0.06] bg-[rgba(var(--rgb-xuan),0.7)] text-foreground/72 hover:bg-[rgba(var(--rgb-xuan),0.94)] hover:text-foreground/88",

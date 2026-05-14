@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -42,3 +43,25 @@ def test_set_cached_does_not_leave_partial_file_on_failure(monkeypatch, tmp_path
     cached = get_cached("market_review", {"market": "cn"})
 
     assert cached == {"x": "bad-value"}
+
+
+def test_set_cached_uses_unique_temp_files_for_same_key(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("API_RESPONSE_CACHE_ENABLED", "true")
+    monkeypatch.setenv("API_CACHE_DIR", str(tmp_path))
+
+    import core.api_response_cache as cache
+
+    replace_sources: list[Path] = []
+    real_replace = cache.os.replace
+
+    def spy_replace(src: Any, dst: Any) -> None:
+        replace_sources.append(Path(src))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(cache.os, "replace", spy_replace)
+
+    set_cached("prices", {"ticker": "600000", "days": 5}, {"value": 1})
+    set_cached("prices", {"ticker": "600000", "days": 5}, {"value": 2})
+
+    assert len(replace_sources) == 2
+    assert replace_sources[0] != replace_sources[1]

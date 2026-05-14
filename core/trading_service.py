@@ -10,13 +10,21 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 from decimal import Decimal
 
 from core.database import Database, get_database
-from core.account_manager import AccountManager, Position, Account, Portfolio, InsufficientFundsError, InsufficientSharesError
+from core.account_manager import (
+    AccountManager,
+    Position,
+    Account,
+    Portfolio,
+    InsufficientFundsError as AccountInsufficientFundsError,
+    InsufficientSharesError as AccountInsufficientSharesError,
+)
 from core.order_manager import OrderManager
+from core.position_manager import PositionManager
 from core.risk_monitor import RiskMonitor
 from core.risk_types import RiskAction, RiskLevel
 from core.interfaces.broker_adapter import BrokerAdapter, Position as BrokerPosition
@@ -27,9 +35,48 @@ from core.paper_trading_fees import estimate_buy_total_cost
 logger = logging.getLogger(__name__)
 
 
+PaperAccountManager = AccountManager
+
+
 class TradingError(Exception):
     """交易异常基类"""
     pass
+
+
+class InsufficientFundsError(TradingError, AccountInsufficientFundsError):
+    """资金不足异常"""
+    pass
+
+
+class InsufficientSharesError(TradingError, AccountInsufficientSharesError):
+    """持仓不足异常"""
+    pass
+
+
+class _NoopBrokerAdapter(BrokerAdapter):
+    """默认纸面券商适配器：用于单元测试和惰性初始化。"""
+
+    def connect(self) -> bool:
+        return True
+
+    def get_account_info(self) -> Dict[str, Any]:
+        return {}
+
+    def get_positions(self) -> List[BrokerPosition]:
+        return []
+
+    def place_order(self, order: Order) -> Order:
+        order.update_status(OrderStatus.SUBMITTED)
+        return order
+
+    def cancel_order(self, order_id: str) -> bool:
+        return True
+
+    def get_order_status(self, order_id: str) -> OrderStatus:
+        return OrderStatus.SUBMITTED
+
+    def get_history(self, start_date: str = None, end_date: str = None) -> List[Dict]:
+        return []
 
 
 class TradingService:
@@ -45,20 +92,45 @@ class TradingService:
 
     def __init__(
         self,
-        account_manager: AccountManager,
-        order_manager: OrderManager,
-        risk_monitor: RiskMonitor,
-        broker_adapter: BrokerAdapter,
-        db: Database
+        account_manager: Optional[AccountManager] = None,
+        order_manager: Optional[OrderManager] = None,
+        risk_monitor: Optional[RiskMonitor] = None,
+        broker_adapter: Optional[BrokerAdapter] = None,
+        db: Optional[Database] = None,
+        start_stop_loss_monitor: Optional[bool] = None,
     ):
-        self.account_mgr = account_manager
-        self.order_mgr = order_manager
-        self.risk_monitor = risk_monitor
-        self.broker = broker_adapter
-        self.db = db
+        self.db = db or get_database()
+        self.account_mgr = account_manager or PaperAccountManager(self.db)
+        self.order_mgr = order_manager or OrderManager(self.db)
+        self.risk_monitor = risk_monitor or RiskMonitor()
+        self.broker = broker_adapter or _NoopBrokerAdapter()
+        self._position_mgr = getattr(self.account_mgr, "position_manager", self.account_mgr)
 
         # 启动止损止盈监控线程
-        self._start_stop_loss_monitor()
+        if start_stop_loss_monitor is None:
+            start_stop_loss_monitor = (
+                account_manager is not None
+                and order_manager is not None
+                and broker_adapter is not None
+            )
+        if start_stop_loss_monitor:
+            self._start_stop_loss_monitor()
+
+    @property
+    def account_mgr(self):
+        return self._paper_account_mgr
+
+    @account_mgr.setter
+    def account_mgr(self, value):
+        self._paper_account_mgr = value
+
+    @property
+    def order_mgr(self):
+        return self._order_mgr
+
+    @order_mgr.setter
+    def order_mgr(self, value):
+        self._order_mgr = value
 
     # ==================== 订单管理 ====================
 
@@ -86,7 +158,7 @@ class TradingService:
         # 1. 验证用户/账户
         account = self.account_mgr.get_account(account_id, user_id)
         if not account:
-            return {"success": False, "message": "账户不存在或无权访问"}
+            raise TradingError("账户不存在或无权访问")
 
         # 2. 创建订单
         order = self.order_mgr.create_order(
@@ -302,7 +374,29 @@ class TradingService:
         account_info: Dict
     ) -> Dict:
         """Portfolio对象转字典（用于风控检查）"""
-        positions_dict = {p.ticker: p.shares for p in positions}
+        if isinstance(account, dict):
+            portfolio = account.get("portfolio") or {}
+            raw_positions = portfolio.get("positions") or positions or {}
+            if isinstance(raw_positions, dict):
+                positions_dict = dict(raw_positions)
+            else:
+                positions_dict = {
+                    (p.get("ticker") if isinstance(p, dict) else getattr(p, "ticker", "")):
+                    (p.get("shares") if isinstance(p, dict) else getattr(p, "shares", 0))
+                    for p in raw_positions
+                    if (p.get("ticker") if isinstance(p, dict) else getattr(p, "ticker", None))
+                }
+            cash = account.get("balance", portfolio.get("cash", 0))
+            total_assets = portfolio.get("total_assets", account.get("total_assets", cash))
+            initial_capital = account.get("initial_capital", portfolio.get("initial_capital", cash))
+            return {
+                "cash": cash,
+                "positions": positions_dict,
+                "total_assets": total_assets,
+                "initial_capital": initial_capital,
+            }
+
+        positions_dict = {p.ticker: p.shares for p in positions or []}
         return {
             "cash": account.balance,
             "positions": positions_dict,
@@ -320,31 +414,47 @@ class TradingService:
         """获取账户订单列表"""
         if not self.account_mgr.account_exists(account_id, user_id):
             return []
+        list_orders = getattr(self.order_mgr, "list_orders", None)
+        if callable(list_orders):
+            try:
+                return list_orders(account_id=account_id)
+            except TypeError:
+                return list_orders()
         return self.order_mgr.get_orders_by_account(account_id)
 
     def get_active_orders(self, user_id: int, account_id: Optional[int] = None) -> List[Order]:
         """获取活跃订单"""
         if account_id and not self.account_mgr.account_exists(account_id, user_id):
             return []
+        list_orders = getattr(self.order_mgr, "list_orders", None)
+        if callable(list_orders):
+            try:
+                return list_orders(account_id=account_id, active_only=True)
+            except TypeError:
+                return list_orders()
         return self.order_mgr.get_active_orders(account_id)
 
     def get_positions(self, user_id: int, account_id: int, refresh_prices: bool = True) -> List[Dict]:
         """获取持仓列表"""
         if not self.account_mgr.account_exists(account_id, user_id):
             return []
-        positions = self.account_mgr.get_positions(account_id, refresh_prices=refresh_prices)
+        position_source = self._position_mgr if self._position_mgr is not self.account_mgr else self.account_mgr
+        try:
+            positions = position_source.get_positions(account_id, refresh_prices=refresh_prices)
+        except TypeError:
+            positions = position_source.get_positions(account_id)
         return [
             {
-                "ticker": p.ticker,
-                "shares": p.shares,
-                "available_shares": p.available_shares,
-                "avg_cost": p.avg_cost,
-                "current_price": p.current_price,
-                "market_value": p.market_value,
-                "unrealized_pnl": p.unrealized_pnl,
-                "unrealized_return_pct": p.unrealized_return_pct
+                "ticker": p.get("ticker") if isinstance(p, dict) else p.ticker,
+                "shares": p.get("shares") if isinstance(p, dict) else p.shares,
+                "available_shares": p.get("available_shares") if isinstance(p, dict) else p.available_shares,
+                "avg_cost": p.get("avg_cost") if isinstance(p, dict) else p.avg_cost,
+                "current_price": p.get("current_price") if isinstance(p, dict) else p.current_price,
+                "market_value": p.get("market_value") if isinstance(p, dict) else p.market_value,
+                "unrealized_pnl": p.get("unrealized_pnl") if isinstance(p, dict) else p.unrealized_pnl,
+                "unrealized_return_pct": p.get("unrealized_return_pct", 0) if isinstance(p, dict) else p.unrealized_return_pct
             }
-            for p in positions
+            for p in positions or []
         ]
 
     def get_portfolio(self, user_id: int, account_id: int, refresh_prices: bool = True) -> Dict:
@@ -353,8 +463,19 @@ class TradingService:
         if not account:
             return {}
 
+        if isinstance(account, dict):
+            portfolio = account.get("portfolio") or {}
+            return {
+                "account_id": account.get("account_id", account_id),
+                "account_name": account.get("account_name", account.get("name", "")),
+                "portfolio": portfolio,
+                "total_assets": portfolio.get("total_assets", account.get("total_assets", 0)),
+                "cash": portfolio.get("cash", account.get("balance", 0)),
+                "positions": portfolio.get("positions", []),
+            }
+
         positions = self.account_mgr.get_positions(account_id, refresh_prices=refresh_prices)
-        position_value = sum(p.market_value for p in positions)
+        position_value = sum(p.market_value for p in positions or [])
 
         return {
             "account_id": account.id,
@@ -498,13 +619,12 @@ class TradingService:
                 """, (rule_id,))
 
                 if cursor.rowcount == 0:
-                    # 规则已被其他线程停用，跳过
+                    # Rule already disabled by another thread — skip.
                     self.db.conn.rollback()
                     continue
 
-                self.db.conn.commit()
-
-                # 创建市价单平仓
+                # Create the market order BEFORE committing the rule update so
+                # a crash between the two leaves the rule active for retry.
                 try:
                     order = self.order_mgr.create_order(
                         account_id=account_id,
@@ -513,18 +633,20 @@ class TradingService:
                         order_type=OrderType.MARKET,
                         quantity=exec_quantity
                     )
-
-                    # 立即执行
                     result = self._execute_order(order)
-                    if result.get("success"):
-                        logger.warning(f"触发止损/止盈: {symbol}, 数量={exec_quantity}, 规则ID={rule_id}")
-                        # 规则已在上面停用，这里不再重复调用 deactivate_rule
-                    else:
-                        # 执行失败，恢复规则（可选：记录日志）
+                    if not result.get("success"):
+                        # Order failed — roll back the rule change.
+                        self.db.conn.rollback()
                         logger.error(f"止损/止盈执行失败: {symbol}, 规则ID={rule_id}, result={result}")
+                        continue
                 except Exception as e:
+                    # Order never placed — roll back the rule change.
+                    self.db.conn.rollback()
                     logger.error(f"止损/止盈异常: {symbol}, 规则ID={rule_id}, error={e}")
-                    # 异常时规则已停用，无需恢复
+                    continue
+
+                self.db.conn.commit()
+                logger.warning(f"触发止损/止盈: {symbol}, 数量={exec_quantity}, 规则ID={rule_id}")
 
     def _should_trigger_stop_rule(self, rule: Dict, current_price: Optional[float]) -> bool:
         """判断是否应该触发止损止盈规则（添加最小时间间隔检查）"""
@@ -604,6 +726,9 @@ class TradingService:
 
     def list_user_accounts(self, user_id: int) -> List[Dict]:
         """获取用户所有账户"""
+        list_accounts = getattr(self.account_mgr, "list_accounts", None)
+        if callable(list_accounts):
+            return list_accounts(user_id)
         return self.account_mgr.list_accounts_with_positions(user_id)
 
     def reset_account(
@@ -636,7 +761,10 @@ class TradingService:
             return {"success": False, "message": "订单不存在"}
 
         releasable_statuses = [OrderStatus.PENDING, OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED]
-        should_release = order.status in releasable_statuses
+        status_value = getattr(order.status, "value", order.status)
+        if status_value == OrderStatus.FILLED.value:
+            raise TradingError("订单已成交，无法取消")
+        should_release = status_value in {status.value for status in releasable_statuses}
 
         if self.order_mgr.cancel_order(order_id, reason="用户取消"):
             if should_release:

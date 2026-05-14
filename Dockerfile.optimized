@@ -1,5 +1,5 @@
 # ============================================================
-# Quant-AI Dashboard v2.2.0 - Optimized single-container image
+# Quant-AI Dashboard v2.3.0 - Optimized single-container image
 # Target: 2-core / 2GB runtime environment
 #
 # Process model:
@@ -65,8 +65,8 @@ COPY api/ ./api/
 COPY core/ ./core/
 COPY run_daemon.py set_password.py ./
 COPY risk_config.json env.example ./
-COPY models/registry.json ./models/registry.json
-COPY strategies/config.json ./strategies/config.json
+COPY models/registry.json ./defaults/models/registry.json
+COPY strategies/config.json ./defaults/strategies/config.json
 
 # Frontend static files -> Nginx doc root
 COPY --from=frontend-build /build/out /var/www/html
@@ -78,7 +78,7 @@ COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Runtime directories
-RUN mkdir -p /app/data /app/logs /app/models /app/strategies \
+RUN mkdir -p /app/data /app/logs /app/models /app/strategies /app/defaults \
     /var/log/supervisor /var/log/nginx
 
 ENV PYTHONUNBUFFERED=1 \

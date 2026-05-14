@@ -1,4 +1,4 @@
-﻿"""Performance analysis helpers (legacy compatibility module)."""
+"""Performance analysis helpers (legacy compatibility module)."""
 
 from __future__ import annotations
 

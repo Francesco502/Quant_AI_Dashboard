@@ -197,7 +197,7 @@ export function StrategyLearningCard({ strategyName, isExpanded = false, onToggl
               {detail.principle ? (
                 <section className="space-y-2">
                   <h4 className="flex items-center gap-2 text-sm font-medium">
-                    <BookOpen className="h-4 w-4 text-blue-500" />
+                    <BookOpen className="h-4 w-4 text-tone-indigo" />
                     核心原理
                   </h4>
                   <p className="text-sm leading-7 text-foreground/68">{detail.principle}</p>
@@ -213,14 +213,14 @@ export function StrategyLearningCard({ strategyName, isExpanded = false, onToggl
 
               <div className="grid gap-4 md:grid-cols-2">
                 <section className="space-y-2">
-                  <h4 className="flex items-center gap-2 text-sm font-medium text-emerald-600">
+                  <h4 className="flex items-center gap-2 text-sm font-medium text-tone-celadon">
                     <CheckCircle2 className="h-4 w-4" />
                     优势
                   </h4>
                   <ul className="space-y-1 text-sm leading-7 text-foreground/68">
                     {(detail.pros.length ? detail.pros : ["暂未整理优势说明。"]).map((item) => (
                       <li key={item} className="flex items-start gap-2">
-                        <span className="mt-1 text-emerald-500">•</span>
+                        <span className="mt-1 text-tone-celadon">•</span>
                         <span>{item}</span>
                       </li>
                     ))}
@@ -228,14 +228,14 @@ export function StrategyLearningCard({ strategyName, isExpanded = false, onToggl
                 </section>
 
                 <section className="space-y-2">
-                  <h4 className="flex items-center gap-2 text-sm font-medium text-red-600">
+                  <h4 className="flex items-center gap-2 text-sm font-medium text-tone-cinnabar">
                     <XCircle className="h-4 w-4" />
                     局限
                   </h4>
                   <ul className="space-y-1 text-sm leading-7 text-foreground/68">
                     {(detail.cons.length ? detail.cons : ["暂未整理局限说明。"]).map((item) => (
                       <li key={item} className="flex items-start gap-2">
-                        <span className="mt-1 text-red-500">•</span>
+                        <span className="mt-1 text-tone-cinnabar">•</span>
                         <span>{item}</span>
                       </li>
                     ))}
@@ -265,7 +265,7 @@ export function StrategyLearningCard({ strategyName, isExpanded = false, onToggl
                   <ul className="space-y-1 text-sm leading-7 text-foreground/68">
                   {(detail.risks.length ? detail.risks : ["暂未整理风险提醒。"]).map((item) => (
                     <li key={item} className="flex items-start gap-2">
-                      <span className="mt-1 text-orange-500">•</span>
+                      <span className="mt-1 text-tone-ochre">•</span>
                       <span>{item}</span>
                     </li>
                   ))}
@@ -318,9 +318,37 @@ export function StrategyComparison({ strategyNames }: StrategyComparisonProps) {
   }
 
   return (
-    <GlassCard className="overflow-x-auto p-4">
+    <GlassCard className="p-4">
       <CardTitle className="mb-4">策略对比</CardTitle>
-      <table className="min-w-[560px] w-full text-sm">
+      <div className="space-y-3 lg:hidden">
+        {strategies.map((strategy) => {
+          const riskLevel = strategy.risks.length > 3 ? "高" : strategy.risks.length > 1 ? "中" : "低"
+          const riskClass = riskLevel === "高" ? "text-tone-cinnabar" : riskLevel === "中" ? "text-tone-ochre" : "text-tone-celadon"
+          return (
+            <div key={`${strategy.id}-mobile`} className="rounded-[24px] border border-border/60 bg-background/72 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="font-medium text-foreground">{strategy.name}</div>
+                <Badge variant="secondary">{strategy.type}</Badge>
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                <div className="rounded-2xl bg-muted/30 px-3 py-2">
+                  <div className="text-xs text-muted-foreground">难度</div>
+                  <div className="mt-1">{"★".repeat(Math.max(1, Math.min(5, strategy.difficulty)))}</div>
+                </div>
+                <div className="rounded-2xl bg-muted/30 px-3 py-2">
+                  <div className="text-xs text-muted-foreground">优势</div>
+                  <div className="mt-1 font-medium text-tone-celadon">{strategy.pros.length}</div>
+                </div>
+                <div className="rounded-2xl bg-muted/30 px-3 py-2">
+                  <div className="text-xs text-muted-foreground">风险</div>
+                  <div className={`mt-1 font-medium ${riskClass}`}>{riskLevel}</div>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <table className="hidden min-w-[560px] w-full text-sm lg:table">
         <thead>
           <tr className="border-b">
             <th className="py-2 pr-3 text-left">维度</th>
@@ -353,7 +381,7 @@ export function StrategyComparison({ strategyNames }: StrategyComparisonProps) {
           <tr className="border-b">
             <td className="py-2 pr-3 font-medium">优势数量</td>
             {strategies.map((strategy) => (
-              <td key={`${strategy.id}-pros`} className="px-3 py-2 text-emerald-600">
+              <td key={`${strategy.id}-pros`} className="px-3 py-2 text-tone-celadon">
                 {strategy.pros.length}
               </td>
             ))}
@@ -362,7 +390,7 @@ export function StrategyComparison({ strategyNames }: StrategyComparisonProps) {
             <td className="py-2 pr-3 font-medium">风险级别</td>
             {strategies.map((strategy) => {
               const level = strategy.risks.length > 3 ? "高" : strategy.risks.length > 1 ? "中" : "低"
-              const className = level === "高" ? "text-red-500" : level === "中" ? "text-orange-500" : "text-emerald-600"
+              const className = level === "高" ? "text-tone-cinnabar" : level === "中" ? "text-tone-ochre" : "text-tone-celadon"
               return (
                 <td key={`${strategy.id}-risk`} className={`px-3 py-2 ${className}`}>
                   {level}

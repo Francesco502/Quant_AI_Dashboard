@@ -10,8 +10,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from .strategy_framework import (
     BaseStrategy,
@@ -48,7 +51,7 @@ class StrategyManager:
                 with open(self.config_file, "r", encoding="utf-8") as f:
                     self.config = json.load(f)
             except Exception as e:
-                print(f"加载策略配置失败: {e}")
+                logger.error(f"加载策略配置失败: {e}")
                 self.config = {"strategies": []}
         else:
             # 创建默认配置
@@ -96,10 +99,10 @@ class StrategyManager:
                     **params
                 )
             else:
-                print(f"未知的策略类型: {strategy_type}")
+                logger.error(f"未知的策略类型: {strategy_type}")
                 return None
         except Exception as e:
-            print(f"创建策略失败 ({strategy_id}): {e}")
+            logger.error(f"创建策略失败 ({strategy_id}): {e}")
             return None
 
     def get_strategy(self, strategy_id: str) -> Optional[BaseStrategy]:

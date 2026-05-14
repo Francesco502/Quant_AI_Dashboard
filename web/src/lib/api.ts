@@ -96,6 +96,11 @@ export type UnknownArray = unknown[];
 export interface PricePoint {
   date: string;
   price: number;
+  lower?: number;
+  upper?: number;
+  up_probability?: number;
+  confidence?: number;
+  signal?: string;
 }
 
 export interface MarketData {
@@ -156,8 +161,10 @@ export interface ForecastRequest {
 
 export interface ForecastResult {
   ticker: string;
+  model?: string;
   predictions: PricePoint[];
   horizon: number;
+  regime?: string;
   metrics?: {
     MAE?: number;
     RMSE?: number;
@@ -231,6 +238,7 @@ export interface PaperAccountInfo {
     account_id: number;
     account_name: string;
     currency: string;
+    initial_capital?: number;
     portfolio: {
         total_assets: number;
         cash: number;
@@ -751,6 +759,10 @@ export interface UserAssetSummary {
   week_change: number;
   month_change: number;
   year_change: number;
+  day_change_pct: number;
+  week_change_pct: number;
+  month_change_pct: number;
+  year_change_pct: number;
   updated_at?: string;
 }
 
@@ -784,6 +796,67 @@ export interface UserAssetUpsertRequest {
   trade_date?: string;
   notes?: string;
   dca_rule?: UserAssetDcaRule | null;
+}
+
+// ------------------------------------------------------------------
+// Daily Workbench / Audit / Backup / Data Freshness
+// ------------------------------------------------------------------
+
+export interface DailyWorkbenchAction {
+  id: string;
+  title: string;
+  description: string;
+  priority: "high" | "medium" | "low";
+  category: string;
+  kind?: string;
+  href?: string;
+  disabled?: boolean;
+}
+
+export interface DailyWorkbenchSummary {
+  date: string;
+  market_status: string;
+  actions: DailyWorkbenchAction[];
+  recent_events: number;
+  data_freshness: { items: DataFreshnessItem[] };
+  data_freshness_issues: number;
+  asset_summary?: { total_market_value: number; asset_count: number };
+  paper_account?: { found: boolean; total_assets: number; cash: number; position_value: number; account_id?: number };
+  as_of?: string;
+  next_actions: DailyWorkbenchAction[];
+}
+
+export interface AuditEvent {
+  id: string;
+  timestamp: string;
+  user: string;
+  action: string;
+  endpoint: string;
+  status: string;
+  resource?: string;
+  success?: boolean;
+  details?: string;
+}
+
+export interface BackupItem {
+  filename: string;
+  created_at: string;
+  size_bytes: number;
+  includes_database: boolean;
+  includes_configs: boolean;
+  manifest?: { version: string; created_at: string; included: { database: boolean; configs: boolean; user_files: boolean } };
+}
+
+export interface DataFreshnessItem {
+  ticker: string;
+  last_update: string;
+  last_date?: string;
+  days_stale: number;
+  age_days?: number;
+  status: "fresh" | "stale" | "critical";
+  source?: string;
+  is_stale: boolean;
+  message?: string;
 }
 
 // API Methods
@@ -833,7 +906,7 @@ export const api = {
   },
   forecasting: {
     predict: (data: { tickers: string[], horizon: number, model_type?: string }) =>
-      fetchApi<UnknownRecord>("/forecasting/predict", {
+      fetchApi<{ status: string; results: Record<string, ForecastResult> }>("/forecasting/predict", {
         method: "POST",
         body: JSON.stringify(data),
       }),
@@ -859,7 +932,8 @@ export const api = {
         body: JSON.stringify(payload),
       }),
     auto: {
-        getStatus: () => fetchApi<AutoTradingStatusResponse>("/trading/auto/status"),
+        getStatus: (refresh: boolean = false) =>
+          fetchApi<AutoTradingStatusResponse>(`/trading/auto/status?refresh=${refresh ? "true" : "false"}`),
         updateConfig: (data: AutoTradingConfigUpdateRequest) =>
             fetchApi<AutoTradingStatusResponse>("/trading/auto/config", {
                 method: "PUT",
@@ -881,7 +955,8 @@ export const api = {
                     initial_balance: data.initial_balance ?? 100000,
                 }),
             }),
-        getAccount: async (accountId?: number): Promise<PaperAccountInfo | null> => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        getAccount: async (accountId?: number, _options?: { refresh?: boolean }): Promise<PaperAccountInfo | null> => {
             if (accountId) {
                 const detail = await fetchApi<{
                     account_id?: number;
@@ -1153,7 +1228,8 @@ export const api = {
         body: JSON.stringify({ config }),
       }),
     assets: {
-      getOverview: (syncDca: boolean = true, options?: RequestInit) =>
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      getOverview: (syncDca: boolean = true, options?: RequestInit, _refreshMarket?: boolean) =>
         fetchApi<UserAssetOverview>(`/user/assets?sync_dca=${syncDca ? "true" : "false"}`, options),
       upsert: (data: UserAssetUpsertRequest) =>
         fetchApi<UserAssetOverview>("/user/assets", {
@@ -1197,6 +1273,14 @@ export const api = {
             method: "POST",
           }
         ),
+      importCsv: (file: File) => {
+        const form = new FormData()
+        form.append("file", file)
+        return fetchApi<UserAssetOverview & { imported_count: number; errors: string[] }>("/user/assets/import-csv", {
+          method: "POST",
+          body: form,
+        })
+      },
     },
   },
   // --- System Monitoring ---
@@ -1226,6 +1310,49 @@ export const api = {
     getAlertStatistics: () => fetchApi<{ status: string; data: AlertStatistics }>("/monitoring/alert/statistics"),
     restartMonitoring: () => fetchApi<{ status: string; message: string; data: UnknownRecord }>("/monitoring/restart", { method: "POST" }),
     getConfig: () => fetchApi<{ status: string; data: UnknownRecord }>("/monitoring/config"),
+  },
+
+  dailyWorkbench: {
+    getSummary: () => fetchApi<DailyWorkbenchSummary>("/daily-workbench/summary"),
+    executeAction: (actionId: string) =>
+      fetchApi<{ status: string }>("/daily-workbench/actions", { method: "POST", body: JSON.stringify({ action_id: actionId }) }),
+  },
+
+  audit: {
+    listEvents: (params?: { limit?: number }) =>
+      fetchApi<{ events: AuditEvent[] }>(`/audit/events?limit=${params?.limit ?? 50}`),
+    getStats: () => fetchApi<{ total: number; by_action: Record<string, number> }>("/audit/stats"),
+    recordEvent: (event: { action: string; resource?: string; resource_type?: string; success?: boolean; details?: unknown; error_message?: string }) =>
+      fetchApi<{ status: string }>("/audit/events", { method: "POST", body: JSON.stringify(event) }),
+  },
+
+  backup: {
+    create: (options?: { include_database?: boolean; include_configs?: boolean; include_user_files?: boolean }) =>
+      fetchApi<{ status: string; filename: string; path: string; size_bytes: number }>("/backup", {
+        method: "POST",
+        body: JSON.stringify(options ?? {}),
+      }),
+    list: () => fetchApi<{ backups: BackupItem[]; count: number }>("/backup/list"),
+    download: (filename: string) => {
+      const url = `/backup/download/${encodeURIComponent(filename)}`
+      return fetchApi<Blob>(url, { method: "GET" } as RequestInit)
+    },
+    restore: (params: { filename: string; restore_database?: boolean; restore_configs?: boolean; restore_user_files?: boolean }) =>
+      fetchApi<{ status: string; message: string; restored: string[]; filename: string }>("/backup/restore", {
+        method: "POST",
+        body: JSON.stringify(params),
+      }),
+    delete: (filename: string) =>
+      fetchApi<{ status: string }>(`/backup/${encodeURIComponent(filename)}`, { method: "DELETE" }),
+  },
+
+  dataFreshness: {
+    check: (tickers: string[]) =>
+      fetchApi<{ items: DataFreshnessItem[] }>(`/data-freshness?tickers=${tickers.join(",")}`),
+    getPrices: (tickers: string[], maxAgeDays?: number) =>
+      fetchApi<{ items: (DataFreshnessItem & { should_block?: boolean })[] }>(
+        `/data/prices?tickers=${encodeURIComponent(tickers.join(","))}&max_age_days=${maxAgeDays ?? 5}`
+      ),
   },
 };
 
@@ -1335,6 +1462,11 @@ export interface MarketReviewResponse {
   overview?: MarketOverview;
   sectors?: { gain?: SectorInfo[]; loss?: SectorInfo[] };
   northbound?: NorthBoundInfo;
+  shared_context?: {
+    market_review_summary?: string;
+    scanner_summary?: string;
+    limitations?: string[];
+  };
 }
 
 // --- Backtest v1.2.0 Interfaces ---

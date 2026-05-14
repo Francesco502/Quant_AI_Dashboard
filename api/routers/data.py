@@ -39,7 +39,7 @@ def _serialize_price_points(series: pd.Series) -> List[dict]:
     return points
 
 
-@router.post("/prices")
+@router.post("/prices", deprecated=True)
 async def get_prices(
     request: DataRequest,
     current_user: UserInDB = Depends(require_permission(Permission.VIEW_DATA))
@@ -114,7 +114,7 @@ async def get_prices_get(
         raise HTTPException(status_code=500, detail=f"获取价格数据失败: {str(e)}")
 
 
-@router.post("/ohlcv")
+@router.post("/ohlcv", deprecated=True)
 async def get_ohlcv(request: DataRequest):
     """获取OHLCV数据"""
     try:
@@ -126,19 +126,14 @@ async def get_ohlcv(request: DataRequest):
             tushare_token=request.tushare_token,
         )
 
-        if ohlcv_data is None or ohlcv_data.empty:
+        if not ohlcv_data:
             raise HTTPException(status_code=400, detail="无法加载OHLCV数据")
 
-        # 转换为字典格式
-        result = {}
-        if isinstance(ohlcv_data.columns, pd.MultiIndex):
-            for ticker in ohlcv_data.columns.levels[0]:
-                ticker_data = ohlcv_data[ticker]
-                result[ticker] = ticker_data.to_dict("records")
-        else:
-            # 单标的情况
-            ticker = request.tickers[0] if request.tickers else "unknown"
-            result[ticker] = ohlcv_data.to_dict("records")
+        # load_ohlcv_data returns Dict[str, pd.DataFrame] — one per ticker.
+        result: Dict[str, Any] = {}
+        for ticker, df in ohlcv_data.items():
+            if df is not None and not df.empty:
+                result[ticker] = df.reset_index().to_dict("records")
 
         return {"data": result}
     except HTTPException:

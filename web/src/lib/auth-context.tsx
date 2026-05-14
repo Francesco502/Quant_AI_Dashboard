@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { usePathname, useRouter } from "next/navigation"
 
 import { fetchApi } from "@/lib/api"
+import { toast } from "sonner"
 
 interface UserInfo {
   username: string
@@ -52,11 +53,9 @@ function clearStoredAuth() {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<UserInfo | null>(() => readStoredUser())
-  const [token, setToken] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : localStorage.getItem("token"),
-  )
-  const isReady = typeof window !== "undefined"
+  const [user, setUser] = useState<UserInfo | null>(null)
+  const [token, setToken] = useState<string | null>(null)
+  const [isReady, setIsReady] = useState(false)
 
   const router = useRouter()
   const pathname = usePathname()
@@ -64,13 +63,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === "undefined") return
 
+    let cancelled = false
+    window.queueMicrotask(() => {
+      if (cancelled) return
+      setToken(localStorage.getItem("token"))
+      setUser(readStoredUser())
+      setIsReady(true)
+    })
+
     const handleStorage = () => {
       setToken(localStorage.getItem("token"))
       setUser(readStoredUser())
     }
 
     window.addEventListener("storage", handleStorage)
-    return () => window.removeEventListener("storage", handleStorage)
+    return () => {
+      cancelled = true
+      window.removeEventListener("storage", handleStorage)
+    }
   }, [])
 
   const loadUser = useCallback(async () => {
@@ -84,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(nextUser)
     } catch (error) {
       console.error("Failed to load user info:", error)
+      toast.error("加载用户信息失败")
       clearStoredAuth()
       setToken(null)
       setUser(null)
@@ -119,6 +130,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return
 
         console.error("Failed to hydrate user info:", error)
+        toast.error("用户验证失败，请重新登录")
         clearStoredAuth()
         setToken(null)
         setUser(null)

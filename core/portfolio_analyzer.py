@@ -1,8 +1,8 @@
-﻿"""Portfolio analysis utilities."""
+"""Portfolio analysis utilities."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -65,16 +65,25 @@ class PortfolioAnalyzer:
 
     @staticmethod
     def _ewma_covariance(returns_df: pd.DataFrame, decay: float = 0.94) -> pd.DataFrame:
+        """Exponentially-weighted moving-average covariance matrix.
+
+        Uses the standard RiskMetrics recurrence: each observation updates the
+        estimate as ``cov = decay * cov + (1 - decay) * outer(return)``.
+        The initial estimate is seeded from the first observation rather than
+        from the full-sample covariance, so recent returns dominate.
+        """
         if returns_df.empty:
             return pd.DataFrame()
-        cov = returns_df.cov().copy()
-        for _, row in returns_df.iterrows():
-            vec = row.values.astype(float).reshape(-1, 1)
+        cols = returns_df.columns
+        data = returns_df.values.astype(float)
+        # Seed from the first observation's outer product.
+        first = data[0].reshape(-1, 1)
+        cov = np.matmul(first, first.T)
+        for i in range(1, len(data)):
+            vec = data[i].reshape(-1, 1)
             outer = np.matmul(vec, vec.T)
-            cov = decay * cov + (1.0 - decay) * pd.DataFrame(
-                outer, index=returns_df.columns, columns=returns_df.columns
-            )
-        return cov
+            cov = decay * cov + (1.0 - decay) * outer
+        return pd.DataFrame(cov, index=cols, columns=cols)
 
     @staticmethod
     def _shrink_covariance(cov: pd.DataFrame, shrinkage: float = 0.15) -> pd.DataFrame:
@@ -301,5 +310,5 @@ class PortfolioAnalyzer:
                 if technical_signals is not None and not technical_signals.empty
                 else []
             ),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }

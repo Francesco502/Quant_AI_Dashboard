@@ -9,11 +9,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -102,6 +105,7 @@ class TechnicalStrategy(BaseStrategy):
     def __init__(
         self,
         strategy_id: str,
+        indicators: Optional[List[str]] = None,
         version: str = "v1.0",
         fast_window: int = 20,
         slow_window: int = 50,
@@ -124,6 +128,7 @@ class TechnicalStrategy(BaseStrategy):
             buy_threshold: 买入信号阈值
             sell_threshold: 卖出信号阈值
         """
+        legacy_config = dict(kwargs.pop("config", {}) or {})
         config = {
             "fast_window": fast_window,
             "slow_window": slow_window,
@@ -131,6 +136,7 @@ class TechnicalStrategy(BaseStrategy):
             "rsi_overbought": rsi_overbought,
             "buy_threshold": buy_threshold,
             "sell_threshold": sell_threshold,
+            **legacy_config,
             **kwargs,
         }
         super().__init__(strategy_id, version, config)
@@ -140,6 +146,7 @@ class TechnicalStrategy(BaseStrategy):
         self.rsi_overbought = rsi_overbought
         self.buy_threshold = buy_threshold
         self.sell_threshold = sell_threshold
+        self.indicators = indicators or legacy_config.get("indicators") or kwargs.get("indicators", [])
 
     def generate_signals(
         self, price_df: pd.DataFrame, **kwargs
@@ -225,12 +232,14 @@ class AIStrategy(BaseStrategy):
             horizon: 预测天数
             use_production_model: 是否使用生产模型
         """
+        legacy_config = dict(kwargs.pop("config", {}) or {})
         config = {
             "model_type": model_type,
             "buy_threshold": buy_threshold,
             "sell_threshold": sell_threshold,
             "horizon": horizon,
             "use_production_model": use_production_model,
+            **legacy_config,
             **kwargs,
         }
         super().__init__(strategy_id, version, config)
@@ -239,6 +248,7 @@ class AIStrategy(BaseStrategy):
         self.sell_threshold = sell_threshold
         self.horizon = horizon
         self.use_production_model = use_production_model
+        self.model_id = kwargs.get("model_id") or legacy_config.get("model_id")
 
     def generate_signals(
         self, price_df: pd.DataFrame, **kwargs
@@ -277,7 +287,8 @@ class AIStrategy(BaseStrategy):
                     continue
 
                 last_price = float(price_series.iloc[-1])
-                pred_price = float(pred["prediction"].iloc[0])
+                pred_col = "prediction" if "prediction" in pred.columns else "forecast"
+                pred_price = float(pred[pred_col].iloc[0])
                 prediction_return = (pred_price - last_price) / last_price
 
                 # 确定方向和动作
@@ -307,7 +318,7 @@ class AIStrategy(BaseStrategy):
 
             except Exception as e:
                 # 单个资产失败不影响其他资产
-                print(f"AI策略生成信号失败 ({ticker}): {e}")
+                logger.error(f"AI策略生成信号失败 ({ticker}): {e}")
                 continue
 
         return pd.DataFrame(result_rows)
@@ -321,7 +332,8 @@ class EnsembleStrategy(BaseStrategy):
         strategy_id: str,
         version: str = "v1.0",
         sub_strategies: Optional[List[str]] = None,
-        weights: Optional[List[float]] = None,
+        weights: Optional[List[float] | Dict[str, float]] = None,
+        strategies: Optional[List[BaseStrategy]] = None,
         **kwargs
     ):
         """
@@ -333,6 +345,9 @@ class EnsembleStrategy(BaseStrategy):
             sub_strategies: 子策略ID列表
             weights: 权重列表（需与子策略数量一致）
         """
+        if strategies is not None and sub_strategies is None:
+            sub_strategies = [s.strategy_id for s in strategies]
+
         config = {
             "sub_strategies": sub_strategies or [],
             "weights": weights or [],
@@ -340,7 +355,15 @@ class EnsembleStrategy(BaseStrategy):
         }
         super().__init__(strategy_id, version, config)
         self.sub_strategies = sub_strategies or []
-        self.weights = weights or []
+        self.strategies = strategies or []
+        if isinstance(weights, dict):
+            self.weights = [float(weights.get(sid, 0.0)) for sid in self.sub_strategies]
+            self.weight_map = dict(weights)
+        else:
+            self.weights = list(weights or [])
+            self.weight_map = {
+                sid: self.weights[i] for i, sid in enumerate(self.sub_strategies) if i < len(self.weights)
+            }
         
         # 归一化权重
         if self.weights:
@@ -350,6 +373,12 @@ class EnsembleStrategy(BaseStrategy):
             else:
                 # 如果权重全为0，则平均分配
                 self.weights = [1.0 / len(self.weights)] * len(self.weights)
+
+    def get_config(self) -> Dict:
+        cfg = super().get_config()
+        cfg["sub_strategies"] = list(self.sub_strategies)
+        cfg["weights"] = dict(self.weight_map) if self.weight_map else list(self.weights)
+        return cfg
 
     def generate_signals(
         self, price_df: pd.DataFrame, strategy_manager=None, **kwargs
@@ -368,7 +397,7 @@ class EnsembleStrategy(BaseStrategy):
         if price_df is None or price_df.empty:
             return pd.DataFrame()
 
-        if not self.sub_strategies:
+        if not self.sub_strategies and not self.strategies:
             return pd.DataFrame()
 
         if strategy_manager is None:
@@ -378,14 +407,22 @@ class EnsembleStrategy(BaseStrategy):
         # 收集所有子策略的信号
         all_signals = {}
         
-        for i, sub_strategy_id in enumerate(self.sub_strategies):
+        strategy_items: Iterable[tuple[int, str, Optional[BaseStrategy]]] = (
+            (i, strategy.strategy_id, strategy) for i, strategy in enumerate(self.strategies)
+        ) if self.strategies else (
+            (i, sub_strategy_id, None) for i, sub_strategy_id in enumerate(self.sub_strategies)
+        )
+
+        for i, sub_strategy_id, sub_strategy_obj in strategy_items:
             try:
-                sub_strategy = strategy_manager.get_strategy(sub_strategy_id)
+                sub_strategy = sub_strategy_obj or strategy_manager.get_strategy(sub_strategy_id)
                 if sub_strategy is None:
                     continue
 
                 sub_signals = sub_strategy.generate_signals(price_df, **kwargs)
-                if sub_signals.empty:
+                if isinstance(sub_signals, list):
+                    sub_signals = pd.DataFrame([getattr(signal, "__dict__", signal) for signal in sub_signals])
+                if sub_signals is None or sub_signals.empty:
                     continue
 
                 weight = self.weights[i] if i < len(self.weights) else 1.0 / len(self.sub_strategies)
@@ -409,7 +446,7 @@ class EnsembleStrategy(BaseStrategy):
                     all_signals[ticker]["reasons"].append(row.get("reason", ""))
 
             except Exception as e:
-                print(f"子策略执行失败 ({sub_strategy_id}): {e}")
+                logger.error(f"子策略执行失败 ({sub_strategy_id}): {e}")
                 continue
 
         # 加权聚合信号
@@ -453,4 +490,3 @@ class EnsembleStrategy(BaseStrategy):
             })
 
         return pd.DataFrame(result_rows)
-

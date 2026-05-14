@@ -6,6 +6,8 @@ export type ForecastChartRow = {
   label: string
   historyPrice: number | null
   forecastPrice: number | null
+  forecastUpper: number | null
+  forecastLower: number | null
 }
 
 export type ForecastSummary = {
@@ -42,18 +44,23 @@ export function shortDate(date: string) {
 }
 
 export function buildForecastRows(history: PricePoint[], forecast: PricePoint[]): ForecastChartRow[] {
+  const hasConfidence = forecast.some((p) => p.lower != null || p.upper != null)
   return [
     ...history.map((point) => ({
       date: point.date,
       label: shortDate(point.date),
       historyPrice: point.price,
       forecastPrice: null,
+      forecastUpper: null,
+      forecastLower: null,
     })),
     ...forecast.map((point) => ({
       date: point.date,
       label: shortDate(point.date),
       historyPrice: null,
       forecastPrice: point.price,
+      forecastUpper: hasConfidence && point.upper != null ? point.upper : null,
+      forecastLower: hasConfidence && point.lower != null ? point.lower : null,
     })),
   ]
 }

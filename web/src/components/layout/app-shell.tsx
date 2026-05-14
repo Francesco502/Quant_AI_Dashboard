@@ -1,28 +1,18 @@
 "use client"
 
-import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { AnimatePresence, motion } from "framer-motion"
 
 import { Header } from "@/components/layout/header"
-import { WorkspaceSidebar } from "@/components/layout/workspace-sidebar"
+import { AppToaster } from "@/components/ui/toast"
 import { useAuth } from "@/lib/auth-context"
-import { cn } from "@/lib/utils"
-import {
-  getActiveWorkspaceGroup,
-  getWorkspaceGroups,
-  isWorkspaceItemActive,
-} from "@/lib/workspace-nav"
 
 const PUBLIC_ROUTES = new Set(["/login", "/register"])
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const { isAuthenticated, isReady, user } = useAuth()
+  const { isAuthenticated, isReady } = useAuth()
   const isPublicRoute = PUBLIC_ROUTES.has(pathname)
-  const workspaceGroups = getWorkspaceGroups(user?.role === "admin")
-  const activeGroup = getActiveWorkspaceGroup(pathname, workspaceGroups)
-  const showWorkspaceGroupNav = activeGroup.items.length > 1
 
   if (isPublicRoute) {
     return (
@@ -60,55 +50,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen min-w-0 flex-col overflow-x-hidden">
       <Header />
 
-      {showWorkspaceGroupNav ? (
-        <div className="border-b border-white/40 bg-[rgba(250,246,239,0.20)] backdrop-blur-lg xl:hidden">
-          <div className="mx-auto flex w-full max-w-[1480px] gap-3 overflow-x-auto px-6 py-4 no-scrollbar md:px-10">
-            {activeGroup.items.map((item) => {
-              const isActive = isWorkspaceItemActive(pathname, item.href)
-
-              return (
-                <Link key={item.href} href={item.href} className="shrink-0">
-                  <div
-                    className={cn(
-                      "rounded-full border px-3.5 py-2 text-[12px] font-medium transition-colors",
-                      isActive
-                        ? "border-[rgba(var(--rgb-ochre),0.16)] bg-[rgba(250,246,239,0.96)] text-foreground"
-                        : "border-black/[0.05] bg-[rgba(250,246,239,0.58)] text-foreground/58",
-                    )}
-                  >
-                    {item.name}
-                  </div>
-                </Link>
-              )
-            })}
-          </div>
-        </div>
-      ) : null}
-
-      <div
-        className={cn(
-          "mx-auto flex w-full max-w-[1480px] flex-1 px-6 py-8 md:px-10 md:py-10",
-          showWorkspaceGroupNav && "gap-8 xl:gap-12",
-        )}
-      >
-        {showWorkspaceGroupNav ? <WorkspaceSidebar group={activeGroup} pathname={pathname} /> : null}
-
-        <AnimatePresence mode="wait">
-          <motion.main
-            key={pathname}
-            initial={{ opacity: 0, y: 12, filter: "blur(4px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            exit={{ opacity: 0, y: -12, filter: "blur(4px)" }}
-            transition={{ type: "spring", bounce: 0, duration: 0.4 }}
-            className="min-w-0 flex-1 overflow-y-auto"
-          >
-            {children}
-          </motion.main>
-        </AnimatePresence>
-      </div>
+      <AnimatePresence mode="wait">
+        <motion.main
+          key={pathname}
+          id="main-content"
+          initial={{ opacity: 0, y: 12, filter: "blur(4px)" }}
+          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+          exit={{ opacity: 0, y: -12, filter: "blur(4px)" }}
+          transition={{ type: "spring", bounce: 0, duration: 0.4 }}
+          className="mx-auto w-full min-w-0 max-w-[1480px] flex-1 overflow-x-hidden px-3 py-5 sm:px-6 md:px-10 md:py-10"
+        >
+          {children}
+        </motion.main>
+      </AnimatePresence>
+      <AppToaster />
     </div>
   )
 }

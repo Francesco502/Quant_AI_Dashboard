@@ -37,7 +37,7 @@ export function SegmentedControl<T extends string = string>({
 }: SegmentedControlProps<T>) {
   return (
     <div
-      role="tablist"
+      role="group"
       aria-label={ariaLabel}
       className={cn(
         "segmented-shell",
@@ -52,8 +52,7 @@ export function SegmentedControl<T extends string = string>({
           <button
             key={option.value}
             type="button"
-            role="tab"
-            aria-selected={active}
+            aria-pressed={active}
             disabled={option.disabled}
             data-active={active}
             data-orientation={option.description ? "vertical" : "horizontal"}

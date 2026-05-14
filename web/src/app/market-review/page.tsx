@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { CardDescription, CardTitle, GlassCard } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { HelpTooltip } from "@/components/ui/tooltip"
+import { CardSkeleton } from "@/components/ui/skeleton"
 import { api, type MarketIndex, type MarketReviewResponse } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -19,7 +20,7 @@ function formatSignedPercent(value: number) {
 
 export default function MarketReviewPage() {
   const [market, setMarket] = useState<MarketValue>("cn")
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<MarketReviewResponse | null>(null)
 
@@ -78,12 +79,14 @@ export default function MarketReviewPage() {
       </div>
 
       {error ? (
-        <GlassCard className="border-red-200 bg-red-50/50 p-4 dark:bg-red-950/20">
-          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        <GlassCard className="surface-tone-cinnabar border p-4">
+          <p className="text-sm text-tone-cinnabar">{error}</p>
         </GlassCard>
       ) : null}
 
-      {!data ? (
+      {loading ? (
+        <CardSkeleton rows={5} />
+      ) : !data ? (
         <GlassCard className="p-8 text-sm text-muted-foreground">暂无复盘数据。</GlassCard>
       ) : (
         <>
@@ -150,6 +153,46 @@ export default function MarketReviewPage() {
               {data.northbound?.description || "当前数据源未返回北向资金摘要。"}
             </p>
           </GlassCard>
+
+          {/* Shared analysis context from backend */}
+          {data.shared_context ? (
+            <GlassCard className="space-y-4 p-6 md:p-8">
+              <div className="flex items-center gap-2">
+                <h2 className="section-title mb-0">分析摘要</h2>
+                <HelpTooltip content="后端基于当日数据自动生成的市场脉络与注意事项。" />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                {data.shared_context.market_review_summary ? (
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                    <div className="text-xs font-medium text-muted-foreground">大盘综述</div>
+                    <p className="mt-2 text-sm leading-7 text-foreground/84">
+                      {String(data.shared_context.market_review_summary)}
+                    </p>
+                  </div>
+                ) : null}
+                {data.shared_context.scanner_summary ? (
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                    <div className="text-xs font-medium text-muted-foreground">扫描概要</div>
+                    <p className="mt-2 text-sm leading-7 text-foreground/84">
+                      {String(data.shared_context.scanner_summary)}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+              {(data.shared_context.limitations?.length ?? 0) > 0 ? (
+                <div className="rounded-2xl border border-amber-200/60 bg-amber-50/40 p-4 dark:border-amber-700/30 dark:bg-amber-900/15">
+                  <div className="text-xs font-medium text-amber-700 dark:text-amber-400">注意事项</div>
+                  <ul className="mt-2 space-y-1">
+                    {(data.shared_context.limitations ?? []).map((item: string, i: number) => (
+                      <li key={i} className="text-sm text-amber-700/80 dark:text-amber-400/80">
+                        · {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </GlassCard>
+          ) : null}
         </>
       )}
     </div>
@@ -180,7 +223,7 @@ function IndexCard({ item }: { item: MarketIndex }) {
         </div>
         <Badge variant={isUp ? "default" : "secondary"}>{isUp ? "走强" : "承压"}</Badge>
       </div>
-      <div className={cn("flex items-center text-sm font-medium", isUp ? "text-red-500" : "text-emerald-600")}>
+      <div className={cn("flex items-center text-sm font-medium", isUp ? "text-tone-positive" : "text-tone-negative")}>
         {isUp ? <TrendingUp className="mr-1 h-4 w-4" /> : <TrendingDown className="mr-1 h-4 w-4" />}
         {formatSignedPercent(Number(item.pct_change))}
       </div>
@@ -203,7 +246,7 @@ function SectorPanel({
   items: Array<{ name: string; pct_change: number }>
   tone: "up" | "down"
 }) {
-  const valueClass = tone === "up" ? "text-red-500" : "text-emerald-600"
+  const valueClass = tone === "up" ? "text-tone-positive" : "text-tone-negative"
 
   return (
     <GlassCard className="space-y-4 p-5">

@@ -1,9 +1,9 @@
-﻿"""Portfolio analysis API routes."""
+"""Portfolio analysis API routes."""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -117,7 +117,7 @@ async def analyze_portfolio(request: PortfolioAnalysisRequest):
             benchmark_attribution=result.get("benchmark_attribution", {}),
             highly_correlated_pairs=correlated_pairs,
             technical_signals=result.get("technical_signals", []),
-            timestamp=str(result.get("timestamp") or datetime.utcnow().isoformat()),
+            timestamp=str(result.get("timestamp") or datetime.now(timezone.utc).isoformat()),
         )
     except HTTPException:
         raise

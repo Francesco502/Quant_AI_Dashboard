@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ComponentType } from "react"
 import { motion } from "framer-motion"
+import { toast } from "sonner"
 import {
   Activity,
   AlertTriangle,
@@ -160,6 +161,7 @@ export function HealthStatus({
       setHealth(res.data)
     } catch (error) {
       console.error("Failed to load health:", error)
+      toast.error("加载健康检查失败")
     } finally {
       setLoading(false)
     }

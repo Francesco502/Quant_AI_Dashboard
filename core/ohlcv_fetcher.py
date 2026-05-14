@@ -28,10 +28,13 @@ python -m core.ohlcv_fetcher ^
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from typing import List, Dict
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from .data_service import _load_ohlcv_data_remote
 from .data_store import save_local_ohlcv_history
@@ -95,7 +98,7 @@ def fetch_and_save_ohlcv_for_tickers(
     # 分批处理，避免一次性请求过多标的
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i : i + batch_size]
-        print(f"[OHLCV Fetcher] 正在处理第 {i // batch_size + 1} 批，共 {len(batch)} 个标的...")
+        logger.info("正在处理第 %d 批，共 %d 个标的...", i // batch_size + 1, len(batch))
 
         remote_map = _load_ohlcv_data_remote(
             tickers=batch,
@@ -105,20 +108,20 @@ def fetch_and_save_ohlcv_for_tickers(
             tushare_token=tushare_token,
         )
         if not remote_map:
-            print("  本批次未能从任何数据源获取到有效数据。")
+            logger.warning("本批次未能从任何数据源获取到有效数据。")
             continue
 
         for t in batch:
             df = remote_map.get(t)
             if df is None or df.empty:
-                print(f"  [跳过] {t}: 未获取到有效 OHLCV 数据。")
+                logger.warning("  [跳过] %s: 未获取到有效 OHLCV 数据。", t)
                 continue
             try:
                 save_local_ohlcv_history(t, df)
                 results[t] = len(df)
-                print(f"  [完成] {t}: 写入 {len(df)} 行 OHLCV 到本地 Parquet。")
+                logger.info("  [完成] %s: 写入 %d 行 OHLCV 到本地 Parquet。", t, len(df))
             except Exception as e:
-                print(f"  [失败] {t}: 写入本地 Parquet 时出错：{e}")
+                logger.error("  [失败] %s: 写入本地 Parquet 时出错：%s", t, e)
 
     return results
 
@@ -165,15 +168,15 @@ def main() -> None:
             codes_from_csv = _parse_tickers_from_stocklist(args.stocklist)
             tickers.extend(codes_from_csv)
         except Exception as e:
-            print(f"[错误] 解析股票清单 {args.stocklist} 失败：{e}")
+            logger.error("解析股票清单 %s 失败：%s", args.stocklist, e)
 
     # 去重
     tickers = sorted(set(tickers))
     if not tickers:
-        print("未提供任何有效的标的（tickers 或 stocklist 为空），程序退出。")
+        logger.warning("未提供任何有效的标的（tickers 或 stocklist 为空），程序退出。")
         return
 
-    print(f"共解析到 {len(tickers)} 个标的，开始抓取最近 {args.days} 天的 OHLCV 日线...")
+    logger.info("共解析到 %d 个标的，开始抓取最近 %d 天的 OHLCV 日线...", len(tickers), args.days)
     results = fetch_and_save_ohlcv_for_tickers(
         tickers=tickers,
         days=args.days,
@@ -182,8 +185,10 @@ def main() -> None:
     )
 
     success_count = sum(1 for _, n in results.items() if n > 0)
-    print(
-        f"[完成] 共 {len(tickers)} 个标的，其中 {success_count} 个成功写入本地 Parquet。"
+    logger.info(
+        "[完成] 共 %d 个标的，其中 %d 个成功写入本地 Parquet。",
+        len(tickers),
+        success_count,
     )
 
 

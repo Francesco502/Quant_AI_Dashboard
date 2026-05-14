@@ -60,7 +60,7 @@ async def list_signals(
         raise HTTPException(status_code=500, detail=f"获取信号列表失败: {str(e)}")
 
 
-@router.get("/latest", response_model=List[Dict])
+@router.get("/latest", response_model=List[Dict], deprecated=True)
 async def get_latest_signals(
     ticker: Optional[str] = None,
     n_days: int = Query(1, description="最近N天"),
@@ -83,7 +83,7 @@ async def get_latest_signals(
         raise HTTPException(status_code=500, detail=f"获取最新信号失败: {str(e)}")
 
 
-@router.put("/{ticker}/status")
+@router.put("/{ticker}/status", deprecated=True)
 async def update_signal_status(
     ticker: str,
     model_id: str,

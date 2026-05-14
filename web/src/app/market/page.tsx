@@ -1,7 +1,8 @@
 "use client"
 
+import Link from "next/link"
 import { type ReactNode, useEffect, useMemo, useState } from "react"
-import { Brain, RefreshCw, ShieldAlert } from "lucide-react"
+import { ArrowUpRight, RefreshCw, ShieldAlert } from "lucide-react"
 import { Area, AreaChart, CartesianGrid, Line, Tooltip, XAxis, YAxis } from "recharts"
 
 import { MeasuredChart } from "@/components/charts/measured-chart"
@@ -12,15 +13,12 @@ import { CardDescription, CardTitle, GlassCard } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { api as apiClient, type Asset, type ForecastResult, type PricePoint } from "@/lib/api"
+import { CardSkeleton } from "@/components/ui/skeleton"
+import { api as apiClient, type Asset, type PricePoint } from "@/lib/api"
 import { SONG_COLORS } from "@/lib/chart-theme"
 import {
-  buildErrorInsights,
-  buildForecastRows,
   formatPrice,
-  getForecastSummary,
   getYAxisDomain,
-  summarizeError,
 } from "@/lib/forecast-insights"
 import { formatMonthDayInBeijing } from "@/lib/time"
 import { formatPercent } from "@/lib/utils"
@@ -65,42 +63,36 @@ function rsi(values: number[], period = 14) {
 export default function MarketPage() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [ticker, setTicker] = useState("")
-  const [model, setModel] = useState("xgboost")
-  const [models, setModels] = useState<string[]>(["xgboost", "lightgbm", "prophet", "arima"])
   const [lookback, setLookback] = useState("180")
-  const [horizon, setHorizon] = useState("5")
-  const [loading, setLoading] = useState(false)
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
+  const [historyLoading, setHistoryLoading] = useState(true)
   const [history, setHistory] = useState<PricePoint[]>([])
-  const [forecast, setForecast] = useState<ForecastResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showIndicatorDetails, setShowIndicatorDetails] = useState(false)
+  const [showRiskDetails, setShowRiskDetails] = useState(false)
 
   useEffect(() => {
     let cancelled = false
 
-    void Promise.allSettled([apiClient.stz.getAssetPool(), apiClient.forecasting.getModelList()]).then(
-      ([pool, list]) => {
+    void apiClient.stz.getAssetPool().then(
+      (pool) => {
         if (cancelled) return
 
-        const poolAssets =
-          pool.status === "fulfilled" && pool.value.length > 0
-            ? pool.value
-            : [{ ticker: "600519", alias: "贵州茅台", name: "贵州茅台" }]
+        const poolAssets = pool.length > 0 ? pool : [{ ticker: "600519", alias: "贵州茅台", name: "贵州茅台" }]
         setAssets(poolAssets)
         setTicker((current) => current || poolAssets[0].ticker)
-
-        if (list.status === "fulfilled" && list.value.models?.length) {
-          setModels(list.value.models)
-          if (!list.value.models.includes(model)) {
-            setModel(list.value.models[0])
-          }
-        }
       },
-    )
+    ).catch(() => {
+      if (cancelled) return
+      const fallbackAssets = [{ ticker: "600519", alias: "贵州茅台", name: "贵州茅台" }]
+      setAssets(fallbackAssets)
+      setTicker((current) => current || fallbackAssets[0].ticker)
+    })
 
     return () => {
       cancelled = true
     }
-  }, [model])
+  }, [])
 
   useEffect(() => {
     if (!ticker) return
@@ -109,66 +101,23 @@ export default function MarketPage() {
     void apiClient.data
       .getPrices([ticker], Number.parseInt(lookback, 10))
       .then((res) => {
-        if (!cancelled) setHistory(res?.data?.[ticker] ?? [])
+        if (!cancelled) {
+          setHistory(res?.data?.[ticker] ?? [])
+          setError(null)
+        }
       })
-      .catch(() => {
+      .catch((requestError) => {
         if (!cancelled) setHistory([])
+        if (!cancelled) setError(requestError instanceof Error ? requestError.message : "价格数据加载失败。")
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false)
       })
 
     return () => {
       cancelled = true
     }
-  }, [ticker, lookback])
-
-  const runAnalysis = async () => {
-    if (!ticker) return
-    setLoading(true)
-    setError(null)
-
-    try {
-      setForecast(
-        await apiClient.forecasting.getPrediction(
-          ticker,
-          Number.parseInt(horizon, 10),
-          model,
-          Number.parseInt(lookback, 10),
-        ),
-      )
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "分析失败。")
-      setForecast(null)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const forecastRows = useMemo(
-    () => buildForecastRows(history, forecast?.predictions ?? []),
-    [history, forecast?.predictions],
-  )
-  const forecastDomain = useMemo(
-    () =>
-      getYAxisDomain(
-        forecastRows
-          .flatMap((row) => [row.historyPrice, row.forecastPrice])
-          .filter((value): value is number => typeof value === "number"),
-      ),
-    [forecastRows],
-  )
-  const forecastOnlyDomain = useMemo(
-    () => getYAxisDomain((forecast?.predictions ?? []).map((point) => point.price)),
-    [forecast?.predictions],
-  )
-  const latestHistory = history.at(-1)?.price ?? null
-  const forecastSummary = useMemo(
-    () => getForecastSummary(history, forecast?.predictions ?? []),
-    [history, forecast?.predictions],
-  )
-  const errorInsights = useMemo(
-    () => buildErrorInsights(forecast?.metrics, latestHistory),
-    [forecast?.metrics, latestHistory],
-  )
-  const errorSummary = useMemo(() => summarizeError(errorInsights), [errorInsights])
+  }, [ticker, lookback, historyRefreshKey])
 
   const indicatorRows = useMemo<IndicatorRow[]>(() => {
     if (history.length < 20) return []
@@ -256,20 +205,21 @@ export default function MarketPage() {
     return "波动与回撤仍在可控范围内，但依然需要配合仓位与止损管理。"
   }, [risk])
   const riskTable = useMemo(() => (risk ? risk.drawdown.slice(-8).reverse() : []), [risk])
+  const recentIndicatorRows = useMemo(() => indicatorRows.slice(-8).reverse(), [indicatorRows])
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <section className="space-y-2">
         <h1 className="page-title">技术与风险分析</h1>
         <p className="page-subtitle">
-          用一组统一设置串起预测路径、技术指标与风险拆解，先看走势，再看指标，最后看风险结论。
+          聚焦价格位置、趋势动能与风险拆解；AI 预测统一放到预测研究页，避免两个入口重复解释同一件事。
         </p>
       </section>
 
       <GlassCard className="space-y-3 p-5 md:p-6">
         <PanelHeader
           title="分析设置"
-          description="选定资产、模型与窗口后，页面会依次给出走势判断、技术指标与风险拆解。"
+          description="选定资产与回看窗口后，页面会自动刷新历史价格，并给出技术指标与风险拆解。"
           meta={
             <StatusPill
               label="当前资产"
@@ -278,7 +228,7 @@ export default function MarketPage() {
             />
           }
         />
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2">
           <Field label="分析资产" hint="默认读取资产池中的常用标的。先维护资产池，再到这里分析。">
             <Select value={ticker} onValueChange={setTicker}>
               <SelectTrigger className="h-10">
@@ -288,20 +238,6 @@ export default function MarketPage() {
                 {assets.map((asset) => (
                   <SelectItem key={asset.ticker} value={asset.ticker}>
                     {asset.alias || asset.name || asset.ticker}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label="预测模型" hint="建议至少横向比较两种模型，再决定是否采信。">
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger className="h-10">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {models.map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {item}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -321,26 +257,25 @@ export default function MarketPage() {
               </SelectContent>
             </Select>
           </Field>
-          <Field label="预测窗口" hint="预测越长，越应把结果当作方向参考，而不是精确目标位。">
-            <Select value={horizon} onValueChange={setHorizon}>
-              <SelectTrigger className="h-10">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[1, 3, 5, 7, 15].map((days) => (
-                  <SelectItem key={days} value={String(days)}>
-                    {days} 天
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button className="h-10 px-5" onClick={() => void runAnalysis()} disabled={loading || !ticker}>
-            {loading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
-            {loading ? "正在分析" : "开始分析"}
+          <Button
+            className="h-10 px-5"
+            onClick={() => {
+              setHistoryLoading(true)
+              setHistoryRefreshKey((value) => value + 1)
+            }}
+            disabled={historyLoading || !ticker}
+          >
+            <RefreshCw className={historyLoading ? "mr-2 h-4 w-4 animate-spin" : "mr-2 h-4 w-4"} />
+            {historyLoading ? "正在刷新" : "刷新价格"}
+          </Button>
+          <Button asChild variant="outline" className="h-10 px-5">
+            <Link href="/predictions">
+              去 AI 预测研究
+              <ArrowUpRight className="ml-2 h-4 w-4" />
+            </Link>
           </Button>
         </div>
       </GlassCard>
@@ -352,134 +287,10 @@ export default function MarketPage() {
       ) : null}
 
       <section className="space-y-4">
-        <div className="space-y-1">
-          <CardTitle>AI 预测</CardTitle>
-          <CardDescription>从历史与预测路径入手，先建立方向感与目标位预期。</CardDescription>
-        </div>
-
-        <GlassCard className="space-y-4 p-5">
-          <div className="space-y-1">
-            <TitleWithHint
-              title="历史与预测路径"
-              hint="先看历史段和预测段是否衔接平滑，再看目标位是否落在合理波动区间。"
-            />
-          </div>
-          <MeasuredChart height={300}>
-            {(width, height) => (
-              <AreaChart width={width} height={height} data={forecastRows}>
-                <defs>
-                  <linearGradient id="market-ai-history-fill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={SONG_COLORS.celadon} stopOpacity={0.24} />
-                    <stop offset="95%" stopColor={SONG_COLORS.celadon} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={SONG_COLORS.grid} />
-                <XAxis dataKey="label" tick={{ fontSize: 12, fill: SONG_COLORS.axis }} axisLine={false} tickLine={false} minTickGap={24} />
-                <YAxis domain={forecastDomain} tick={{ fontSize: 12, fill: SONG_COLORS.axis }} axisLine={false} tickLine={false} width={64} />
-                <Tooltip
-                  formatter={(value?: number | string) => (value == null ? ["--", ""] : [formatPrice(Number(value)), "价格"])}
-                  labelFormatter={(label) => `日期 ${label}`}
-                  contentStyle={{ borderRadius: 16, border: "1px solid rgba(77,71,66,0.08)", background: "rgba(255,255,255,0.92)" }}
-                />
-                <Area type="monotone" dataKey="historyPrice" stroke={SONG_COLORS.celadon} strokeWidth={2.2} fill="url(#market-ai-history-fill)" connectNulls />
-                <Line type="monotone" dataKey="forecastPrice" stroke={SONG_COLORS.indigo} strokeWidth={2.4} strokeDasharray="6 5" dot={false} connectNulls />
-              </AreaChart>
-            )}
-          </MeasuredChart>
-        </GlassCard>
-
-        <div className="grid gap-3 md:grid-cols-4">
-          <InfoCard
-            label="预测方向"
-            hint="比较最新价格与预测终点的方向差，更适合做方向判断。"
-            value={forecastSummary ? (forecastSummary.up ? "偏多" : "偏谨慎") : "--"}
-            secondary={forecastSummary ? `区间变化 ${(forecastSummary.pct * 100).toFixed(2)}%` : "等待模型返回"}
-            accentColor={forecastSummary?.up ? SONG_COLORS.celadon : SONG_COLORS.cinnabar}
-          />
-          <InfoCard
-            label="最新价格"
-            hint="历史样本最后一个可用价格，是目标价和误差比例的基准。"
-            value={forecastSummary ? formatPrice(forecastSummary.current) : "--"}
-            secondary={history.at(-1)?.date?.slice(0, 10) ?? "暂无历史样本"}
-          />
-          <InfoCard
-            label="目标价格"
-            hint="预测窗口最后一天的价格，更适合作为区间终点预期。"
-            value={forecastSummary ? formatPrice(forecastSummary.target) : "--"}
-            secondary={forecast?.predictions.at(-1)?.date?.slice(0, 10) ?? "暂无目标时点"}
-            accentColor={SONG_COLORS.indigo}
-          />
-          <InfoCard
-            label="综合误差"
-            hint="综合参考 MAPE、MAE、RMSE 和标准化误差。"
-            value={errorSummary.title}
-            secondary={errorSummary.description}
-            accentColor={errorSummary.title.includes("偏高") ? SONG_COLORS.cinnabar : SONG_COLORS.ochre}
-          />
-        </div>
-
-        <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-          <GlassCard className="space-y-4 p-5">
-            <div className="space-y-1">
-              <TitleWithHint title="单独预测路径" hint="只显示未来预测段，方便观察斜率、节奏与目标位变化。" />
-            </div>
-            <MeasuredChart height={260}>
-              {(width, height) => (
-                <AreaChart width={width} height={height} data={forecast?.predictions ?? []}>
-                  <defs>
-                    <linearGradient id="market-ai-forecast-fill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={SONG_COLORS.indigo} stopOpacity={0.18} />
-                      <stop offset="95%" stopColor={SONG_COLORS.indigo} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={SONG_COLORS.grid} />
-                  <XAxis dataKey="date" tickFormatter={(value) => value.slice(5, 10)} tick={{ fontSize: 12, fill: SONG_COLORS.axis }} axisLine={false} tickLine={false} />
-                  <YAxis domain={forecastOnlyDomain} tick={{ fontSize: 12, fill: SONG_COLORS.axis }} axisLine={false} tickLine={false} width={64} />
-                  <Tooltip
-                    formatter={(value?: number | string) => (value == null ? ["--", ""] : [formatPrice(Number(value)), "预测价格"])}
-                    labelFormatter={(label) => `日期 ${String(label).slice(0, 10)}`}
-                    contentStyle={{ borderRadius: 16, border: "1px solid rgba(77,71,66,0.08)", background: "rgba(255,255,255,0.92)" }}
-                  />
-                  <Area type="monotone" dataKey="price" stroke={SONG_COLORS.indigo} strokeWidth={2.4} fill="url(#market-ai-forecast-fill)" />
-                </AreaChart>
-              )}
-            </MeasuredChart>
-          </GlassCard>
-
-          <GlassCard className="space-y-4 p-5">
-            <div className="space-y-1">
-              <TitleWithHint title="预测明细表" hint="逐日表格便于核对每个预测点与最新价格的偏离。" />
-            </div>
-            <div className="overflow-hidden rounded-2xl border border-border/60">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>日期</TableHead>
-                    <TableHead>预测价格</TableHead>
-                    <TableHead>较最新价格</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(forecast?.predictions ?? []).map((point) => {
-                    const delta = latestHistory != null ? (point.price - latestHistory) / Math.max(latestHistory, 1e-6) : null
-                    return (
-                      <TableRow key={point.date}>
-                        <TableCell>{point.date.slice(0, 10)}</TableCell>
-                        <TableCell className="font-medium">{formatPrice(point.price)}</TableCell>
-                        <TableCell style={{ color: delta != null && delta < 0 ? SONG_COLORS.cinnabar : SONG_COLORS.celadon }}>
-                          {delta != null ? `${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)}%` : "--"}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          </GlassCard>
-        </div>
-      </section>
-
-      <section className="space-y-4">
+      {historyLoading ? (
+        <CardSkeleton rows={4} />
+      ) : (
+      <>
         <div className="space-y-1">
           <CardTitle>技术指标</CardTitle>
           <CardDescription>用价格、均线与 RSI 一起判断位置、趋势与动能。</CardDescription>
@@ -492,7 +303,8 @@ export default function MarketPage() {
               hint="价格与均线负责看趋势位置，RSI 负责看动能冷热。三者一起看，能减少单一指标误导。"
             />
           </div>
-          <MeasuredChart height={300}>
+          <div className="text-xs text-muted-foreground lg:hidden">图表会优先保留关键走势，触摸图表可查看具体点位。</div>
+          <MeasuredChart height={340}>
             {(width, height) => (
               <AreaChart width={width} height={height} data={indicatorRows}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={SONG_COLORS.grid} />
@@ -500,7 +312,7 @@ export default function MarketPage() {
                 <YAxis yAxisId="price" domain={indicatorDomain} tick={{ fontSize: 12, fill: SONG_COLORS.axis }} axisLine={false} tickLine={false} width={64} />
                 <YAxis yAxisId="rsi" orientation="right" domain={[0, 100]} tick={{ fontSize: 12, fill: SONG_COLORS.axis }} axisLine={false} tickLine={false} width={44} />
                 <Tooltip
-                  contentStyle={{ borderRadius: 16, border: "1px solid rgba(77,71,66,0.08)", background: "rgba(255,255,255,0.92)" }}
+                  contentStyle={{ borderRadius: 16, border: "1px solid var(--chart-tooltip-border)", background: "var(--chart-tooltip-bg)" }}
                 />
                 <Line yAxisId="price" type="monotone" dataKey="price" stroke={SONG_COLORS.ink} strokeWidth={2.3} dot={false} />
                 <Line yAxisId="price" type="monotone" dataKey="sma20" stroke={SONG_COLORS.celadon} strokeWidth={2} dot={false} connectNulls />
@@ -545,7 +357,48 @@ export default function MarketPage() {
             <TitleWithHint title="指标解读与明细" hint="先看结论，再看最近几天的明细，把判断和证据放在一起。" />
             <CardDescription>{indicatorNote}</CardDescription>
           </div>
-          <div className="overflow-hidden rounded-2xl border border-border/60">
+          <div className="space-y-3 lg:hidden">
+            {recentIndicatorRows.length === 0 ? (
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
+                暂无指标明细。
+              </div>
+            ) : null}
+            {(showIndicatorDetails ? recentIndicatorRows : recentIndicatorRows.slice(0, 3)).map((row) => (
+              <div key={row.date} className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs text-muted-foreground">日期</div>
+                    <div className="mt-1 font-medium">{row.date.slice(0, 10)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">收盘价</div>
+                    <div className="mt-1 text-lg font-semibold tabular-nums">{formatPrice(row.price)}</div>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-xl bg-background/50 px-3 py-2">
+                    <div className="text-xs text-muted-foreground">SMA20</div>
+                    <div className="mt-1 font-medium">{row.sma20 != null ? formatPrice(row.sma20) : "--"}</div>
+                  </div>
+                  <div className="rounded-xl bg-background/50 px-3 py-2">
+                    <div className="text-xs text-muted-foreground">RSI14</div>
+                    <div className="mt-1 font-medium">{row.rsi14 != null ? row.rsi14.toFixed(2) : "--"}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {recentIndicatorRows.length > 3 ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => setShowIndicatorDetails((current) => !current)}
+              >
+                {showIndicatorDetails ? "收起指标明细" : `展开最近 ${recentIndicatorRows.length} 条指标明细`}
+              </Button>
+            ) : null}
+          </div>
+          <div className="hidden overflow-hidden rounded-2xl border border-border/60 lg:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -556,7 +409,7 @@ export default function MarketPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {indicatorRows.slice(-8).reverse().map((row) => (
+                {recentIndicatorRows.map((row) => (
                   <TableRow key={row.date}>
                     <TableCell>{row.date.slice(0, 10)}</TableCell>
                     <TableCell className="font-medium">{formatPrice(row.price)}</TableCell>
@@ -568,9 +421,15 @@ export default function MarketPage() {
             </Table>
           </div>
         </GlassCard>
+      </>
+      )}
       </section>
 
       <section className="space-y-4">
+      {historyLoading ? (
+        <CardSkeleton rows={3} />
+      ) : (
+      <>
         <div className="space-y-1">
           <CardTitle>风险拆解</CardTitle>
           <CardDescription>把回撤、波动与风险结论放在同一页，不再拆成独立子页。</CardDescription>
@@ -587,7 +446,8 @@ export default function MarketPage() {
                   hint="回撤轨迹反映历史从高点回落的深度与持续时间，比单日涨跌更能描述持有压力。"
                 />
               </div>
-              <MeasuredChart height={280}>
+              <div className="text-xs text-muted-foreground lg:hidden">回撤图保留完整轨迹，下方默认只列最近 3 条风险记录。</div>
+              <MeasuredChart height={320}>
                 {(width, height) => (
                   <AreaChart width={width} height={height} data={risk.drawdown}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={SONG_COLORS.grid} />
@@ -595,7 +455,7 @@ export default function MarketPage() {
                     <YAxis tickFormatter={(value) => `${(Number(value) * 100).toFixed(0)}%`} tick={{ fontSize: 12, fill: SONG_COLORS.axis }} axisLine={false} tickLine={false} width={56} />
                     <Tooltip
                       formatter={(value?: number | string) => [`${(Number(value ?? 0) * 100).toFixed(2)}%`, "回撤"]}
-                      contentStyle={{ borderRadius: 16, border: "1px solid rgba(77,71,66,0.08)", background: "rgba(255,255,255,0.92)" }}
+                      contentStyle={{ borderRadius: 16, border: "1px solid var(--chart-tooltip-border)", background: "var(--chart-tooltip-bg)" }}
                     />
                     <Area type="monotone" dataKey="drawdown" stroke={SONG_COLORS.cinnabar} strokeWidth={2} fill={SONG_COLORS.riskFill} />
                   </AreaChart>
@@ -641,7 +501,35 @@ export default function MarketPage() {
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border border-border/60">
+              <div className="space-y-3 lg:hidden">
+                {(showRiskDetails ? riskTable : riskTable.slice(0, 3)).map((row) => (
+                  <div key={row.date} className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs text-muted-foreground">日期</div>
+                        <div className="mt-1 font-medium">{row.date.slice(0, 10)}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs text-muted-foreground">回撤</div>
+                        <div className="mt-1 text-lg font-semibold tabular-nums" style={{ color: SONG_COLORS.cinnabar }}>
+                          {formatPercent(row.drawdown)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {riskTable.length > 3 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setShowRiskDetails((current) => !current)}
+                  >
+                    {showRiskDetails ? "收起风险明细" : `展开最近 ${riskTable.length} 条风险明细`}
+                  </Button>
+                ) : null}
+              </div>
+              <div className="hidden overflow-hidden rounded-2xl border border-border/60 lg:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -664,6 +552,8 @@ export default function MarketPage() {
             </GlassCard>
           </>
         )}
+      </>
+      )}
       </section>
     </div>
   )

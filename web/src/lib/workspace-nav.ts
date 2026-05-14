@@ -3,6 +3,7 @@ import {
   Activity,
   Bot,
   ChartColumn,
+  ClipboardCheck,
   Compass,
   History,
   LineChart,
@@ -35,15 +36,21 @@ const BASE_GROUPS: WorkspaceGroup[] = [
   {
     id: "workbench",
     name: "工作台",
-    description: "查看总览、提醒与常用入口。",
-    defaultHref: "/",
+    description: "查看总览、每日任务与关键复盘入口。",
+    defaultHref: "/daily-workbench",
     icon: Compass,
     tone: "indigo",
     items: [
       {
+        name: "日常决策",
+        href: "/daily-workbench",
+        description: "把市场复盘、数据新鲜度、扫描、回测和纸面账户合成每日入口。",
+        icon: ClipboardCheck,
+      },
+      {
         name: "总览",
         href: "/",
-        description: "查看全局概览、当日状态与常用操作入口。",
+        description: "查看全局概览、当前状态与常用操作入口。",
         icon: Compass,
       },
     ],
@@ -105,7 +112,7 @@ const BASE_GROUPS: WorkspaceGroup[] = [
       {
         name: "模拟交易",
         href: "/trading",
-        description: "查看账户、订单、成交与自动交易状态。",
+        description: "查看账户、订单、成交与自动纸面执行状态。",
         icon: Activity,
       },
       {
@@ -150,16 +157,16 @@ const SYSTEM_ITEMS: WorkspaceItem[] = [
   {
     name: "系统设置",
     href: "/settings",
-    description: "配置数据源、模型服务与全局行为。",
+    description: "配置数据源、模型服务、备份与全局行为。",
     icon: Settings2,
   },
 ]
 
 const GROUP_PREFIXES: Record<WorkspaceGroup["id"], string[]> = {
-  workbench: ["/"],
-  research: ["/market", "/market-review", "/market-scanner", "/predictions", "/dashboard-llm", "/agent-research"],
-  execution: ["/backtest", "/portfolio-backtest", "/trading", "/strategies"],
-  assets: ["/portfolio", "/asset-pool", "/portfolio-analysis"],
+  workbench: ["/", "/daily-workbench"],
+  research: ["/market", "/market-review", "/market-scanner", "/predictions", "/dashboard-llm"],
+  execution: ["/backtest", "/trading", "/strategies"],
+  assets: ["/portfolio", "/asset-pool"],
   system: ["/settings", "/system-monitor", "/users"],
 }
 

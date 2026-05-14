@@ -1,11 +1,4 @@
-"""API中间件
-
-职责：
-- API限流中间件
-- 请求日志记录
-- 性能监控
-- 异常处理
-"""
+"""API middleware — rate limiting, correlation IDs, performance monitoring, and error handling."""
 
 from __future__ import annotations
 
@@ -22,9 +15,27 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.auth import get_current_active_user, UserInDB
+from core.logging_config import set_correlation_id, get_correlation_id
 
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== 请求追踪（Correlation ID）====================
+
+class CorrelationIdMiddleware(BaseHTTPMiddleware):
+    """Ensure every request carries a correlation ID for log tracing.
+
+    Reads X-Request-ID from the incoming header or generates a new one.
+    Attaches it to both the response header and the async context.
+    """
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        request_id = request.headers.get("X-Request-ID") or request.headers.get("x-request-id")
+        cid = set_correlation_id(request_id)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = cid
+        return response
 
 
 # ==================== 限流相关 ====================

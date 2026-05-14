@@ -16,7 +16,7 @@ from api.routers.trading import (
 from core.database import get_database
 
 
-router = APIRouter()
+router = APIRouter(deprecated=True)
 
 
 def _resolve_user_id(cursor, current_user: UserInDB) -> int:

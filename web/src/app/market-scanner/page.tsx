@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
@@ -8,7 +9,9 @@ import { GlassCard } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { api, type SelectorConfig } from "@/lib/api"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { CardSkeleton } from "@/components/ui/skeleton"
+import { api, type DataFreshnessItem, type SelectorConfig } from "@/lib/api"
 import { getTodayInBeijing } from "@/lib/time"
 import { useStrategies } from "@/lib/use-strategies"
 
@@ -55,6 +58,7 @@ export default function MarketScannerPage() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState("")
   const [rows, setRows] = useState<ScanRow[]>([])
+  const [freshnessMap, setFreshnessMap] = useState<Record<string, DataFreshnessItem>>({})
 
   useEffect(() => {
     setTradeDate(getTodayInBeijing())
@@ -75,6 +79,34 @@ export default function MarketScannerPage() {
     setMessage("")
     setRows([])
     try {
+      if (scanMode === "universe") {
+        const pool = await api.stz.getAssetPool().catch(() => [])
+        const poolTickers = Array.from(new Set((pool || []).map((asset) => asset.ticker).filter(Boolean)))
+        if (poolTickers.length > 0) {
+          const freshness = await api.dataFreshness.getPrices(poolTickers, 5)
+          const nextFreshnessMap = Object.fromEntries(freshness.items.map((item) => [item.ticker, item]))
+          setFreshnessMap(nextFreshnessMap)
+          const blockingItems = freshness.items.filter((item) => item.should_block)
+          if (blockingItems.length > 0) {
+            const sample = blockingItems.slice(0, 4).map((item) => item.ticker).join("、")
+            await api.audit
+              .recordEvent({
+                action: "SCAN_BLOCKED_STALE_DATA",
+                resource: "asset-pool",
+                resource_type: "scan",
+                success: false,
+                details: { tickers: blockingItems.map((item) => item.ticker), trade_date: tradeDate },
+                error_message: "资产池存在过期或缺失价格数据",
+              })
+              .catch(() => undefined)
+            setMessage(`已阻止扫描：${blockingItems.length} 个资产数据过期或缺失（${sample}），请先更新数据源。`)
+            return
+          }
+        }
+      } else {
+        setFreshnessMap({})
+      }
+
       const selectorNames = scanStrategy === "all" ? undefined : [scanStrategy]
       const response = await api.stz.run({
         trade_date: tradeDate,
@@ -86,8 +118,42 @@ export default function MarketScannerPage() {
       })
       const nextRows = normalizeScanRows(response.data)
       setRows(nextRows)
+      if (nextRows.length > 0) {
+        const resultFreshness = await api.dataFreshness
+          .getPrices(Array.from(new Set(nextRows.map((row) => row.ticker))), 5)
+          .catch(() => null)
+        if (resultFreshness) {
+          setFreshnessMap((previous) => ({
+            ...previous,
+            ...Object.fromEntries(resultFreshness.items.map((item) => [item.ticker, item])),
+          }))
+        }
+      }
+      await api.audit
+        .recordEvent({
+          action: "SCAN_RUN",
+          resource: scanMode,
+          resource_type: "scan",
+          details: {
+            trade_date: tradeDate,
+            market: scanMarket,
+            strategy: scanStrategy,
+            result_count: nextRows.length,
+          },
+        })
+        .catch(() => undefined)
       setMessage(response.message || `已返回 ${nextRows.length} 条结果`)
     } catch (requestError) {
+      await api.audit
+        .recordEvent({
+          action: "SCAN_RUN",
+          resource: scanMode,
+          resource_type: "scan",
+          success: false,
+          details: { trade_date: tradeDate, market: scanMarket, strategy: scanStrategy },
+          error_message: requestError instanceof Error ? requestError.message : "扫描失败",
+        })
+        .catch(() => undefined)
       setMessage(requestError instanceof Error ? requestError.message : "扫描失败")
     } finally {
       setLoading(false)
@@ -174,35 +240,108 @@ export default function MarketScannerPage() {
           </div>
           {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
 
-          {rows.length === 0 ? (
+          {loading ? (
+            <CardSkeleton rows={5} />
+          ) : rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无结果。</p>
           ) : (
-            <div className="max-h-[560px] overflow-auto rounded-md border">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-muted/50">
-                  <tr>
-                    <th className="p-2 text-left">代码</th>
-                    <th className="p-2 text-left">名称</th>
-                    <th className="p-2 text-left">策略</th>
-                    <th className="p-2 text-right">收盘价</th>
-                    <th className="p-2 text-right">分数</th>
-                    <th className="p-2 text-left">动作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={`${row.ticker}-${row.selector_alias}`} className="border-t">
-                      <td className="p-2 font-medium">{row.ticker}</td>
-                      <td className="p-2">{row.name || "-"}</td>
-                      <td className="p-2">{row.selector_alias || "-"}</td>
-                      <td className="p-2 text-right">{Number(row.last_close).toFixed(2)}</td>
-                      <td className="p-2 text-right">{row.score?.toFixed(2) ?? "-"}</td>
-                      <td className="p-2">{row.action || "HOLD"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="space-y-3 lg:hidden">
+                {rows.map((row) => (
+                  <div key={`${row.ticker}-${row.selector_alias}-mobile`} className="rounded-[24px] border border-border/60 bg-background/72 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-medium text-foreground">{row.ticker}</div>
+                        <div className="mt-1 truncate text-sm text-muted-foreground">{row.name || "-"}</div>
+                      </div>
+                      <Badge variant="outline">{row.action || "HOLD"}</Badge>
+                    </div>
+                    <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                      <div className="rounded-2xl bg-background/70 px-3 py-2">
+                        <div className="text-xs text-muted-foreground">策略</div>
+                        <div className="mt-1 truncate font-medium">{row.selector_alias || "-"}</div>
+                      </div>
+                      <div className="rounded-2xl bg-background/70 px-3 py-2">
+                        <div className="text-xs text-muted-foreground">收盘价</div>
+                        <div className="mt-1 font-medium tabular-nums">{Number(row.last_close).toFixed(2)}</div>
+                      </div>
+                      <div className="rounded-2xl bg-background/70 px-3 py-2">
+                        <div className="text-xs text-muted-foreground">分数</div>
+                        <div className="mt-1 font-medium tabular-nums">{row.score?.toFixed(2) ?? "-"}</div>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={`/predictions?ticker=${encodeURIComponent(row.ticker)}`}>查看预测</Link>
+                      </Button>
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={`/backtest?mode=classic&ticker=${encodeURIComponent(row.ticker)}`}>进入回测</Link>
+                      </Button>
+                      <Button asChild size="sm">
+                        <Link href={`/trading?symbol=${encodeURIComponent(row.ticker)}`}>生成纸面单</Link>
+                      </Button>
+                    </div>
+                    {freshnessMap[row.ticker] ? (
+                      <div className="mt-3 rounded-2xl border border-border/60 bg-background/70 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                        数据源 {freshnessMap[row.ticker].source}，最后更新 {freshnessMap[row.ticker].last_date ?? "-"}。
+                        {freshnessMap[row.ticker].message}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+              <div className="hidden max-h-[560px] overflow-auto rounded-[24px] border border-border/60 bg-background/45 lg:block">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur">
+                    <TableRow>
+                      <TableHead>代码</TableHead>
+                      <TableHead>名称</TableHead>
+                      <TableHead>策略</TableHead>
+                      <TableHead className="text-right">收盘价</TableHead>
+                      <TableHead className="text-right">分数</TableHead>
+                      <TableHead>数据状态</TableHead>
+                      <TableHead>动作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((row) => (
+                      <TableRow key={`${row.ticker}-${row.selector_alias}`} className="hover:bg-[rgba(var(--rgb-ochre),0.05)]">
+                        <TableCell className="font-mono font-semibold">{row.ticker}</TableCell>
+                        <TableCell>{row.name || "-"}</TableCell>
+                        <TableCell className="text-foreground/72">{row.selector_alias || "-"}</TableCell>
+                        <TableCell className="text-right tabular-nums">{Number(row.last_close).toFixed(2)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.score?.toFixed(2) ?? "-"}</TableCell>
+                        <TableCell>
+                          {freshnessMap[row.ticker] ? (
+                            <Badge variant={freshnessMap[row.ticker].is_stale ? "destructive" : "success"}>
+                              {freshnessMap[row.ticker].is_stale ? "过期" : "可用"}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline">未检查</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline" className="rounded-full px-2.5 py-1">
+                              {row.action || "HOLD"}
+                            </Badge>
+                            <Button asChild size="sm" variant="outline">
+                              <Link href={`/predictions?ticker=${encodeURIComponent(row.ticker)}`}>预测</Link>
+                            </Button>
+                            <Button asChild size="sm" variant="outline">
+                              <Link href={`/backtest?mode=classic&ticker=${encodeURIComponent(row.ticker)}`}>回测</Link>
+                            </Button>
+                            <Button asChild size="sm">
+                              <Link href={`/trading?symbol=${encodeURIComponent(row.ticker)}`}>纸面单</Link>
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </GlassCard>
       </div>

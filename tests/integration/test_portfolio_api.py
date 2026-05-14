@@ -1,4 +1,4 @@
-﻿"""Integration tests for portfolio API contract."""
+"""Integration tests for portfolio API contract."""
 
 from unittest.mock import patch
 

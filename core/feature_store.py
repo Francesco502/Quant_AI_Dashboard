@@ -10,9 +10,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 
@@ -160,7 +163,7 @@ class FeatureStore:
 
             return True
         except Exception as e:
-            print(f"保存特征失败 ({ticker}): {e}")
+            logger.error(f"保存特征失败 ({ticker}): {e}")
             return False
 
     def load_features(
@@ -198,7 +201,7 @@ class FeatureStore:
 
             return df
         except Exception as e:
-            print(f"加载特征失败 ({ticker}): {e}")
+            logger.error(f"加载特征失败 ({ticker}): {e}")
             return None
 
     def get_latest_features(self, ticker: str, n_days: int = 1) -> Optional[pd.DataFrame]:

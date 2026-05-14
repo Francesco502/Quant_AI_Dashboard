@@ -406,3 +406,96 @@ def test_period_change_uses_opening_reset_baseline_instead_of_full_market_value(
     assert asset["week_change"] == pytest.approx(42.0)
     assert asset["month_change"] == pytest.approx(62.0)
     assert asset["year_change"] == pytest.approx(82.0)
+
+
+@patch("core.user_assets.load_cn_realtime_quotes_sina", return_value={})
+@patch("core.user_assets.load_price_data_akshare")
+@patch("core.user_assets.load_price_data")
+def test_period_change_prefers_price_series_baseline_over_stale_snapshot(
+    mock_load_price,
+    mock_load_price_akshare,
+    _mock_realtime,
+    asset_service,
+):
+    dates = pd.to_datetime(["2026-04-15", "2026-04-24", "2026-04-27"])
+    series = pd.DataFrame({"006195": [3.10, 3.4567, 3.4746]}, index=dates)
+    mock_load_price.return_value = series
+    mock_load_price_akshare.return_value = series
+
+    asset_service.upsert_asset(
+        1,
+        {
+            "ticker": "006195",
+            "asset_name": "Stale Snapshot Baseline Test",
+            "asset_type": "fund",
+            "units": 100,
+            "avg_cost": 3.00,
+            "trade_date": "2026-03-20",
+        },
+    )
+
+    with asset_service._db_lock:
+        cursor = asset_service._cursor()
+        cursor.execute(
+            """
+            INSERT INTO user_asset_snapshots
+            (
+                user_id, snapshot_date, ticker, current_price, units,
+                market_value, invested_amount, total_return, total_return_pct
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, "2026-04-15", "006195", 1.0, 100.0, 100.0, 300.0, -200.0, -66.6667),
+        )
+        asset_service.db.conn.commit()
+
+    overview = asset_service.get_overview(1, sync_dca=False, force_refresh=True)
+    asset = overview["assets"][0]
+
+    assert asset["current_price"] == pytest.approx(3.4746)
+    assert asset["day_change"] == pytest.approx((3.4746 - 3.4567) * 100)
+
+
+@patch("core.user_assets.load_cn_realtime_quotes_sina", return_value={})
+@patch("core.user_assets.load_price_data_akshare")
+@patch("core.user_assets.load_price_data")
+def test_period_change_uses_reset_price_when_reference_price_is_missing(
+    mock_load_price,
+    mock_load_price_akshare,
+    _mock_realtime,
+    asset_service,
+):
+    series = pd.DataFrame({"002611": [3.20]}, index=pd.to_datetime(["2026-03-26"]))
+    mock_load_price.return_value = series
+    mock_load_price_akshare.return_value = series
+
+    asset_service.upsert_asset(
+        1,
+        {
+            "ticker": "002611",
+            "asset_name": "Missing Reference Price Test",
+            "asset_type": "fund",
+            "units": 100,
+            "avg_cost": 2.50,
+            "trade_date": "2026-03-26",
+        },
+    )
+    asset_service.add_transaction(
+        1,
+        "002611",
+        {
+            "transaction_type": "BUY",
+            "quantity": 10,
+            "price": 3.00,
+            "amount": 30.0,
+            "trade_date": "2026-03-26",
+        },
+    )
+
+    overview = asset_service.get_overview(1, sync_dca=False, force_refresh=True)
+    asset = overview["assets"][0]
+
+    assert asset["market_value"] == pytest.approx(352.0)
+    assert asset["total_return"] == pytest.approx(72.0)
+    assert asset["month_change"] == pytest.approx(72.0)
+    assert asset["year_change"] == pytest.approx(72.0)

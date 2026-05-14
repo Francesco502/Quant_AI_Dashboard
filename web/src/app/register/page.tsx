@@ -84,7 +84,7 @@ export default function RegisterPage() {
 
           {success ? (
             <div className="text-center space-y-3">
-              <div className="surface-tone-celadon rounded-xl p-4 text-[13px] font-medium">
+              <div role="alert" className="surface-tone-celadon rounded-xl p-4 text-[13px] font-medium">
                 注册成功，正在跳转到登录页…
               </div>
             </div>
@@ -102,6 +102,8 @@ export default function RegisterPage() {
                     onChange={(event) => setUsername(event.target.value)}
                     onKeyDown={handleKeyDown}
                     autoComplete="username"
+                    aria-describedby={error ? "register-error" : undefined}
+                    aria-invalid={error ? true : undefined}
                     required
                     minLength={3}
                   />
@@ -121,6 +123,8 @@ export default function RegisterPage() {
                     onChange={(event) => setPassword(event.target.value)}
                     onKeyDown={handleKeyDown}
                     autoComplete="new-password"
+                    aria-describedby={error ? "register-error" : undefined}
+                    aria-invalid={error ? true : undefined}
                     required
                     minLength={6}
                   />
@@ -140,6 +144,8 @@ export default function RegisterPage() {
                     onChange={(event) => setConfirmPassword(event.target.value)}
                     onKeyDown={handleKeyDown}
                     autoComplete="new-password"
+                    aria-describedby={error ? "register-error" : undefined}
+                    aria-invalid={error ? true : undefined}
                     required
                     minLength={6}
                   />
@@ -148,6 +154,8 @@ export default function RegisterPage() {
 
               {error ? (
                 <div
+                  id="register-error"
+                  role="alert"
                   className="rounded-lg p-2.5 text-center text-[12px]"
                   style={{ color: SONG_COLORS.negative, backgroundColor: "rgba(182, 69, 60, 0.08)" }}
                 >

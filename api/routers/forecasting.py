@@ -88,7 +88,7 @@ async def list_models():
     return {"models": models, "availability": availability}
 
 
-@router.get("/predict/{ticker}")
+@router.get("/predict/{ticker}", deprecated=True)
 async def predict_get(
     ticker: str,
     horizon: int = Query(5, description="Forecast horizon in trading days."),
@@ -143,7 +143,7 @@ async def predict_get(
         raise HTTPException(status_code=500, detail=f"Forecast failed: {exc}") from exc
 
 
-@router.post("/batch-predict")
+@router.post("/batch-predict", deprecated=True)
 async def batch_predict(request: ForecastRequest):
     """Run a multi-ticker forecast using local price history."""
 

@@ -1,4 +1,4 @@
-﻿"""User-specific watchlist, strategy config, and preference storage."""
+"""User-specific watchlist, strategy config, and preference storage."""
 
 from __future__ import annotations
 

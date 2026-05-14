@@ -124,9 +124,9 @@ class SQLiteConnectionPool:
                 # 重置连接状态
                 try:
                     conn.rollback()  # 回滚未提交的事务
-                except:
+                except Exception:
                     pass
-                    
+
                 # 放回池中
                 try:
                     self._pool.put(conn, block=False)
@@ -134,7 +134,7 @@ class SQLiteConnectionPool:
                     # 池已满，关闭连接
                     try:
                         conn.close()
-                    except:
+                    except Exception:
                         pass
                         
     def execute(

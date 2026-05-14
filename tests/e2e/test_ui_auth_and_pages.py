@@ -85,11 +85,11 @@ def test_admin_login_and_settings_health(page: Page) -> None:
 
     page.goto(f"{BASE_URL}/settings")
     page.wait_for_load_state("domcontentloaded")
-    page.get_by_role("tab", name="后台任务").click()
 
     expect(page.locator("body")).to_contain_text("系统设置")
-    expect(page.locator("body")).to_contain_text("API 服务")
-    expect(page.locator("body")).to_contain_text("发布安全")
+    expect(page.locator("body")).to_contain_text("初始化向导")
+    expect(page.locator("body")).to_contain_text("数据源优先级")
+    expect(page.locator("body")).to_contain_text("备份管理")
     expect(page.locator("body")).not_to_contain_text("离线")
 
 
@@ -97,6 +97,7 @@ def test_admin_login_and_settings_health(page: Page) -> None:
     "route,expected_text",
     [
         ("/", "今日状态"),
+        ("/daily-workbench", "日常决策工作台"),
         ("/market", "技术与风险分析"),
         ("/trading", "模拟交易工作台"),
         ("/backtest", "回测中心"),

@@ -3,9 +3,12 @@
 提供通用的数据存储和文件操作工具
 """
 import json
+import logging
 import os
 import pandas as pd
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def save_selector_results(result_df: pd.DataFrame, trade_date: str) -> bool:
@@ -26,5 +29,5 @@ def save_selector_results(result_df: pd.DataFrame, trade_date: str) -> bool:
         
         return True
     except Exception as e:
-        print(f"保存选股结果失败: {e}")
+        logger.error(f"保存选股结果失败: {e}")
         return False

@@ -1,4 +1,4 @@
-﻿"""Integration tests for forecasting API endpoints."""
+"""Integration tests for forecasting API endpoints."""
 
 from unittest.mock import patch
 

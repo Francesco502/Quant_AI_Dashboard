@@ -1,4 +1,4 @@
-﻿"""Unit tests for portfolio analyzer and risk analysis helpers."""
+"""Unit tests for portfolio analyzer and risk analysis helpers."""
 
 from __future__ import annotations
 

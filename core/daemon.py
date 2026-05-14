@@ -19,6 +19,8 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List
 
+logger = logging.getLogger(__name__)
+
 from .data_updater import update_local_history_for_tickers
 from .scheduler import (
     setup_data_update_job,
@@ -600,15 +602,15 @@ def main() -> None:
                         timeout=2
                     )
                     if str(old_pid) in result.stdout:
-                        print(f"Warning: existing daemon process detected (PID={old_pid}).")
-                        print(f"Current process PID={current_pid}, pid file will be overwritten.")
+                        logger.warning("Existing daemon process detected (PID=%s).", old_pid)
+                        logger.warning("Current process PID=%s, pid file will be overwritten.", current_pid)
                 except Exception:
                     pass
             else:
                 try:
                     os.kill(old_pid, 0)
-                    print(f"Warning: existing daemon process detected (PID={old_pid}).")
-                    print(f"Current process PID={current_pid}, pid file will be overwritten.")
+                    logger.warning("Existing daemon process detected (PID=%s).", old_pid)
+                    logger.warning("Current process PID=%s, pid file will be overwritten.", current_pid)
                 except OSError:
                     pass
         except (ValueError, FileNotFoundError):
@@ -619,7 +621,7 @@ def main() -> None:
         with open(pid_file, "w", encoding="utf-8") as f:
             f.write(str(current_pid))
     except Exception as e:
-        print(f"Warning: failed to write pid file {pid_file}: {e}")
+        logger.warning("Failed to write pid file %s: %s", pid_file, e)
 
     logging.basicConfig(
         filename=os.path.join(BASE_DIR, "logs", "daemon.log"),
@@ -646,53 +648,63 @@ def main() -> None:
     setup_training_job(cfg.get("training", {}), lambda: training_job(cfg))
     setup_daily_analysis_job(cfg.get("daily_analysis", {}), lambda: daily_analysis_job(cfg))
 
-    # Register daily settlement task (15:30 local time).
+    # Register daily settlement task (15:30 local time) — configurable.
+    settlement_enabled = bool(cfg.get("settlement", {}).get("enabled", True))
+    asset_sync_enabled = bool(cfg.get("asset_sync", {}).get("enabled", True))
+
     try:
         import schedule
-        def _daily_settlement_job():
-            """Run settlement for all accounts."""
-            try:
-                from .paper_account import PaperAccount
-                from .database import Database
 
-                db = Database()
-                cursor = db.conn.cursor()
-                cursor.execute("SELECT id, user_id FROM accounts")
-                accounts = cursor.fetchall()
-                for acc in accounts:
-                    try:
-                        pa = PaperAccount(user_id=acc["user_id"], account_id=acc["id"], db=db)
-                        result = pa.daily_settlement()
-                        logging.info(
-                            "daemon: settlement completed for account %s, equity=%.2f",
-                            acc["id"],
-                            result["equity"],
-                        )
-                    except Exception as e:
-                        logging.error("daemon: settlement failed for account %s: %s", acc["id"], e)
-            except Exception as e:
-                logging.error("daemon: daily settlement job error: %s", e)
+        if settlement_enabled:
+            def _daily_settlement_job():
+                """Run settlement for all accounts."""
+                try:
+                    from .paper_account import PaperAccount
+                    from .database import Database
 
-        schedule.every().day.at("15:30").do(_daily_settlement_job)
-        logging.info("daemon: registered daily settlement job at 15:30")
+                    db = Database()
+                    cursor = db.conn.cursor()
+                    cursor.execute("SELECT id, user_id FROM accounts")
+                    accounts = cursor.fetchall()
+                    for acc in accounts:
+                        try:
+                            pa = PaperAccount(user_id=acc["user_id"], account_id=acc["id"], db=db)
+                            result = pa.daily_settlement()
+                            logging.info(
+                                "daemon: settlement completed for account %s, equity=%.2f",
+                                acc["id"],
+                                result["equity"],
+                            )
+                        except Exception as e:
+                            logging.error("daemon: settlement failed for account %s: %s", acc["id"], e)
+                except Exception as e:
+                    logging.error("daemon: daily settlement job error: %s", e)
 
-        def _daily_user_asset_sync_job():
-            """Run personal asset DCA reconciliation and snapshot sync."""
-            try:
-                from .user_assets import get_user_asset_service
+            schedule.every().day.at("15:30").do(_daily_settlement_job)
+            logging.info("daemon: registered daily settlement job at 15:30")
+        else:
+            logging.info("daemon: daily settlement job disabled (settlement.enabled=false)")
 
-                result = get_user_asset_service().run_daily_sync_for_all_users()
-                logging.info(
-                    "daemon: user asset sync completed, users=%s",
-                    result.get("users_synced", 0),
-                )
-            except Exception as e:
-                logging.error("daemon: daily user asset sync job error: %s", e)
+        if asset_sync_enabled:
+            def _daily_user_asset_sync_job():
+                """Run personal asset DCA reconciliation and snapshot sync."""
+                try:
+                    from .user_assets import get_user_asset_service
 
-        schedule.every().day.at("18:10").do(_daily_user_asset_sync_job)
-        logging.info("daemon: registered daily user asset sync job at 18:10")
+                    result = get_user_asset_service().run_daily_sync_for_all_users()
+                    logging.info(
+                        "daemon: user asset sync completed, users=%s",
+                        result.get("users_synced", 0),
+                    )
+                except Exception as e:
+                    logging.error("daemon: daily user asset sync job error: %s", e)
+
+            schedule.every().day.at("18:10").do(_daily_user_asset_sync_job)
+            logging.info("daemon: registered daily user asset sync job at 18:10")
+        else:
+            logging.info("daemon: daily user asset sync job disabled (asset_sync.enabled=false)")
     except Exception as e:
-        logging.warning("daemon: failed to register daily settlement job: %s", e)
+        logging.warning("daemon: failed to register daily jobs: %s", e)
 
     logging.info("daemon: scheduler loop started.")
 

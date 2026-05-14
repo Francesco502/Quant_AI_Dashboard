@@ -182,45 +182,88 @@ class TestTradingAPI:
             assert account["initial_capital"] == 100000.0
             assert "total_assets" in account
 
-    def test_legacy_accounts_routes_remain_compatible(self):
-        username = f"legacy_accounts_{uuid4().hex[:8]}"
+    def test_account_summary_and_primary_use_cached_prices_by_default(self, auth_client, monkeypatch):
+        calls = []
+
+        class FakeAccount:
+            id = 7
+            account_name = "fast-account"
+            balance = 90000.0
+            frozen = 0.0
+            initial_capital = 100000.0
+            currency = "CNY"
+            status = "active"
+            created_at = None
+
+        class FakeAccountManager:
+            def get_user_accounts(self, user_id):
+                return [FakeAccount()]
+
+            def get_account(self, account_id, user_id):
+                return FakeAccount()
+
+            def account_exists(self, account_id, user_id):
+                return True
+
+            def get_trade_history(self, account_id, limit=100):
+                return []
+
+        class FakeService:
+            def __init__(self):
+                self.account_mgr = FakeAccountManager()
+
+            def get_portfolio(self, user_id, account_id, refresh_prices=True):
+                calls.append(("portfolio", refresh_prices))
+                return {"total_assets": 100000.0, "cash": 90000.0, "position_value": 10000.0}
+
+            def get_positions(self, user_id, account_id, refresh_prices=True):
+                calls.append(("positions", refresh_prices))
+                return []
+
+        monkeypatch.setattr("api.routers.trading.get_trading_service", lambda: FakeService())
+
+        list_response = auth_client.get("/api/trading/accounts")
+        primary_response = auth_client.get("/api/trading/accounts/primary")
+        refreshed_response = auth_client.get("/api/trading/accounts/primary?refresh=true")
+
+        assert list_response.status_code == 200
+        assert primary_response.status_code == 200
+        assert refreshed_response.status_code == 200
+        assert ("portfolio", False) in calls
+        assert ("positions", False) in calls
+        assert ("positions", True) in calls
+
+    def test_legacy_accounts_routes_are_retired_from_default_app(self):
+        username = f"retired_accounts_{uuid4().hex[:8]}"
         with _auth_client_for_username(username) as auth_client:
             first = auth_client.post(
                 "/api/trading/accounts",
-                json={"name": "legacy-primary", "initial_balance": 100000.0},
+                json={"name": "primary-account", "initial_balance": 100000.0},
             )
             second = auth_client.post(
                 "/api/trading/accounts",
-                json={"name": "legacy-secondary", "initial_balance": 80000.0},
+                json={"name": "secondary-account", "initial_balance": 80000.0},
             )
 
             assert first.status_code == 200
             assert second.status_code == 200
 
             paper = auth_client.get("/api/accounts/paper")
-            positions = auth_client.get("/api/accounts/paper/positions")
-            legacy_list = auth_client.get("/api/accounts/list")
+            legacy_paper = auth_client.get("/api/legacy/accounts/paper")
             trading_primary = auth_client.get("/api/trading/accounts/primary")
             trading_list = auth_client.get("/api/trading/accounts")
 
-            assert paper.status_code == 200
-            assert positions.status_code == 200
-            assert legacy_list.status_code == 200
+            assert paper.status_code == 404
+            assert legacy_paper.status_code == 404
             assert trading_primary.status_code == 200
             assert trading_list.status_code == 200
 
-            paper_payload = paper.json()
             trading_primary_payload = trading_primary.json()
-            legacy_list_payload = legacy_list.json()
             trading_list_payload = trading_list.json()
 
-            assert paper_payload["account_id"] == first.json()["account_id"]
-            assert paper_payload["account_id"] == trading_primary_payload["account_id"]
-            assert paper_payload["account_name"] == trading_primary_payload["account_name"]
-            assert paper_payload["positions"] == positions.json()["positions"] == {}
-            assert legacy_list_payload["count"] == trading_list_payload["count"] == 2
-            assert legacy_list_payload["accounts"][0]["id"] == trading_list_payload["accounts"][0]["account_id"]
-            assert legacy_list_payload["accounts"][0]["name"] == trading_list_payload["accounts"][0]["account_name"]
+            assert trading_primary_payload["account_id"] == first.json()["account_id"]
+            assert trading_primary_payload["account_name"] == "primary-account"
+            assert trading_list_payload["count"] == 2
 
     def test_submit_market_order(self, auth_client):
         create_resp = auth_client.post(

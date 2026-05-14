@@ -15,45 +15,27 @@ except Exception:
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import asyncio
+import gc
 import os
 from typing import List, Dict, Optional
 import logging
 import datetime
 from urllib.parse import urlparse
 
-from .routers import (
-    strategies,
-    signals,
-    data,
-    forecasting,
-    trading,
-    models,
-    accounts,
-    stocktradebyz,
-    backtest,
-    llm_analysis,
-    market,
-    agent,
-    portfolio,
-    scanner,
-    user_config,
-    user_assets,
-    monitoring,
-    external,
-    strategy_templates,
-)
 from .websocket_manager import WebSocketManager
 from .auth import (
-    router as auth_router,
     AuthenticationMiddleware as AuthMiddleware,
     bootstrap_admin_from_env,
     get_user_by_username,
     validate_auth_security,
 )
-from .middleware import RateLimitMiddleware, PerformanceMiddleware
+from .middleware import CorrelationIdMiddleware, PerformanceMiddleware, RateLimitMiddleware
+from .router_registry import register_api_routes
+from core.logging_config import setup_logging
 from core.user_assets import DEFAULT_ADMIN_ASSET_SEED, get_user_asset_service
 from core.version import VERSION
 from core.memory_monitor import get_memory_monitor
@@ -63,6 +45,14 @@ logger = logging.getLogger(__name__)
 
 # WebSocket 管理器
 ws_manager = WebSocketManager()
+
+# 性能优化环境变量
+UVICORN_WORKERS = int(os.getenv("UVICORN_WORKERS", "1"))
+UVICORN_CONCURRENCY = int(os.getenv("UVICORN_CONCURRENCY", "10"))
+LAZY_LOAD_ML_MODELS = os.getenv("LAZY_LOAD_ML_MODELS", "true").lower() == "true"
+ENABLE_GZIP = os.getenv("ENABLE_GZIP", "true").lower() == "true"
+GZIP_MIN_SIZE = int(os.getenv("GZIP_MIN_SIZE", "1000"))
+request_semaphore = asyncio.Semaphore(UVICORN_CONCURRENCY)
 
 DEFAULT_DEV_CORS_ORIGINS = [
     "http://localhost:8686",
@@ -137,8 +127,16 @@ def validate_runtime_security(strict: Optional[bool] = None) -> List[str]:
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
+    setup_logging()
     logger.info("API 服务启动中...")
+    logger.info(f"配置: workers={UVICORN_WORKERS}, concurrency={UVICORN_CONCURRENCY}, lazy_ml={LAZY_LOAD_ML_MODELS}")
     validate_runtime_security()
+
+    if not LAZY_LOAD_ML_MODELS:
+        logger.info("预加载 ML 模型...")
+    else:
+        logger.info("启用 ML 模型懒加载模式")
+
     logger.info("初始化认证与授权系统...")
     try:
         bootstrap_admin_from_env()
@@ -180,6 +178,7 @@ async def lifespan(app: FastAPI):
     yield
     # 关闭时
     logger.info("API 服务关闭中...")
+    gc.collect()
 
 
 # 创建 FastAPI 应用
@@ -188,9 +187,22 @@ app = FastAPI(
     description="量化交易系统 API 接口",
     version=VERSION,  # 使用应用版本号
     lifespan=lifespan,
+    max_request_body_size=10 * 1024 * 1024,  # 10MB
 )
 
 # ====================中间件配置====================
+
+# 请求追踪 — 最先执行，为所有后续中间件和日志提供 correlation ID
+app.add_middleware(CorrelationIdMiddleware)
+
+# GZip 压缩中间件（必须在 CORS 之前）
+if ENABLE_GZIP:
+    app.add_middleware(
+        GZipMiddleware,
+        minimum_size=GZIP_MIN_SIZE,
+        compresslevel=6,
+    )
+    logger.info(f"启用 GZip 压缩 (min_size={GZIP_MIN_SIZE})")
 
 # CORS 配置（从环境变量读取允许的前端域名）
 _cors_origins = _load_cors_origins()
@@ -199,9 +211,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
     max_age=600,
 )
 
@@ -214,6 +225,18 @@ app.add_middleware(RateLimitMiddleware)
 # 认证中间件 - 为所有API端点添加认证
 # 注意：中间件按顺序执行，认证中间件应放在前面
 app.add_middleware(AuthMiddleware)
+
+# API audit logging (records all non-exempt API accesses)
+from core.audit_log import APIAuditMiddleware
+app.add_middleware(APIAuditMiddleware)
+
+# 并发控制中间件（低配环境限制并发）
+@app.middleware("http")
+async def concurrency_limit_middleware(request, call_next):
+    """限制并发请求数"""
+    async with request_semaphore:
+        response = await call_next(request)
+        return response
 
 
 @app.middleware("http")
@@ -231,26 +254,7 @@ async def ensure_cors_headers_for_auth_errors(request: Request, call_next):
 
 # ====================注册路由====================
 
-app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
-app.include_router(strategies.router, prefix="/api/strategies", tags=["策略管理"])
-app.include_router(signals.router, prefix="/api/signals", tags=["信号管理"])
-app.include_router(data.router, prefix="/api/data", tags=["数据获取"])
-app.include_router(forecasting.router, prefix="/api/forecasting", tags=["AI预测"])
-app.include_router(trading.router, prefix="/api/trading", tags=["交易执行"])
-app.include_router(models.router, prefix="/api/models", tags=["模型管理"])
-app.include_router(accounts.router, prefix="/api/accounts", tags=["账户管理"])
-app.include_router(stocktradebyz.router, prefix="/api/stz", tags=["Z哥战法"])
-app.include_router(backtest.router, prefix="/api/backtest", tags=["策略回测"])
-app.include_router(llm_analysis.router, prefix="/api/llm-analysis", tags=["LLM决策分析"])
-app.include_router(market.router, prefix="/api/market", tags=["市场概览"])
-app.include_router(agent.router, prefix="/api/agent", tags=["Agent研究"])
-app.include_router(portfolio.router, prefix="/api/portfolio", tags=["持仓分析"])
-app.include_router(scanner.router, prefix="/api/scanner", tags=["选股扫描"])
-app.include_router(user_config.router, prefix="/api/user", tags=["用户配置"])
-app.include_router(user_assets.router, prefix="/api/user", tags=["个人资产"])
-app.include_router(monitoring.router, prefix="/api", tags=["系统监控"])
-app.include_router(external.router, prefix="/api/external", tags=["外部数据源"])
-app.include_router(strategy_templates.router, prefix="/api", tags=["策略模板"])
+register_api_routes(app)
 
 
 # ====================全局异常处理====================
@@ -341,10 +345,66 @@ async def health_check():
 
         security_issues = get_security_readiness_issues()
 
+        # 数据库连接检查
+        db_ok = True
+        db_error = None
+        try:
+            from core.database import get_database
+            db = get_database()
+            if db.conn:
+                db.conn.execute("SELECT 1").fetchone()
+        except Exception as e:
+            db_ok = False
+            db_error = str(e)
+
+        # 磁盘空间检查
+        disk_ok = True
+        disk_info = {}
+        try:
+            disk = psutil.disk_usage("/")
+            disk_info = {
+                "total_gb": round(disk.total / (1024**3), 1),
+                "used_gb": round(disk.used / (1024**3), 1),
+                "free_gb": round(disk.free / (1024**3), 1),
+                "percent": disk.percent,
+            }
+            if disk.percent > 90:
+                disk_ok = False
+        except Exception:
+            disk_ok = False
+
+        # 外部数据源可用性检查
+        data_sources_ok = True
+        data_source_status = {}
+        try:
+            from core.data_utils import get_api_key_status
+            data_source_status = get_api_key_status()
+        except Exception:
+            data_source_status = {"error": "unable to check"}
+
+        checks = {
+            "memory": is_healthy,
+            "database": db_ok,
+            "disk": disk_ok,
+            "data_sources": data_sources_ok,
+        }
+        all_healthy = all(checks.values())
+
+        if not all_healthy:
+            status = "degraded"
+        if not is_healthy:
+            status = "critical" if memory_status.is_critical else "warning"
+
         return {
             "status": status,
             "service": "quant-ai-api",
             "version": VERSION,
+            "checks": {
+                "memory": {"ok": is_healthy, "message": memory_msg},
+                "database": {"ok": db_ok, "error": db_error},
+                "disk": {"ok": disk_ok, **disk_info},
+                "data_sources": {"ok": data_sources_ok, "configured": data_source_status},
+            },
             "memory": {
                 "total_mb": mem.total // 1024 // 1024,
                 "available_mb": mem.available // 1024 // 1024,
@@ -366,10 +426,13 @@ async def health_check():
     except Exception as e:
         logger.error(f"健康检查出错: {e}")
         return {
-            "status": "healthy",
+            "status": "degraded",
             "service": "quant-ai-api",
             "version": VERSION,
             "error": str(e),
+            "checks": {
+                "health": {"ok": False, "error": str(e)},
+            },
             "security": {
                 "ready": False,
                 "strict_mode": _is_production_security_mode(),

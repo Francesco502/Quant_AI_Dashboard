@@ -1,0 +1,21 @@
+{
+  "username": "agent",
+  "assets": [
+    {
+      "ticker": "002611",
+      "asset_name": "Bosera Gold ETF Feeder C",
+      "asset_type": "fund",
+      "units": 10,
+      "avg_cost": 2.5,
+      "trade_date": "2026-04-23",
+      "dca_rule": {
+        "enabled": true,
+        "frequency": "weekly",
+        "weekday": 3,
+        "amount": 100,
+        "start_date": "2026-04-23",
+        "shift_to_next_trading_day": true
+      }
+    }
+  ]
+}

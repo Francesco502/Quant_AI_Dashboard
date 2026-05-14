@@ -26,10 +26,10 @@ const buttonVariants = cva(
           "glass rounded-xl text-foreground/80 hover:text-foreground hover:shadow-md",
       },
       size: {
-        default: "h-9 px-5 py-2",
-        sm: "h-8 px-4 text-xs",
-        lg: "h-10 px-8 text-sm",
-        icon: "h-9 w-9",
+        default: "min-h-11 px-5 py-2 sm:h-9 sm:min-h-0",
+        sm: "min-h-11 px-4 text-xs sm:h-8 sm:min-h-0",
+        lg: "min-h-11 px-8 text-sm sm:h-10 sm:min-h-0",
+        icon: "h-11 w-11 min-w-11 sm:h-9 sm:w-9 sm:min-w-0",
       },
     },
     defaultVariants: {

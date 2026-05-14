@@ -16,7 +16,7 @@ import os
 from copy import deepcopy
 from typing import Dict, List, Optional, Callable, Any
 from datetime import datetime, timedelta
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from collections import deque
 
 from .metrics import MetricsCollector
@@ -69,6 +69,7 @@ class SystemMonitor:
         metrics_collector: Optional[MetricsCollector] = None,
         health_checker: Optional[HealthChecker] = None,
         config: Optional[SystemMonitorConfig] = None,
+        collection_interval: Optional[float] = None,
     ):
         """
         初始化系统监控器
@@ -77,10 +78,16 @@ class SystemMonitor:
             metrics_collector: 指标收集器（可选）
             health_checker: 健康检查器（可选）
             config: 监控配置（可选）
+            collection_interval: 旧版兼容参数，映射到配置对象的收集间隔
         """
         self.metrics_collector = metrics_collector or MetricsCollector(max_history=500)
         self.health_checker = health_checker or HealthChecker()
-        self.config = config or get_monitoring_config().system
+        base_config = config or get_monitoring_config().system
+        self.config = (
+            replace(base_config, collection_interval=float(collection_interval))
+            if collection_interval is not None
+            else base_config
+        )
 
         # 监控状态
         self.is_monitoring = False

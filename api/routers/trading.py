@@ -20,6 +20,7 @@ from datetime import datetime
 
 from core.trading_service import TradingService, TradingError, InsufficientFundsError, InsufficientSharesError
 from core.database import get_database
+from core.auto_trading_guardrails import require_auto_trading_allowed
 
 from api.auth import get_current_active_user, require_admin, UserInDB
 from core.order_types import OrderSide, OrderType, OrderStatus
@@ -515,6 +516,10 @@ async def run_auto_trading_now(
     try:
         config = load_daemon_config()
         trading_cfg = dict(config.get("trading", {}))
+        try:
+            require_auto_trading_allowed()
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         service = get_trading_service()
         if _AUTO_TRADING_RUNNING.is_set():
             response = _build_auto_trading_payload(service, trading_cfg)
@@ -771,7 +776,16 @@ async def get_risk_events(
         if account_id and not service.account_mgr.account_exists(account_id, current_user.id):
             raise HTTPException(status_code=403, detail="无权访问此账户")
 
-        events = risk_monitor.get_risk_events(account_id=account_id, limit=limit)
+        safe_limit = max(1, min(int(limit), 200))
+        if account_id:
+            events = risk_monitor.get_risk_events(account_id=account_id, limit=safe_limit)
+        else:
+            events = []
+            accounts = service.account_mgr.get_user_accounts(current_user.id)
+            for account in accounts:
+                events.extend(risk_monitor.get_risk_events(account_id=account.id, limit=safe_limit))
+            events.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
+            events = events[:safe_limit]
         return {"events": events}
 
     except HTTPException:

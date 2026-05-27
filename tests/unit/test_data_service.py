@@ -1,5 +1,7 @@
 """数据服务模块单元测试"""
 
+import warnings
+
 import pytest
 import pandas as pd
 import numpy as np
@@ -178,6 +180,65 @@ class TestDataService:
             "TUSHARE_TOKEN": "env-token",
             "ALPHA_VANTAGE_KEY": "env-alpha",
         }
+
+    def test_price_cache_key_includes_data_source_selection(self, monkeypatch):
+        captured_params = {}
+
+        monkeypatch.setenv("API_RESPONSE_CACHE_ENABLED", "true")
+        monkeypatch.setattr("core.api_response_cache.is_api_cache_enabled", lambda: True)
+        monkeypatch.setattr("core.data_store.load_local_price_history", lambda ticker: None)
+        monkeypatch.setattr("core.data_service.get_api_keys", lambda: {})
+        monkeypatch.setattr("core.data_service._load_price_data_remote", lambda **kwargs: pd.DataFrame())
+
+        def fake_get_cached(endpoint, params, ignore_ttl=False):
+            captured_params.update(params)
+            return None
+
+        monkeypatch.setattr("core.api_response_cache.get_cached", fake_get_cached)
+
+        load_price_data(tickers=["600519"], days=30, data_sources=["Tushare"])
+
+        assert captured_params["data_sources"] == ("Tushare",)
+
+    def test_small_price_request_uses_bounded_remote_cache_window(self, monkeypatch):
+        captured = {}
+
+        monkeypatch.setenv("API_RESPONSE_CACHE_ENABLED", "false")
+        monkeypatch.setattr("core.data_store.load_local_price_history", lambda ticker: None)
+        monkeypatch.setattr("core.data_store.save_local_price_history", lambda ticker, series: None)
+        monkeypatch.setattr("core.data_service.get_api_keys", lambda: {})
+
+        def fake_remote(**kwargs):
+            captured.update(kwargs)
+            dates = pd.date_range(start="2026-01-01", periods=30, freq="D")
+            return pd.DataFrame({"600519": range(30)}, index=dates)
+
+        monkeypatch.setattr("core.data_service._load_price_data_remote", fake_remote)
+
+        load_price_data(tickers=["600519"], days=30, data_sources=["AkShare"])
+
+        assert captured["days"] == 365
+
+    def test_many_local_price_series_do_not_fragment_dataframe(self, monkeypatch):
+        monkeypatch.setenv("API_RESPONSE_CACHE_ENABLED", "false")
+        tickers = [f"T{i:03d}" for i in range(140)]
+        dates = pd.date_range(start="2026-01-01", periods=30, freq="D")
+        series_by_ticker = {
+            ticker: pd.Series(np.arange(30, dtype=float), index=dates)
+            for ticker in tickers
+        }
+
+        monkeypatch.setattr(
+            "core.data_store.load_local_price_history",
+            lambda ticker: series_by_ticker[ticker],
+        )
+        monkeypatch.setattr("core.data_service._load_price_data_remote", lambda **kwargs: pd.DataFrame())
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", pd.errors.PerformanceWarning)
+            result = load_price_data(tickers=tickers, days=30, refresh_stale=False)
+
+        assert result.shape == (30, len(tickers))
 
     def test_trim_synthetic_tail_removes_flat_forward_filled_rows(self):
         """远程刷新后应去掉本地缓存里伪造的未来日期尾巴"""

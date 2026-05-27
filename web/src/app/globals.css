@@ -1,33 +1,37 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
 
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
 
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
 
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
 
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
 
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
 
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
 
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
 
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --shadow-neon-celadon: 0 0 20px rgba(77, 115, 88, 0.15);
+  --shadow-neon-cinnabar: 0 0 20px rgba(182, 69, 60, 0.15);
+  --shadow-neon-ochre: 0 0 20px rgba(142, 115, 77, 0.2);
 
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
@@ -98,26 +102,26 @@
   --market-up-border: rgba(var(--rgb-cinnabar), 0.24);
   --market-down-border: rgba(var(--rgb-celadon), 0.24);
 
-  --background: rgb(var(--rgb-xuan));
-  --foreground: rgb(var(--rgb-ink));
-  --card: 40 30% 97%;
+  --background: 38 18% 97%;
+  --foreground: 33 22% 14%;
+  --card: 40 16% 98%;
   --card-foreground: 26 10% 19%;
   --popover: 40 30% 97%;
   --popover-foreground: 26 10% 19%;
   --primary: 145 20% 38%;
   --primary-foreground: 40 34% 96%;
-  --secondary: 36 22% 91%;
+  --secondary: 36 14% 92%;
   --secondary-foreground: 26 10% 26%;
-  --muted: 36 22% 92%;
+  --muted: 36 12% 93%;
   --muted-foreground: 27 10% 32%;
-  --accent: 35 28% 88%;
+  --accent: 145 12% 90%;
   --accent-foreground: 26 10% 19%;
   --destructive: 7 46% 47%;
   --destructive-foreground: 40 34% 96%;
   --border: 34 18% 78%;
   --input: 34 18% 78%;
   --ring: 37 33% 48%;
-  --radius: 0.875rem;
+  --radius: 0.5rem;
 
   --shadow-ink-soft: 0 8px 24px rgba(var(--rgb-ink), 0.06);
   --shadow-ink-lg: 0 16px 48px rgba(var(--rgb-ink), 0.1);
@@ -139,25 +143,25 @@
 }
 
 .dark {
-  --background: 20 4% 12%;
-  --foreground: 45 15% 90%;
-  --card: 20 4% 14%;
-  --card-foreground: 45 15% 90%;
-  --popover: 20 4% 14%;
-  --popover-foreground: 45 15% 90%;
-  --primary: 147 14% 49%;
-  --primary-foreground: 20 4% 12%;
-  --secondary: 20 4% 20%;
-  --secondary-foreground: 45 15% 85%;
-  --muted: 20 4% 20%;
-  --muted-foreground: 45 15% 65%;
-  --accent: 20 4% 22%;
-  --accent-foreground: 45 15% 90%;
-  --destructive: 7 38% 58%;
-  --destructive-foreground: 45 15% 90%;
-  --border: 20 4% 22%;
-  --input: 20 4% 22%;
-  --ring: 147 14% 49%;
+  --background: 240 18% 6%;
+  --foreground: 220 15% 90%;
+  --card: 240 16% 9%;
+  --card-foreground: 220 15% 90%;
+  --popover: 240 16% 9%;
+  --popover-foreground: 220 15% 90%;
+  --primary: 145 20% 48%;
+  --primary-foreground: 240 18% 6%;
+  --secondary: 240 10% 15%;
+  --secondary-foreground: 220 10% 85%;
+  --muted: 240 10% 13%;
+  --muted-foreground: 220 10% 65%;
+  --accent: 240 10% 16%;
+  --accent-foreground: 220 15% 90%;
+  --destructive: 7 45% 58%;
+  --destructive-foreground: 220 15% 90%;
+  --border: 240 12% 16%;
+  --input: 240 12% 16%;
+  --ring: 145 20% 48%;
 }
 
 @layer base {
@@ -173,20 +177,21 @@
       "PingFang SC",
       "Microsoft YaHei",
       sans-serif;
-    line-height: 1.78;
-    letter-spacing: 0.015em;
+    line-height: 1.6;
+    letter-spacing: 0;
     font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
-  h1, h2, h3, h4, h5, h6, .font-serif {
+  h1, h2, h3, h4, h5, h6 {
     font-family:
-      "Source Han Serif SC",
-      "Noto Serif SC",
-      "Songti SC",
-      serif;
-    letter-spacing: 0.035em;
+      "Source Han Sans SC",
+      "Noto Sans SC",
+      "PingFang SC",
+      "Microsoft YaHei",
+      sans-serif;
+    letter-spacing: 0;
     text-wrap: balance;
   }
 
@@ -330,9 +335,9 @@
   }
 
   .dark .glass {
-    background: rgba(30, 28, 26, 0.7);
+    background: rgba(18, 19, 26, 0.72);
     border-color: rgba(255, 255, 255, 0.05);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   }
 
   .glass-card {
@@ -355,14 +360,14 @@
   }
 
   .dark .glass-card {
-    background: rgba(30, 28, 26, 0.4);
-    border-color: rgba(255, 255, 255, 0.05);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+    background: rgba(18, 19, 26, 0.48);
+    border-color: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), var(--shadow-neon-celadon);
   }
 
   .dark .glass-card:hover {
-    background: rgba(30, 28, 26, 0.6);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+    background: rgba(18, 19, 26, 0.72);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35), var(--shadow-neon-celadon);
   }
 
   .glass-dropdown {
@@ -1697,9 +1702,23 @@
   }
 
   .dark {
-    --chart-tooltip-bg: rgba(35, 32, 28, 0.94);
+    --chart-tooltip-bg: rgba(18, 19, 26, 0.94);
     --chart-tooltip-border: rgba(255, 255, 255, 0.08);
     --chart-tooltip-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  }
+
+  .dark .data-panel {
+    background: rgba(15, 17, 24, 0.65);
+    border-color: rgba(255, 255, 255, 0.05);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.03),
+      0 12px 28px rgba(0, 0, 0, 0.25);
+  }
+
+  .dark .data-panel-muted {
+    background: rgba(18, 19, 26, 0.54);
+    border-color: rgba(255, 255, 255, 0.04);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
   }
 
   .dark .data-empty {
@@ -1720,19 +1739,19 @@
   }
 
   .dark .header-bg {
-    background: rgba(22, 20, 18, 0.72);
+    background: rgba(10, 11, 15, 0.76);
     border-bottom-color: rgba(255, 255, 255, 0.06);
   }
 
   /* Brand mark */
   .dark .brand-mark-shell {
-    background: linear-gradient(145deg, rgba(40, 36, 32, 0.98), rgba(30, 27, 24, 0.96));
+    background: linear-gradient(145deg, rgba(18, 19, 26, 0.98), rgba(10, 11, 15, 0.96));
     border-color: rgba(142, 115, 77, 0.24);
   }
 
   /* Dropdown / popover content */
   .dark .dropdown-content {
-    background: rgba(35, 32, 28, 0.96);
+    background: rgba(18, 19, 26, 0.96);
     border-color: rgba(255, 255, 255, 0.08);
   }
 

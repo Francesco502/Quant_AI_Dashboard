@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useStrategies } from "@/lib/use-strategies"
-import { StrategyLearningCard } from "@/components/trading/StrategyLearningCard"
+import { StrategyLearningCard, StrategyComparison, STRATEGY_DETAILS } from "@/components/trading/StrategyLearningCard"
 import { CardSkeleton } from "@/components/ui/skeleton"
 import { getTodayInBeijing } from "@/lib/time"
 
@@ -84,6 +84,8 @@ export default function StrategiesPage() {
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [lastResult, setLastResult] = useState<StrategyResult | null>(null)
   const [activeTab, setActiveTab] = useState<StrategyTab>("run")
+  const allLearnStrategies = useMemo(() => Object.keys(STRATEGY_DETAILS), [])
+  const [learnStrategyName, setLearnStrategyName] = useState<string>("BBI-KDJ 低位布局")
 
   const selectableStrategies = useMemo(
     () =>
@@ -310,8 +312,43 @@ export default function StrategiesPage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="learn">
-          <StrategyLearningCard strategyName={selectableStrategies[0]?.label} />
+        <TabsContent value="learn" className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-[1.08fr_0.92fr]">
+            <div className="space-y-4">
+              <GlassCard className="p-5 space-y-4">
+                <div className="space-y-1">
+                  <CardTitle className="text-base font-semibold">选择学习策略</CardTitle>
+                  <CardDescription className="text-xs">
+                    在下方选择具体量化策略，深入解读其核心机制、公式原理和长短期局限性。
+                  </CardDescription>
+                </div>
+                <Select
+                  value={learnStrategyName}
+                  onValueChange={setLearnStrategyName}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择策略" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allLearnStrategies.map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </GlassCard>
+
+              <StrategyLearningCard
+                strategyName={learnStrategyName}
+                isExpanded={true}
+              />
+            </div>
+
+            <div className="space-y-4">
+              <StrategyComparison strategyNames={allLearnStrategies.slice(0, 5)} />
+            </div>
+          </div>
         </TabsContent>
 
         <TabsContent value="history">

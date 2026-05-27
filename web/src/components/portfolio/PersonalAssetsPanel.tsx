@@ -951,8 +951,9 @@ export function PersonalAssetsPanel() {
               <Badge variant="secondary">{assets.length}</Badge>
               {loading ? <Badge variant="outline">同步中</Badge> : null}
             </h2>
-            <p className="max-w-2xl text-sm leading-7 text-foreground/66">
-              编辑入口已经固定到资产信息区，桌面端突出主操作，移动端改成卡片布局，“修改资产”和“查看流水”的优先级也重新梳理过。            </p>
+            <p className="max-w-2xl text-sm leading-6 text-foreground/66">
+              按资产查看持仓、估值、收益和交易流水。
+            </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -984,13 +985,13 @@ export function PersonalAssetsPanel() {
 
         <div className="space-y-3 lg:hidden">
           {isInitialLoading ? (
-            <div className="data-panel-muted rounded-[28px] px-5 py-8 text-center">
+            <div className="data-panel-muted rounded-lg px-5 py-8 text-center">
               <RefreshCcw className="mx-auto h-5 w-5 animate-spin text-foreground/56" />
               <div className="mt-3 text-sm font-medium text-foreground/80">正在读取已保存的个人资产</div>
               <div className="mt-2 text-sm leading-7 text-foreground/66">系统会按最新净值刷新你的持仓表现。</div>
             </div>
           ) : assets.length === 0 ? (
-            <div className="data-panel-muted rounded-[28px] px-5 py-8 text-center">
+            <div className="data-panel-muted rounded-lg px-5 py-8 text-center">
               <div className="text-sm leading-7 text-foreground/66">还没有个人资产记录，现在可以直接添加第一笔。</div>
               <Button className="mt-4" onClick={openAddDialog}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -1012,7 +1013,7 @@ export function PersonalAssetsPanel() {
                   transition={{ type: "spring", bounce: 0, duration: 0.28 }}
                   whileHover={{ y: -1 }}
                   className={cn(
-                    "group/asset-card relative overflow-hidden rounded-[28px] border p-4 shadow-[0_14px_34px_rgba(41,33,25,0.06)] transition-[transform,border-color,background-color,box-shadow] duration-300",
+                    "group/asset-card relative overflow-hidden rounded-lg border p-4 shadow-[0_10px_24px_rgba(41,33,25,0.05)] transition-[transform,border-color,background-color,box-shadow] duration-200",
                     showingTransactions
                       ? "border-[rgba(var(--rgb-ochre),0.24)] bg-[linear-gradient(160deg,rgba(var(--rgb-ochre),0.12),rgba(var(--rgb-xuan),0.96))] shadow-[0_18px_40px_rgba(41,33,25,0.09)]"
                       : "border-[rgba(var(--rgb-ink),0.08)] bg-[rgba(var(--rgb-xuan),0.88)] hover:border-[rgba(var(--rgb-ink),0.14)] hover:bg-[rgba(var(--rgb-xuan),0.96)] hover:shadow-[0_18px_40px_rgba(41,33,25,0.08)]"
@@ -1035,18 +1036,27 @@ export function PersonalAssetsPanel() {
                           {asset.dca_rule?.enabled ? <Badge variant="secondary">定投中</Badge> : null}
                         </div>
                       </button>
-                      <Badge variant={showingTransactions ? "secondary" : "outline"} className="shrink-0">
-                        {showingTransactions ? "流水已锁定" : "查看流水"}
-                      </Badge>
+                      <button
+                        type="button"
+                        className={cn(
+                          "inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[0.74rem] font-semibold leading-none",
+                          showingTransactions
+                            ? "border-black/[0.06] bg-black/[0.04] text-foreground/76"
+                            : "border-black/[0.08] bg-[rgba(var(--rgb-xuan),0.52)] text-foreground/72"
+                        )}
+                        onClick={() => setTransactionTicker(asset.ticker)}
+                      >
+                        {showingTransactions ? "流水已选中" : "流水"}
+                      </button>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.72)] px-3 py-3">
+                      <div className="rounded-lg bg-[rgba(var(--rgb-xuan),0.72)] px-3 py-3">
                         <div className="text-[0.72rem] uppercase tracking-[0.18em] text-foreground/48">当前市值</div>
                         <div className="mt-2 text-lg font-semibold tabular-nums text-foreground">{formatCurrency(asset.market_value)}</div>
                         <div className="mt-1 text-xs text-foreground/56">{asset.last_price_date || "等待最新估值"}</div>
                       </div>
-                      <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.72)] px-3 py-3">
+                      <div className="rounded-lg bg-[rgba(var(--rgb-xuan),0.72)] px-3 py-3">
                         <div className="text-[0.72rem] uppercase tracking-[0.18em] text-foreground/48">累计收益</div>
                         <div className={cn("mt-2 text-lg font-semibold tabular-nums", signedClass(asset.total_return))}>
                           {formatSignedCurrency(asset.total_return)}
@@ -1056,13 +1066,13 @@ export function PersonalAssetsPanel() {
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.56)] px-3 py-2">
+                      <div className="rounded-lg bg-[rgba(var(--rgb-xuan),0.56)] px-3 py-2">
                         <div className="text-xs text-foreground/48">日变化</div>
                         <div className={cn("mt-1 font-semibold tabular-nums", signedClass(asset.day_change))}>
                           {formatSignedCurrency(asset.day_change)}
                         </div>
                       </div>
-                      <div className="rounded-2xl bg-[rgba(var(--rgb-xuan),0.56)] px-3 py-2">
+                      <div className="rounded-lg bg-[rgba(var(--rgb-xuan),0.56)] px-3 py-2">
                         <div className="text-xs text-foreground/48">周变化</div>
                         <div className={cn("mt-1 font-semibold tabular-nums", signedClass(asset.week_change))}>
                           {formatSignedCurrency(asset.week_change)}
@@ -1071,7 +1081,7 @@ export function PersonalAssetsPanel() {
                     </div>
 
                     {detailsExpanded ? (
-                      <div className="rounded-[24px] border border-[rgba(var(--rgb-ink),0.08)] bg-[rgba(var(--rgb-xuan),0.72)] px-4 py-3">
+                      <div className="rounded-lg border border-[rgba(var(--rgb-ink),0.08)] bg-[rgba(var(--rgb-xuan),0.72)] px-4 py-3">
                         <div className="grid grid-cols-2 gap-2 text-sm">
                           <div>
                             <div className="text-xs text-foreground/48">成本价</div>
@@ -1092,7 +1102,7 @@ export function PersonalAssetsPanel() {
                         </div>
                         <div className="mt-3 text-sm leading-7 text-foreground/66">{describeDca(asset.dca_rule)}</div>
                         {asset.pending_dca && pendingDcaDescription ? (
-                          <div className="surface-tone-ochre mt-3 rounded-2xl px-3 py-2 text-sm leading-7">
+                          <div className="surface-tone-ochre mt-3 rounded-lg px-3 py-2 text-sm leading-6">
                             {pendingDcaDescription}
                           </div>
                         ) : null}
@@ -1100,35 +1110,39 @@ export function PersonalAssetsPanel() {
                     ) : null}
 
                     <div className="grid grid-cols-2 gap-2">
-                      <Button className="h-10 rounded-2xl" onClick={() => openEditDialog(asset)}>
+                      <Button className="h-10" onClick={() => openEditDialog(asset)}>
                         <PencilLine className="mr-2 h-4 w-4" />
                         修改资产
                       </Button>
                       <Button
-                        variant={showingTransactions ? "secondary" : "outline"}
-                        className="h-10 rounded-2xl"
-                        onClick={() => setTransactionTicker(asset.ticker)}
-                      >
-                        {showingTransactions ? "正在查看流水" : "查看流水"}
-                      </Button>
-                      <Button
                         variant="outline"
-                        className="h-10 rounded-2xl"
+                        className="h-10"
                         onClick={() =>
                           setExpandedAssetTicker((current) => (current === asset.ticker ? null : asset.ticker))
                         }
                       >
                         {detailsExpanded ? "收起详情" : "更多详情"}
                       </Button>
-                      <Button
-                        variant="ghost"
-                        className="h-10 rounded-2xl justify-center text-tone-cinnabar hover:bg-[rgba(var(--rgb-cinnabar),0.08)] hover:text-tone-cinnabar"
-                        onClick={() => setAssetPendingDelete(asset)}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        删除资产
-                      </Button>
                     </div>
+                    {detailsExpanded ? (
+                      <div className="flex gap-2">
+                        <Button
+                          variant={showingTransactions ? "secondary" : "outline"}
+                          className="h-9 flex-1"
+                          onClick={() => setTransactionTicker(asset.ticker)}
+                        >
+                          {showingTransactions ? "正在查看流水" : "查看流水"}
+                        </Button>
+	                        <Button
+	                          variant="ghost"
+                          className="h-9 flex-1 justify-center text-tone-cinnabar hover:bg-[rgba(var(--rgb-cinnabar),0.08)] hover:text-tone-cinnabar"
+	                          onClick={() => setAssetPendingDelete(asset)}
+	                        >
+	                          <Trash2 className="mr-2 h-4 w-4" />
+	                          删除资产
+	                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 </motion.div>
               )
@@ -1136,10 +1150,10 @@ export function PersonalAssetsPanel() {
           )}
         </div>
 
-        <div className="data-panel-muted relative hidden overflow-hidden rounded-[28px] lg:block">
+        <div className="data-panel-muted relative hidden overflow-hidden rounded-lg lg:block">
           <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-[rgba(var(--rgb-ochre),0.58)] to-transparent" />
           <div className="overflow-x-auto">
-            <Table className="min-w-[1320px]">
+            <Table className="min-w-[1180px]">
               <TableHeader>
                 <TableRow className="border-b border-[rgba(var(--rgb-ink),0.08)]">
                   <TableHead className="sticky left-0 z-20 bg-background/95 backdrop-blur">资产</TableHead>
@@ -1201,7 +1215,7 @@ export function PersonalAssetsPanel() {
                         <TableCell className="sticky left-0 z-20 bg-background/92 p-0 align-top backdrop-blur">
                           <div
                             className={cn(
-                              "m-2 rounded-[24px] border px-4 py-4 transition-[border-color,background-color,box-shadow] duration-200",
+                              "m-1 rounded-lg border px-3 py-3 transition-[border-color,background-color,box-shadow] duration-200",
                               showingTransactions
                                 ? "border-[rgba(var(--rgb-ochre),0.24)] bg-[linear-gradient(150deg,rgba(var(--rgb-ochre),0.12),rgba(var(--rgb-xuan),0.95))] shadow-[0_16px_34px_rgba(41,33,25,0.08)]"
                                 : "border-[rgba(var(--rgb-ink),0.07)] bg-[rgba(var(--rgb-xuan),0.86)] group-hover/asset-row:border-[rgba(var(--rgb-ink),0.12)] group-hover/asset-row:bg-[rgba(var(--rgb-xuan),0.96)]"

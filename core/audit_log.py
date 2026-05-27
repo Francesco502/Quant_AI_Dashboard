@@ -705,6 +705,7 @@ class APIAuditMiddleware:
     def __init__(self, app):
         self.app = app
         self.exempt_paths = {"/api/health", "/api/auth/token", "/api/auth/register", "/docs", "/openapi.json", "/api/auth/me"}
+        self.sensitive_headers = {"authorization", "cookie", "set-cookie", "x-api-key"}
 
     async def __call__(self, scope, receive, send):
         """Middleware调用"""
@@ -714,6 +715,11 @@ class APIAuditMiddleware:
 
         request = Request(scope, receive)
         path = request.url.path
+        method = scope.get("method", "").upper()
+
+        if method == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
 
         # 检查是否为 exempt 路径
         if any(path.startswith(exempt) for exempt in self.exempt_paths):
@@ -726,11 +732,6 @@ class APIAuditMiddleware:
         # 构建请求信息
         headers = dict(request.headers)
         client_host = request.client.host if request.client else None
-
-        # 尝试获取用户信息
-        user = "anonymous"
-        if hasattr(request.state, "current_user"):
-            user = request.state.current_user.username
 
         # 获取请求ID
         request_id = headers.get("x-request-id")
@@ -745,6 +746,8 @@ class APIAuditMiddleware:
 
                     # 记录日志
                     try:
+                        current_user = getattr(request.state, "current_user", None)
+                        user = getattr(current_user, "username", "anonymous")
                         audit_logger = get_audit_logger()
                         audit_logger.log_api_access(
                             user=user,
@@ -752,7 +755,11 @@ class APIAuditMiddleware:
                             method=request.method,
                             details={
                                 "status_code": message.get("status", 200),
-                                "headers": {k: v for k, v in headers.items() if k.lower() not in ["authorization"]},
+                                "headers": {
+                                    k: v
+                                    for k, v in headers.items()
+                                    if k.lower() not in self.sensitive_headers
+                                },
                             },
                             ip_address=client_host,
                             success=True,
@@ -769,6 +776,8 @@ class APIAuditMiddleware:
         except Exception as e:
             # 记录异常
             try:
+                current_user = getattr(request.state, "current_user", None)
+                user = getattr(current_user, "username", "anonymous")
                 audit_logger = get_audit_logger()
                 audit_logger.log_api_access(
                     user=user,

@@ -29,7 +29,90 @@ export type StrategyDetail = {
   parameters?: StrategyParameter[]
 }
 
+
+
 export const STRATEGY_DETAILS: Record<string, StrategyDetail> = {
+  "BBI-KDJ 低位布局": {
+    id: "bbi_kdj",
+    name: "BBI-KDJ 低位布局",
+    type: "均值回归 / 复合摆动",
+    difficulty: 3,
+    description: "结合多空指数 (BBI) 与 KDJ 摆动指标，在价格处于长期中轨下方且 J 值极度超卖时寻找左侧低位布局机会。",
+    principle: "BBI 用于界定中长期趋势，KDJ 用于捕捉短期超跌。当价格偏离中轨且 J 值 < 15 时，表明出现低位共振。",
+    formula: "BBI = (MA(3) + MA(6) + MA(12) + MA(24)) / 4\n当 Price < BBI 且 KDJ.J < j_threshold 时触发买入。",
+    pros: ["能捕捉到极佳的左侧建仓点", "在震荡筑底行情中胜率高"],
+    cons: ["在单边下跌大熊市中容易频繁接飞刀", "需要严格的止损配合"],
+    applicable: ["震荡筑底行情", "中长期超跌反弹"],
+    risks: ["单边熊市阴跌", "均线系统整体向下发散时的伪金叉风险"],
+    parameters: [
+      { name: "j_threshold", default: 15, range: "0-20", desc: "KDJ 的 J 值超卖阈值" }
+    ],
+  },
+  "SuperB1 趋势突破": {
+    id: "super_b1",
+    name: "SuperB1 趋势突破",
+    type: "趋势跟随 / 突破",
+    difficulty: 4,
+    description: "一种基于价格创阶段新高、配合量能放大与超买修正的强力趋势突破策略。",
+    principle: "监控过去 N 日的最高价突破，结合成交量放大以过滤假突破。同时使用修正版的 KDJ 指标确保突破时具备强劲动能。",
+    formula: "Close > Max(Close, N) 且 Volume > Vol_Threshold 且 J > j_threshold。",
+    pros: ["能抓住主升浪行情", "自动过滤无量假突破"],
+    cons: ["在宽幅震荡市中会被来回双向磨损", "买入成本相对较高"],
+    applicable: ["单边牛市", "行业板块突破行情"],
+    risks: ["突破后迅速回踩夭折", "高位追涨导致的深度回撤"],
+    parameters: [
+      { name: "lookback_n", default: 10, range: "5-30", desc: "历史最高价回看天数" }
+    ],
+  },
+  "BBI 长短波段": {
+    id: "bbi_short_long",
+    name: "BBI 长短波段",
+    type: "趋势波段",
+    difficulty: 3,
+    description: "通过长短两个周期的多空指数 (BBI) 的交叉与排布，捕捉中长期波段的趋势起步与转折点。",
+    principle: "短周期 BBI 反应灵敏，长周期 BBI 趋势稳健。短周期上穿长周期为买入信号，下穿为卖出信号。",
+    formula: "短周期 BBI = (MA(5) + MA(10) + MA(20) + MA(40)) / 4\n长周期 BBI = (MA(10) + MA(20) + MA(40) + MA(80)) / 4\n当 BBI(short) > BBI(long) 且处于低位时买入。",
+    pros: ["中长线趋势跟踪能力强", "有效过滤日内噪音"],
+    cons: ["趋势转折期会有一定的利润回吐", "震荡横盘期交易频繁"],
+    applicable: ["单边多头波段", "大周期趋势跟踪"],
+    risks: ["中轨附近反复缠绕磨损", "长周期限制导致的利润大幅回撤"],
+    parameters: [
+      { name: "n_short", default: 5, range: "3-10", desc: "短周期均线参数" },
+      { name: "n_long", default: 21, range: "15-50", desc: "长周期均线参数" }
+    ],
+  },
+  "Peak KDJ 回踩确认": {
+    id: "peak_kdj",
+    name: "Peak KDJ 回踩确认",
+    type: "动量回调",
+    difficulty: 3,
+    description: "在多头趋势确立的前提下，等待 KDJ 指标回踩超卖区间完成确认后，寻找分批逢低买入的机会。",
+    principle: "强势股的回调往往是买点。利用 KDJ 判定短期超跌，结合价格波幅（Fluctuation）过滤无序震荡。",
+    formula: "长期均线多头 且 KDJ.J 从高位回踩至 j_threshold 附近。",
+    pros: ["买在上升通道的局部低点", "风险收益比（盈亏比）极佳"],
+    cons: ["在趋势反转时容易买在第一波大跌起点", "需要对大趋势有极高准确度判定"],
+    applicable: ["震荡上行市", "强势股回调"],
+    risks: ["趋势彻底破位后的抄底风险", "成交量萎缩下的虚假企稳"],
+    parameters: [
+      { name: "j_threshold", default: 10, range: "5-20", desc: "超卖回踩确认阈值" }
+    ],
+  },
+  "MA60 放量上穿": {
+    id: "ma60_cross",
+    name: "MA60 放量上穿",
+    type: "均线突破",
+    difficulty: 2,
+    description: "经典的牛熊生命线突破策略。当价格放量站上 60 日均线，表明中线行情启动，适合长线布局。",
+    principle: "60 日均线是中长期牛熊分界线。放量站上表明有主力资金流入，趋势发生质变。",
+    formula: "Close > MA(60) 且 Close[1] <= MA(60)[1] 且 Volume > 1.8 * MA(Volume, 25)。",
+    pros: ["能抓住大级别行情的起涨点", "规则极其简单，不易过拟合"],
+    cons: ["均线走平时会反复站上并跌破", "牛市末期容易产生假金叉"],
+    applicable: ["底部启动行情", "中长期牛熊转换"],
+    risks: ["放量冲高回落的假突破", "60日均线斜率向下时的压制破位"],
+    parameters: [
+      { name: "vol_multiple", default: 1.8, range: "1.2-3.0", desc: "放量倍数限制" }
+    ],
+  },
   "SMA 金叉策略": {
     id: "sma_cross",
     name: "SMA 金叉策略",
@@ -47,7 +130,7 @@ export const STRATEGY_DETAILS: Record<string, StrategyDetail> = {
       { name: "long_window", default: 30, range: "20-60", desc: "长期均线窗口" },
     ],
   },
-  "MACD Strategy": {
+  "MACD 策略": {
     id: "macd",
     name: "MACD 策略",
     type: "趋势动量",
@@ -65,7 +148,7 @@ export const STRATEGY_DETAILS: Record<string, StrategyDetail> = {
       { name: "信号周期", default: 9, range: "6-12", desc: "用于平滑 DIF" },
     ],
   },
-  "Bollinger Strategy": {
+  "布林带策略": {
     id: "bollinger",
     name: "布林带策略",
     type: "波动率",
@@ -73,7 +156,7 @@ export const STRATEGY_DETAILS: Record<string, StrategyDetail> = {
     description: "观察价格相对通道的位置，适合做均值回归或波动收敛后的突破。",
     principle: "价格偏离中轨过多时关注回归，带宽收窄后则留意趋势扩张。",
     formula: "中轨 = MA(20)\n上轨 = 中轨 + 2×标准差\n下轨 = 中轨 - 2×标准差",
-    pros: ["能同时观察趋势和波动", "图形可视化非常直观"],
+    pros: ["能同时观察趋势 and 波动", "图形可视化非常直观"],
     cons: ["单独使用容易误判假突破", "对不同市场要调参数"],
     applicable: ["区间震荡", "波动率收敛后的突破行情"],
     risks: ["单边趋势中逆势接飞刀", "带宽扩张时回归判断失效"],
@@ -82,7 +165,7 @@ export const STRATEGY_DETAILS: Record<string, StrategyDetail> = {
       { name: "标准差倍数", default: 2, range: "1.5-3", desc: "通道宽度倍数" },
     ],
   },
-  "Momentum Strategy": {
+  "动量策略": {
     id: "momentum",
     name: "动量策略",
     type: "因子轮动",

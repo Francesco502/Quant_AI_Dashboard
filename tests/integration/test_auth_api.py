@@ -14,6 +14,7 @@ from api.auth import (
     create_access_token,
     create_user,
     get_user_by_username,
+    UserInDB,
 )
 from api.main import app
 from core.user_assets import get_user_asset_service
@@ -79,6 +80,32 @@ def test_auth_permissions_for_admin_not_downgraded_to_viewer() -> None:
     body = response.json()
     assert body["role"] == "admin"
     assert "manage_user" in body["permissions"]
+
+
+def test_auth_middleware_rejects_disabled_user_on_middleware_only_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = create_access_token({"sub": "disabled_user", "role": "viewer"})
+
+    def fake_get_user(username: str) -> UserInDB:
+        return UserInDB(
+            id=999001,
+            username=username,
+            hashed_password="unused",
+            disabled=True,
+            role="viewer",
+        )
+
+    monkeypatch.setattr(auth_module, "get_user", fake_get_user)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/backtest/strategies",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Inactive user"
 
 
 def test_bootstrap_admin_requires_explicit_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,3 +199,20 @@ def test_delete_user_cleans_personal_asset_tables() -> None:
 
     cursor.execute("SELECT COUNT(1) AS total FROM users WHERE id = ?", (user_id,))
     assert int(cursor.fetchone()["total"]) == 0
+
+
+def test_system_admin_endpoints_reject_viewer(monkeypatch: pytest.MonkeyPatch) -> None:
+    username = f"viewer_system_{uuid.uuid4().hex[:8]}"
+    assert create_user(username=username, password="password123", role="viewer")
+
+    class FakeMonitor:
+        def cleanup_caches(self) -> dict[str, int]:
+            return {"cleared": 1}
+
+    monkeypatch.setattr("api.main.get_memory_monitor", lambda: FakeMonitor())
+
+    with TestClient(app) as client:
+        headers = _bearer_headers(username, "viewer")
+        for path in ("/api/rate-limit/stats", "/api/audit-stats", "/api/cleanup"):
+            response = client.get(path, headers=headers)
+            assert response.status_code == 403

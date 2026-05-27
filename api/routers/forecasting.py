@@ -3,7 +3,8 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from core.advanced_forecasting import (
     advanced_price_forecast,
@@ -13,13 +14,16 @@ from core.advanced_forecasting import (
 )
 
 router = APIRouter()
+MAX_FORECAST_TICKERS = 20
+MAX_FORECAST_HORIZON = 120
+MAX_FORECAST_LOOKBACK_DAYS = 3650
 
 
 class ForecastRequest(BaseModel):
     """Forecast request payload."""
 
-    tickers: List[str]
-    horizon: int = 30
+    tickers: List[str] = Field(..., min_length=1, max_length=MAX_FORECAST_TICKERS)
+    horizon: int = Field(30, ge=1, le=MAX_FORECAST_HORIZON)
     model_type: str = "prophet"
     use_enhanced_features: bool = False
 
@@ -44,7 +48,8 @@ async def predict(request: ForecastRequest):
         results = {}
         for ticker in request.tickers:
             try:
-                results[ticker] = run_forecast(
+                results[ticker] = await run_in_threadpool(
+                    run_forecast,
                     ticker=ticker,
                     horizon=request.horizon,
                     model_type=request.model_type,
@@ -91,15 +96,16 @@ async def list_models():
 @router.get("/predict/{ticker}", deprecated=True)
 async def predict_get(
     ticker: str,
-    horizon: int = Query(5, description="Forecast horizon in trading days."),
+    horizon: int = Query(5, ge=1, le=MAX_FORECAST_HORIZON, description="Forecast horizon in trading days."),
     model_type: str = Query("xgboost", description="Model type."),
     use_production_model: bool = Query(True, description="Whether to prefer the production model."),
-    lookback_days: Optional[int] = Query(None, description="Lookback window for local data."),
+    lookback_days: Optional[int] = Query(None, ge=6, le=MAX_FORECAST_LOOKBACK_DAYS, description="Lookback window for local data."),
 ):
     """Run a single-ticker forecast."""
 
     try:
-        result = quick_predict(
+        result = await run_in_threadpool(
+            quick_predict,
             ticker=ticker,
             horizon=horizon,
             model_type=model_type,
@@ -150,11 +156,12 @@ async def batch_predict(request: ForecastRequest):
     try:
         from core.data_service import load_price_data
 
-        price_data = load_price_data(tickers=request.tickers, days=365)
+        price_data = await run_in_threadpool(load_price_data, tickers=request.tickers, days=365)
         if price_data is None or price_data.empty:
             raise HTTPException(status_code=400, detail="Unable to load price data.")
 
-        forecast_df = advanced_price_forecast(
+        forecast_df = await run_in_threadpool(
+            advanced_price_forecast,
             price_data,
             horizon=request.horizon,
             model_type=request.model_type,

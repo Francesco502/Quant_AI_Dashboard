@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
    Badge — Subtle pill labels with frosted glass variants
    ---------------------------------------------------------------- */
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-1 text-[0.74rem] font-medium leading-none tracking-[0.02em] transition-colors focus:outline-none focus:ring-2 focus:ring-ring/20 focus:ring-offset-1",
+  "inline-flex items-center rounded-full border px-2.5 py-1 text-[0.74rem] font-semibold leading-none tracking-normal backdrop-blur-md transition-all duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.02)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.12)] focus:outline-none focus:ring-2 focus:ring-ring/20 focus:ring-offset-1",
   {
     variants: {
       variant: {

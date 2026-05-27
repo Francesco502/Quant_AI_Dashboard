@@ -39,3 +39,31 @@ def test_portfolio_analyze_contract(mock_load_price_data, mock_generate_signals,
     assert isinstance(body["contributions"], list)
     assert len(body["correlations"]) == 2
     assert len(body["contributions"]) == 2
+
+
+@patch("core.portfolio_analyzer.generate_multi_asset_signals")
+@patch("core.portfolio_analyzer.load_price_data")
+def test_portfolio_analyze_accepts_fractional_shares(mock_load_price_data, mock_generate_signals, auth_client):
+    dates = pd.date_range(start="2025-01-01", periods=120, freq="B")
+    mock_load_price_data.return_value = pd.DataFrame(
+        {
+            "006195": pd.Series(range(100, 220), index=dates, dtype=float),
+            "159755": pd.Series(range(50, 170), index=dates, dtype=float),
+        },
+        index=dates,
+    )
+    mock_generate_signals.return_value = pd.DataFrame()
+
+    response = auth_client.post(
+        "/api/portfolio/analyze",
+        json={
+            "holdings": [
+                {"ticker": "006195", "shares": 2648.88},
+                {"ticker": "159755", "shares": 100.25},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["contributions"]) == 2

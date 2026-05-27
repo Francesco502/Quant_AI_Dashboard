@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 import os
 import logging
+import threading
 from typing import Optional, Dict, List
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,7 @@ class Database:
         
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
+        self.lock = threading.RLock()
         
         # 确保目录存在
         dir_name = os.path.dirname(db_path)
@@ -51,10 +53,13 @@ class Database:
     
     def _init_database(self):
         """初始化数据库表结构"""
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
         self.conn.row_factory = sqlite3.Row
         
         cursor = self.conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA foreign_keys=ON")
         
         # 创建价格数据表
         cursor.execute("""
@@ -715,4 +720,3 @@ def get_database(db_path: Optional[str] = None) -> Database:
         _db_instance = Database(db_path)
     
     return _db_instance
-

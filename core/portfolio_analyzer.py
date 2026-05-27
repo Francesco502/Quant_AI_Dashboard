@@ -197,6 +197,7 @@ class PortfolioAnalyzer:
         effective_tickers = [t for t in self.requested_tickers if t in price_df.columns]
         if not effective_tickers:
             return {"error": "None of the requested tickers has available data"}
+        missing_tickers = [t for t in self.requested_tickers if t not in effective_tickers]
 
         price_df = price_df[effective_tickers].dropna(how="all")
         if price_df.empty:
@@ -289,6 +290,9 @@ class PortfolioAnalyzer:
                 "max_drawdown": round(max_dd, 4),
                 "var_95": round(float(risk_metrics.get("var_95", 0.0)), 4),
                 "cvar_95": round(float(risk_metrics.get("cvar_95", 0.0)), 4),
+                "requested_tickers": self.requested_tickers,
+                "analyzed_tickers": effective_tickers,
+                "omitted_tickers": missing_tickers,
             },
             "asset_metrics": asset_metrics,
             "weights": dict(zip(effective_tickers, [round(float(w), 6) for w in weights])),

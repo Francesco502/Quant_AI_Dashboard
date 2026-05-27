@@ -31,7 +31,7 @@ export function StatusPill({
   return (
     <div
       className={cn(
-        "flex min-h-10 items-center gap-2 rounded-xl border px-3.5 py-2 text-[0.78rem] font-medium tracking-[0.02em]",
+        "flex min-h-10 items-center gap-2 rounded-lg border px-3.5 py-2 text-[0.78rem] font-medium tracking-normal",
         toneClasses[tone],
         className,
       )}

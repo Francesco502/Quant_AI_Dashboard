@@ -15,6 +15,11 @@ interface SettingsContextType {
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined)
 
+function hasStoredToken() {
+  if (typeof window === "undefined") return false
+  return Boolean(sessionStorage.getItem("token") || localStorage.getItem("token"))
+}
+
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [dataSources, setDataSourcesState] = useState<string[]>(["Tushare", "AkShare"])
   const [apiKeyStatus, setApiKeyStatus] = useState<{ Tushare: boolean; AlphaVantage: boolean }>({
@@ -22,13 +27,11 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     AlphaVantage: false,
   })
   const [configurationMode, setConfigurationMode] = useState<"env_locked">("env_locked")
-  const [isLoading, setIsLoading] = useState(
-    () => typeof window !== "undefined" && !!localStorage.getItem("token")
-  )
+  const [isLoading, setIsLoading] = useState(() => hasStoredToken())
 
   // Load from API on mount
   useEffect(() => {
-    if (typeof window === "undefined" || !localStorage.getItem("token")) return
+    if (!hasStoredToken()) return
 
     api.stz.getDataSources()
       .then((res) => {

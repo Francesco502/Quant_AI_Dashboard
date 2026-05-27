@@ -122,9 +122,9 @@ def _make_json_safe(value: Any) -> Any:
     return str(value)
 
 
-def get_cached(endpoint: str, params: dict) -> Optional[dict]:
+def get_cached(endpoint: str, params: dict, ignore_ttl: bool = False) -> Optional[dict]:
     """
-    若存在且未过期且结构合法，返回 entry["data"]，否则 None。
+    若存在且（未过期或ignore_ttl为True）且结构合法，返回 entry["data"]，否则 None。
     若文件损坏则删除并返回 None。
     """
     if not is_api_cache_enabled():
@@ -140,14 +140,15 @@ def get_cached(endpoint: str, params: dict) -> Optional[dict]:
             logger.warning("API cache entry invalid structure: %s", filepath)
             filepath.unlink(missing_ok=True)
             return None
-        cached_at = datetime.fromisoformat(entry["cached_at"].replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        if cached_at.tzinfo is None:
-            cached_at = cached_at.replace(tzinfo=timezone.utc)
-        ttl = get_ttl_seconds(endpoint)
-        if (now - cached_at).total_seconds() > ttl:
-            filepath.unlink(missing_ok=True)
-            return None
+        if not ignore_ttl:
+            cached_at = datetime.fromisoformat(entry["cached_at"].replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            if cached_at.tzinfo is None:
+                cached_at = cached_at.replace(tzinfo=timezone.utc)
+            ttl = get_ttl_seconds(endpoint)
+            if (now - cached_at).total_seconds() > ttl:
+                # 保留缓存文件作为错误降级/Fallback使用，仅返回None表示已过期
+                return None
         return entry["data"]
     except Exception as e:
         logger.warning("API cache read error %s: %s", filepath, e)
@@ -175,9 +176,74 @@ def set_cached(endpoint: str, params: dict, data: dict) -> None:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(safe_entry, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, filepath)
+        prune_cache()
     except Exception as e:
         tmp_path.unlink(missing_ok=True)
         logger.warning("API cache write error %s: %s", filepath, e)
+
+
+def _cache_files(cache_root: Path) -> list[Path]:
+    if not cache_root.exists():
+        return []
+    return [path for path in cache_root.rglob("*.json") if path.is_file()]
+
+
+def _env_int(name: str, default: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
+
+
+def prune_cache(max_entries: Optional[int] = None, max_bytes: Optional[int] = None) -> int:
+    """Prune old API cache files by count and total size.
+
+    A zero or missing budget disables that specific limit. The newest files are
+    kept first so stale fallback entries cannot grow without bound.
+    """
+    entry_budget = _env_int("API_CACHE_MAX_ENTRIES", 0) if max_entries is None else max_entries
+    byte_budget = _env_int("API_CACHE_MAX_BYTES", 0) if max_bytes is None else max_bytes
+    if not entry_budget and not byte_budget:
+        return 0
+
+    files = _cache_files(_cache_dir())
+    if not files:
+        return 0
+
+    files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    deleted = 0
+    kept_count = 0
+    kept_bytes = 0
+
+    for path in files:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+
+        over_count = bool(entry_budget and kept_count >= entry_budget)
+        over_bytes = bool(byte_budget and kept_bytes + size > byte_budget)
+        if over_count or over_bytes:
+            try:
+                path.unlink(missing_ok=True)
+                deleted += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("API cache prune error %s: %s", path, exc)
+            continue
+
+        kept_count += 1
+        kept_bytes += size
+
+    for directory in sorted(_cache_dir().rglob("*"), reverse=True):
+        if directory.is_dir():
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+    return deleted
 
 
 def clear_cached(endpoint: Optional[str] = None) -> int:

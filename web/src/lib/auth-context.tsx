@@ -22,6 +22,7 @@ interface AuthContextType {
 }
 
 const PUBLIC_ROUTES = new Set(["/login", "/register"])
+const TOKEN_KEY = "token"
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
@@ -47,9 +48,24 @@ function readStoredUser(): UserInfo | null {
 
 function clearStoredAuth() {
   if (typeof window === "undefined") return
-  localStorage.removeItem("token")
+  sessionStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem("user")
   localStorage.removeItem("userRole")
+}
+
+function readStoredToken(): string | null {
+  if (typeof window === "undefined") return null
+  const sessionToken = sessionStorage.getItem(TOKEN_KEY)
+  if (sessionToken) return sessionToken
+
+  const legacyToken = localStorage.getItem(TOKEN_KEY)
+  if (legacyToken) {
+    sessionStorage.setItem(TOKEN_KEY, legacyToken)
+    localStorage.removeItem(TOKEN_KEY)
+    return legacyToken
+  }
+  return null
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -66,13 +82,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false
     window.queueMicrotask(() => {
       if (cancelled) return
-      setToken(localStorage.getItem("token"))
+      setToken(readStoredToken())
       setUser(readStoredUser())
       setIsReady(true)
     })
 
     const handleStorage = () => {
-      setToken(localStorage.getItem("token"))
+      setToken(readStoredToken())
       setUser(readStoredUser())
     }
 
@@ -151,7 +167,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (typeof window === "undefined") return
 
       const nextRole = role || "viewer"
-      localStorage.setItem("token", newToken)
+      sessionStorage.setItem(TOKEN_KEY, newToken)
+      localStorage.removeItem(TOKEN_KEY)
       localStorage.setItem("user", username)
       localStorage.setItem("userRole", nextRole)
       setToken(newToken)

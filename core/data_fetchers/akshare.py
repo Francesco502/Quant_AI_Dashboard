@@ -483,7 +483,7 @@ def load_cn_realtime_quotes_sina(tickers: List[str]) -> Dict[str, Dict[str, obje
         "User-Agent": "Mozilla/5.0",
     }
 
-    response = requests.get(url, timeout=15, headers=headers)
+    response = requests.get(url, timeout=3, headers=headers)
     response.raise_for_status()
     response.encoding = "gbk"
 

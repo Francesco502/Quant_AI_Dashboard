@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
+from api.main import app
 from core import llm_client
 
 
@@ -84,3 +87,12 @@ def test_invalid_strategy_returns_error(auth_client):
     }
     response = auth_client.post("/api/backtest/run", json=payload)
     assert response.status_code in {400, 404, 500}
+
+
+def test_signals_websocket_rejects_missing_token():
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            with client.websocket_connect("/ws/signals"):
+                pass
+
+    assert exc_info.value.code == 1008

@@ -338,6 +338,12 @@ def run_selectors_for_market(
     if market not in {"CN", "HK"}:
         raise ValueError(f"Unsupported market: {market}")
 
+    def _env_flag(name: str, default: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
     def _report(p: float, msg: str) -> None:
         if progress_callback is None:
             return
@@ -433,29 +439,58 @@ def run_selectors_for_market(
     scan_lookback_days = int(os.getenv("MARKET_SCAN_LOOKBACK_DAYS", "730"))
     scan_lookback_days = max(180, min(scan_lookback_days, 3650))
 
+    import gc
+    chunk_size = 200
+    refresh_stale = _env_flag("MARKET_SCAN_REFRESH_STALE", True)
+    all_results: List[pd.DataFrame] = []
+
+    total_tickers = len(tickers)
     _report(
         0.05,
         (
-            f"Loading OHLCV for {len(tickers)} symbols from market={market}, "
-            f"universe={len(tickers)}/{total_universe_size}, lookback_days={scan_lookback_days}..."
+            f"Starting batched market scan for {total_tickers} symbols (chunk size {chunk_size}), "
+            f"lookback={scan_lookback_days} days. Remote refresh "
+            f"{'enabled' if refresh_stale else 'disabled'}."
         ),
     )
-    ohlcv_map = load_ohlcv_data(tickers=tickers, days=scan_lookback_days)
-    if not ohlcv_map:
-        return _empty_result_df()
-    _report(0.4, f"Loaded OHLCV for {len(ohlcv_map)} symbols")
 
-    data = _prepare_selector_data(ohlcv_map, trade_ts)
-    if not data:
-        return _empty_result_df()
-    _report(0.5, f"Prepared {len(data)} symbols for selectors")
+    for chunk_idx in range(0, total_tickers, chunk_size):
+        chunk_tickers = tickers[chunk_idx : chunk_idx + chunk_size]
+        current_chunk_num = chunk_idx // chunk_size + 1
+        total_chunks = (total_tickers + chunk_size - 1) // chunk_size
 
-    result = _run_selectors(
-        trade_ts=trade_ts,
-        data=data,
-        selector_names=selector_names,
-        selector_params=selector_params,
-        progress_callback=progress_callback,
-    )
-    _report(1.0, f"Selector run completed with {len(result)} records")
+        _report(
+            0.05 + 0.90 * (chunk_idx / total_tickers),
+            f"Loading chunk {current_chunk_num}/{total_chunks} ({len(chunk_tickers)} symbols)..."
+        )
+
+        ohlcv_map = load_ohlcv_data(tickers=chunk_tickers, days=scan_lookback_days, refresh_stale=refresh_stale)
+        if not ohlcv_map:
+            continue
+
+        data = _prepare_selector_data(ohlcv_map, trade_ts)
+        if not data:
+            continue
+
+        chunk_res = _run_selectors(
+            trade_ts=trade_ts,
+            data=data,
+            selector_names=selector_names,
+            selector_params=selector_params,
+            progress_callback=None,
+        )
+        if not chunk_res.empty:
+            all_results.append(chunk_res)
+
+        # Free memory aggressively
+        del ohlcv_map
+        del data
+        gc.collect()
+
+    if not all_results:
+        return _empty_result_df()
+
+    result = pd.concat(all_results, ignore_index=True)
+    result = result.sort_values(["selector_class", "ticker"]).reset_index(drop=True)
+    _report(1.0, f"Batched market scan completed with {len(result)} records")
     return result

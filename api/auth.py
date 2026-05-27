@@ -527,6 +527,13 @@ class AuthenticationMiddleware:
             )
             await response(scope, receive, send)
             return
+        if user.disabled:
+            response = JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "Inactive user"},
+            )
+            await response(scope, receive, send)
+            return
 
         request.state.current_user = user
 

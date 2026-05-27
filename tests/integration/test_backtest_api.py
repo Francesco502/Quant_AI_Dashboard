@@ -60,7 +60,7 @@ class TestBacktestAPI:
         }
 
         response = auth_client.post("/api/backtest/run-multi", json=payload)
-        assert response.status_code == 500
+        assert response.status_code == 422
 
     @patch("api.routers.backtest.load_price_data")
     def test_optimize_parameters(self, mock_load_price, auth_client):

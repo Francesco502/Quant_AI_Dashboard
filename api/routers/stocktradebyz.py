@@ -40,7 +40,7 @@ from core.data_service import (
     load_price_data,
 )
 from core.market_scanner import MarketScanner
-from api.auth import UserInDB, get_current_active_user
+from api.auth import UserInDB, get_current_active_user, require_admin
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -414,15 +414,21 @@ def _run_strategy_task(task_id: str, request: RunStrategyRequest, user_id: int) 
 # ----------------------------------------------------------------------
 
 @router.post("/scan/market", deprecated=True)
-async def scan_market(request: ScanMarketRequest):
+async def scan_market(
+    request: ScanMarketRequest,
+    current_user: UserInDB = Depends(require_admin),
+):
     """
     全市场扫描
     """
+    del current_user
     try:
-        results = market_scanner.scan_market(
+        safe_limit = min(max(int(request.limit or 0), 1), 200)
+        results = await run_in_threadpool(
+            market_scanner.scan_market,
             strategy_config=request.strategy_config,
             market=request.market,
-            limit=request.limit
+            limit=safe_limit,
         )
         return {"status": "success", "count": len(results), "results": results}
     except Exception as e:

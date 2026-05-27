@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from core.asset_metadata import get_asset_pool_tickers
+from core.auto_trading_guardrails import is_auto_trading_allowed
 from core.auto_paper_trading import (
     AUTO_TRADING_UNIVERSE_LABELS,
     UNIVERSE_MODE_ASSET_POOL,
@@ -176,7 +177,7 @@ def _build_account_detail_payload(
 ) -> Dict[str, Any]:
     account = service.account_mgr.get_account(account_id, user_id)
     if not account:
-        raise HTTPException(status_code=404, detail="璐︽埛涓嶅瓨鍦ㄦ垨鏃犳潈璁块棶")
+        raise HTTPException(status_code=404, detail="账户不存在或无权访问")
 
     positions = service.get_positions(user_id, account_id, refresh_prices=refresh_prices)
 
@@ -293,6 +294,10 @@ def _build_auto_trading_payload(
         "available_strategies": available_strategies,
         "account": None,
         "universe_summary": universe_summary,
+        "safety": {
+            "auto_trading_allowed": is_auto_trading_allowed(),
+            "required_env": "ALLOW_AUTO_TRADING=true",
+        },
     }
 
     if user_id is None:

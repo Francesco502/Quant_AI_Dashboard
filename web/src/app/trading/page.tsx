@@ -530,6 +530,9 @@ export default function TradingPage() {
   const equityPad = equityValues.length > 0 ? Math.max((equityMax - equityMin) * 0.12, equityMax * 0.015, 200) : 0
   const autoRunState = autoStatus?.daemon?.trading_run_state ?? "idle"
   const autoActionLocked = autoBusy !== null || autoRunState === "running"
+  const autoTradingAllowed = autoStatus?.safety?.auto_trading_allowed === true
+  const autoTradingRequiredEnv = autoStatus?.safety?.required_env || "ALLOW_AUTO_TRADING=true"
+  const autoRunDisabled = autoActionLocked || !autoTradingAllowed
 
   const pollAutoTradingStatus = useCallback(
     async (attempt: number = 0) => {
@@ -577,6 +580,11 @@ export default function TradingPage() {
   }
 
   const handleRunNow = async (resetFirst: boolean) => {
+    if (!autoTradingAllowed) {
+      setNotice({ tone: "error", text: "自动交易需要先设置 ALLOW_AUTO_TRADING=true。" })
+      return
+    }
+
     setAutoBusy("run")
     try {
       const saved = await api.trading.auto.updateConfig(configDraft)
@@ -739,9 +747,9 @@ export default function TradingPage() {
               <StatusPill label="账户" value={account?.account_name || configDraft.account_name} icon={Wallet} tone="ink" />
               <StatusPill
                 label="自动交易"
-                value={configDraft.enabled ? "已启用" : "已暂停"}
+                value={!autoTradingAllowed ? "硬门禁关闭" : configDraft.enabled ? "已启用" : "已暂停"}
                 icon={Bot}
-                tone={configDraft.enabled ? "ochre" : "ink"}
+                tone={!autoTradingAllowed ? "cinnabar" : configDraft.enabled ? "ochre" : "ink"}
               />
               <span className="text-[0.88rem] leading-6 text-foreground/62">评估频率每 {configDraft.interval_minutes} 分钟</span>
             </div>
@@ -754,7 +762,7 @@ export default function TradingPage() {
                 刷新
               </Button>
               {!autoAccessDenied ? (
-                <Button size="sm" onClick={() => void handleRunNow(false)} disabled={autoActionLocked}>
+                <Button size="sm" onClick={() => void handleRunNow(false)} disabled={autoRunDisabled}>
                   <PlayCircle className="mr-2 h-4 w-4" />
                   立即执行
                 </Button>
@@ -900,6 +908,12 @@ export default function TradingPage() {
                       secondary={autoStatus?.daemon?.last_started_at ? `最近启动 ${formatDateTime(autoStatus?.daemon?.last_started_at)}` : "尚未启动"}
                     />
                     <SummaryMetric
+                      label="硬门禁"
+                      value={autoTradingAllowed ? "已开启" : "未开启"}
+                      accent={autoTradingAllowed ? SONG_COLORS.celadon : SONG_COLORS.cinnabar}
+                      secondary={autoStatus?.safety?.required_env || "ALLOW_AUTO_TRADING=true"}
+                    />
+                    <SummaryMetric
                       label="最近执行"
                       value={
                         autoStatus?.daemon?.last_trading_run
@@ -946,7 +960,7 @@ export default function TradingPage() {
                       </Button>
                     )}
                     {!autoAccessDenied ? (
-                      <Button variant="outline" onClick={() => void handleRunNow(false)} disabled={autoActionLocked}>
+                      <Button variant="outline" onClick={() => void handleRunNow(false)} disabled={autoRunDisabled}>
                         <PlayCircle className="mr-2 h-4 w-4" />
                         立即执行一次
                       </Button>
@@ -1472,11 +1486,11 @@ export default function TradingPage() {
                             <Settings2 className="mr-2 h-4 w-4" />
                             保存配置
                           </Button>
-                          <Button variant="outline" onClick={() => void handleRunNow(false)} disabled={autoActionLocked}>
+                          <Button variant="outline" onClick={() => void handleRunNow(false)} disabled={autoRunDisabled}>
                             <PlayCircle className="mr-2 h-4 w-4" />
                             保存并执行
                           </Button>
-                          <Button variant="outline" onClick={() => void handleRunNow(true)} disabled={autoActionLocked}>
+                          <Button variant="outline" onClick={() => void handleRunNow(true)} disabled={autoRunDisabled}>
                             <RotateCcw className="mr-2 h-4 w-4" />
                             重置后执行
                           </Button>
@@ -1492,6 +1506,12 @@ export default function TradingPage() {
 
                       <div className="grid gap-3 sm:grid-cols-2">
                         <SummaryMetric label="守护进程" value={autoStatus?.daemon?.daemon_running ? "运行中" : "未运行"} accent={daemonAccent} />
+                        <SummaryMetric
+                          label="硬门禁"
+                          value={autoTradingAllowed ? "已开启" : "未开启"}
+                          secondary={autoTradingRequiredEnv}
+                          accent={autoTradingAllowed ? SONG_COLORS.celadon : SONG_COLORS.cinnabar}
+                        />
                         <SummaryMetric label="最近启动" value={autoStatus?.daemon?.last_started_at ? formatDateTime(autoStatus?.daemon?.last_started_at) : "暂无"} accent={SONG_COLORS.indigo} />
                         <SummaryMetric label="本轮持仓" value={`${latestPositions} 个`} accent={SONG_COLORS.ink} />
                         <SummaryMetric label="选中策略" value={`${latestValidatedStrategies.length} 个`} accent={evaluationAccent} />

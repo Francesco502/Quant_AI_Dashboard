@@ -9,6 +9,7 @@ import math
 
 import pandas as pd
 
+from core.auto_trading_guardrails import require_auto_trading_allowed
 from core.asset_metadata import get_asset_pool_tickers, list_cn_a_share_tickers
 from core.backtest_engine import BacktestEngine
 from core.data_service import load_price_data
@@ -375,6 +376,8 @@ def _build_candidate_scores(
 
 
 def run_auto_trading_cycle(cfg: Dict[str, Any], trading_service) -> Dict[str, Any]:
+    require_auto_trading_allowed()
+
     trading_cfg = cfg.get("trading", {})
     username = str(trading_cfg.get("username", "admin")).strip() or "admin"
     account_name = str(trading_cfg.get("account_name", "全市场自动模拟交易")).strip() or "全市场自动模拟交易"

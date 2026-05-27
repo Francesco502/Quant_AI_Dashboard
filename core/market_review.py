@@ -286,7 +286,7 @@ def _us_indices() -> List[IndexSnapshot]:
     if not YF_AVAILABLE:
         return []
     try:
-        ys = yf.download(list(tickers.keys()), period="2d", interval="1d", progress=False)
+        ys = yf.download(list(tickers.keys()), period="2d", interval="1d", progress=False, timeout=5)
         if ys.empty:
             return res
         close_key = "Adj Close" if "Adj Close" in (ys.columns.get_level_values(0) if hasattr(ys.columns, "levels") else ys.columns) else "Close"
@@ -328,7 +328,7 @@ def _us_indices_alpha_vantage(tickers: Dict[str, str], api_key: str) -> List[Ind
                 "apikey": api_key,
                 "outputsize": "compact",
             }
-            resp = requests.get(base_url, params=params, timeout=30)
+            resp = requests.get(base_url, params=params, timeout=3)
             resp.raise_for_status()
             js = resp.json()
 
@@ -611,6 +611,30 @@ def _cn_northbound() -> Dict[str, Any]:
     return info
 
 
+def _has_market_review_content(resp: Dict[str, Any], market: MarketType) -> bool:
+    if resp.get("indices"):
+        return True
+    if market in ("cn", "both"):
+        overview = resp.get("overview")
+        sectors = resp.get("sectors")
+        northbound = resp.get("northbound")
+        return bool(overview or sectors or northbound)
+    return False
+
+
+def _get_stale_market_review_cache(market: MarketType) -> Optional[Dict[str, Any]]:
+    try:
+        from core.api_response_cache import get_cached, is_api_cache_enabled
+
+        if is_api_cache_enabled():
+            cached = get_cached("market_review", {"market": market}, ignore_ttl=True)
+            if cached is not None:
+                return cached
+    except Exception as e:
+        logger.error("读取降级大盘复盘缓存失败: %s", e)
+    return None
+
+
 def daily_review(market: MarketType = "cn") -> Dict[str, Any]:
     """生成大盘复盘摘要"""
     try:
@@ -622,28 +646,40 @@ def daily_review(market: MarketType = "cn") -> Dict[str, Any]:
     except Exception:
         pass
 
-    today = datetime.now().date().isoformat()
-    resp: Dict[str, Any] = {"date": today, "market": market}
-
-    indices: List[IndexSnapshot] = []
-    if market in ("cn", "both"):
-        indices.extend(_cn_indices())
-    if market in ("us", "both"):
-        indices.extend(_us_indices())
-
-    resp["indices"] = [asdict(i) for i in indices]
-
-    if market in ("cn", "both"):
-        extra = _cn_overview_and_sectors()
-        resp["overview"] = extra.get("overview")
-        resp["sectors"] = extra.get("sectors")
-        resp["northbound"] = _cn_northbound()
-
     try:
-        from core.api_response_cache import set_cached, is_api_cache_enabled
-        if is_api_cache_enabled():
-            set_cached("market_review", {"market": market}, resp)
-    except Exception:
-        pass
+        today = datetime.now().date().isoformat()
+        resp: Dict[str, Any] = {"date": today, "market": market}
 
-    return resp
+        indices: List[IndexSnapshot] = []
+        if market in ("cn", "both"):
+            indices.extend(_cn_indices())
+        if market in ("us", "both"):
+            indices.extend(_us_indices())
+
+        resp["indices"] = [asdict(i) for i in indices]
+
+        if market in ("cn", "both"):
+            extra = _cn_overview_and_sectors()
+            resp["overview"] = extra.get("overview")
+            resp["sectors"] = extra.get("sectors")
+            resp["northbound"] = _cn_northbound()
+
+        if not _has_market_review_content(resp, market):
+            cached = _get_stale_market_review_cache(market)
+            if cached is not None:
+                return cached
+            return resp
+
+        try:
+            if is_api_cache_enabled():
+                set_cached("market_review", {"market": market}, resp)
+        except Exception:
+            pass
+
+        return resp
+    except Exception as exc:
+        logger.warning("实时获取大盘复盘失败，尝试使用历史缓存: %s", exc)
+        cached = _get_stale_market_review_cache(market)
+        if cached is not None:
+            return cached
+        raise

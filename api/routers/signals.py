@@ -2,11 +2,13 @@
 信号管理 API 路由
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel
 
+from api.auth import UserInDB, require_permission
+from core.rbac import Permission
 from core.signal_store import get_signal_store
 
 router = APIRouter()
@@ -31,8 +33,10 @@ async def list_signals(
     model_id: Optional[str] = Query(None, description="模型ID"),
     status: Optional[str] = Query(None, description="状态 (pending/executed/expired)"),
     days: int = Query(7, description="最近N天"),
+    current_user: UserInDB = Depends(require_permission(Permission.MANAGE_STRATEGY)),
 ):
     """获取信号列表"""
+    del current_user
     try:
         signal_store = get_signal_store()
 
@@ -64,8 +68,10 @@ async def list_signals(
 async def get_latest_signals(
     ticker: Optional[str] = None,
     n_days: int = Query(1, description="最近N天"),
+    current_user: UserInDB = Depends(require_permission(Permission.MANAGE_STRATEGY)),
 ):
     """获取最新信号"""
+    del current_user
     try:
         signal_store = get_signal_store()
         signals_df = signal_store.get_latest_signals(ticker=ticker, n_days=n_days)
@@ -89,8 +95,10 @@ async def update_signal_status(
     model_id: str,
     date: str,
     new_status: str,
+    current_user: UserInDB = Depends(require_permission(Permission.MANAGE_STRATEGY)),
 ):
     """更新信号状态"""
+    del current_user
     try:
         signal_store = get_signal_store()
         success = signal_store.update_signal_status(ticker, model_id, date, new_status)
@@ -106,8 +114,10 @@ async def update_signal_status(
 @router.get("/stats")
 async def get_signal_stats(
     days: int = Query(7, description="统计最近N天"),
+    current_user: UserInDB = Depends(require_permission(Permission.MANAGE_STRATEGY)),
 ):
     """获取信号统计信息"""
+    del current_user
     try:
         signal_store = get_signal_store()
         signals_df = signal_store.get_latest_signals(n_days=days)
@@ -143,4 +153,3 @@ async def get_signal_stats(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取信号统计失败: {str(e)}")
-

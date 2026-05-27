@@ -260,7 +260,8 @@ interface PaperAccountBackendResponse {
     balance?: number;
     frozen?: number;
     total_assets?: number;
-    positions?: Record<string, PaperPositionBackend>;
+    positions?: Record<string, PaperPositionBackend> | Array<PaperPositionBackend & { ticker?: string; symbol?: string }>;
+    trade_history?: TradeHistoryRecord[];
     portfolio?: {
         total_assets?: number;
         cash?: number;
@@ -399,6 +400,10 @@ export interface AutoTradingStatusResponse {
     daemon: AutoTradingDaemonStatus;
     available_strategies: AutoTradingStrategySummary[];
     account: AutoTradingAccountSnapshot | null;
+    safety?: {
+      auto_trading_allowed: boolean;
+      required_env: string;
+    };
     run_request_status?: "started" | "already_running" | string;
     message?: string;
     universe_summary?: {
@@ -539,7 +544,11 @@ function getAuthHeaders(): Record<string, string> {
     "Content-Type": "application/json",
   };
   if (typeof window !== "undefined") {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token") || localStorage.getItem("token");
+    if (token && localStorage.getItem("token")) {
+      sessionStorage.setItem("token", token);
+      localStorage.removeItem("token");
+    }
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
     }
@@ -586,6 +595,7 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
     // Redirect to login when token is missing/expired.
     if (response.status === 401) {
       if (typeof window !== "undefined") {
+        sessionStorage.removeItem("token")
         localStorage.removeItem("token")
         localStorage.removeItem("user")
         window.location.href = "/login"
@@ -631,15 +641,24 @@ function normalizePaperAccount(payload: PaperAccountBackendResponse): PaperAccou
   const cash = toNumber(payload?.balance ?? accountPortfolio?.cash, 0);
   const totalAssets = toNumber(payload?.total_assets ?? accountPortfolio?.total_assets, 0);
 
-  const positionsObj = payload?.positions ?? {};
-  const positions = Object.entries(positionsObj).map(([ticker, pos]) => ({
-    ticker,
-    shares: toNumber(pos?.shares, 0),
-    avg_cost: toNumber(pos?.avg_cost, 0),
-    updated_at: "",
-    market_value: toNumber(pos?.market_value, 0),
-    unrealized_pnl: toNumber(pos?.unrealized_pnl, 0),
-  }));
+  const rawPositions = payload?.positions ?? {};
+  const positions = Array.isArray(rawPositions)
+    ? rawPositions.map((pos) => ({
+        ticker: pos?.ticker || pos?.symbol || "",
+        shares: toNumber(pos?.shares, 0),
+        avg_cost: toNumber(pos?.avg_cost, 0),
+        updated_at: "",
+        market_value: toNumber(pos?.market_value, 0),
+        unrealized_pnl: toNumber(pos?.unrealized_pnl, 0),
+      }))
+    : Object.entries(rawPositions).map(([ticker, pos]) => ({
+        ticker,
+        shares: toNumber(pos?.shares, 0),
+        avg_cost: toNumber(pos?.avg_cost, 0),
+        updated_at: "",
+        market_value: toNumber(pos?.market_value, 0),
+        unrealized_pnl: toNumber(pos?.unrealized_pnl, 0),
+      }));
 
   const summedMarketValue = positions.reduce((sum, p) => sum + toNumber(p.market_value, 0), 0);
   const fallbackMarketValue = Math.max(totalAssets - cash, 0);
@@ -1006,18 +1025,17 @@ export const api = {
                 };
             }
 
-            const payload = await fetchApi<PaperAccountBackendResponse>("/accounts/paper");
+            const payload = await fetchApi<PaperAccountBackendResponse>("/trading/accounts/primary");
             return normalizePaperAccount(payload);
         },
         placeOrder: async (data: TradeOrderRequest) => {
             let accountId = data.account_id;
             if (!accountId) {
-                const account = await fetchApi<PaperAccountBackendResponse>("/accounts/paper");
-                const normalized = normalizePaperAccount(account);
-                if (!normalized?.account_id) {
+                const account = await api.trading.paper.getAccount();
+                if (!account?.account_id) {
                     throw new Error("当前没有可用的模拟账户。");
                 }
-                accountId = normalized.account_id;
+                accountId = account.account_id;
             }
 
             return fetchApi("/trading/orders", {
@@ -1045,15 +1063,14 @@ export const api = {
                 method: "POST",
                 body: JSON.stringify(data),
             }),
-        getHistory: async (accountId?: number, limit: number = 50) => {
+        getHistory: async (accountId?: number, limit: number = 50): Promise<TradeHistoryRecord[]> => {
             if (accountId) {
                 const detail = await fetchApi<{ trade_history?: TradeHistoryRecord[] }>(`/trading/accounts/${accountId}`);
                 return Array.isArray(detail.trade_history) ? detail.trade_history.slice(0, limit) : [];
             }
-            const result = await fetchApi<{ trades: TradeHistoryRecord[]; count: number }>(
-                `/accounts/paper/trades?limit=${limit}`
-            );
-            return result.trades ?? [];
+            const account = await api.trading.paper.getAccount();
+            if (!account?.account_id) return [];
+            return api.trading.paper.getHistory(account.account_id, limit);
         },
         runSettlement: async (accountId?: number) => {
             const account = await api.trading.paper.getAccount(accountId);
@@ -1063,10 +1080,22 @@ export const api = {
                 account,
             };
         },
-        getEquityHistory: (_accountId?: number, days: number = 90) =>
-            fetchApi<{ equity_history: { date: string; equity: number; cash: number; position_value: number }[] }>(
-                `/accounts/paper/equity?days=${days}`
-            ),
+        getEquityHistory: async (
+            accountId?: number,
+            days: number = 90,
+        ): Promise<{ equity_history: { date: string; equity: number; cash: number; position_value: number }[] }> => {
+            const resolvedAccountId = accountId ?? (await api.trading.paper.getAccount())?.account_id;
+            if (!resolvedAccountId) return { equity_history: [] };
+            const curve = await api.trading.paper.getEquityCurve(resolvedAccountId, days);
+            return {
+                equity_history: (curve.data ?? []).map((point) => ({
+                    date: point.date,
+                    equity: point.equity,
+                    cash: point.cash,
+                    position_value: point.market_value,
+                })),
+            };
+        },
         // New endpoints for performance metrics and equity curve
         getPerformance: (accountId: number) =>
             fetchApi<PerformanceMetrics>(`/trading/accounts/${accountId}/performance`),
@@ -1082,10 +1111,26 @@ export const api = {
         })
   },
   accounts: {
-    getPaperAccount: () => fetchApi<UnknownRecord>("/accounts/paper"),
-    getEquityHistory: () => fetchApi<{ equity_history: { date: string; equity: number }[] }>("/accounts/paper/equity"),
-    getPositions: () => fetchApi<{ positions: Record<string, number> }>("/accounts/paper/positions"),
-    getTrades: (limit?: number) => fetchApi<{ trades: TradeHistoryRecord[]; count: number }>(`/accounts/paper/trades${limit ? `?limit=${limit}` : ""}`),
+    getPaperAccount: () => fetchApi<UnknownRecord>("/trading/accounts/primary"),
+    getEquityHistory: () => api.trading.paper.getEquityHistory(),
+    getPositions: async () => {
+      const account = await api.trading.paper.getAccount()
+      if (!account?.account_id) return { positions: {} }
+      const payload = await fetchApi<{ positions: Array<{ ticker?: string; symbol?: string; shares?: number }> }>(
+        `/trading/accounts/${account.account_id}/positions`,
+      )
+      const positions = Object.fromEntries(
+        (payload.positions ?? []).map((position) => [
+          position.ticker || position.symbol || "",
+          toNumber(position.shares, 0),
+        ]).filter(([ticker]) => Boolean(ticker)),
+      )
+      return { positions }
+    },
+    getTrades: async (limit?: number) => {
+      const trades = await api.trading.paper.getHistory(undefined, limit ?? 50)
+      return { trades, count: trades.length }
+    },
   },
   backtest: {
     listStrategies: () => fetchApi<UnknownRecord[]>("/backtest/strategies"),

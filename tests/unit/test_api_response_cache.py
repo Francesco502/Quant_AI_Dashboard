@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from core.api_response_cache import get_cached, set_cached
+from core.api_response_cache import get_cached, prune_cache, set_cached
 
 
 def test_set_cached_serializes_timestamp_and_roundtrips(monkeypatch, tmp_path: Path) -> None:
@@ -65,3 +65,16 @@ def test_set_cached_uses_unique_temp_files_for_same_key(monkeypatch, tmp_path: P
 
     assert len(replace_sources) == 2
     assert replace_sources[0] != replace_sources[1]
+
+
+def test_prune_cache_enforces_max_entries(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("API_RESPONSE_CACHE_ENABLED", "true")
+    monkeypatch.setenv("API_CACHE_DIR", str(tmp_path))
+
+    for index in range(5):
+        set_cached("prices", {"ticker": f"T{index}", "days": 5}, {"value": index})
+
+    deleted = prune_cache(max_entries=2)
+
+    assert deleted == 3
+    assert len(list(tmp_path.rglob("*.json"))) == 2

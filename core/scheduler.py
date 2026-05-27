@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Callable, Dict, Any
 
+from .auto_trading_guardrails import is_auto_trading_allowed
+
 try:
     import schedule  # type: ignore[import]
 
@@ -47,6 +49,8 @@ def setup_trading_job(config: Dict[str, Any], job: Callable[[], None]) -> None:
     if not SCHEDULE_AVAILABLE:
         return
     if not config.get("enabled", False):
+        return
+    if not is_auto_trading_allowed():
         return
 
     time_str = config.get("time")
@@ -110,5 +114,4 @@ def run_forever() -> None:
     while True:
         schedule.run_pending()
         time.sleep(1)
-
 

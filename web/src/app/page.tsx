@@ -14,6 +14,7 @@ import {
 } from "recharts"
 
 import { MeasuredChart } from "@/components/charts/measured-chart"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   api as apiClient,
   type Asset,
@@ -48,9 +49,11 @@ const chartPalette = [SONG_COLORS.celadon, SONG_COLORS.indigo, SONG_COLORS.plum,
 
 const tooltipStyle = {
   backgroundColor: "var(--chart-tooltip-bg)",
+  backdropFilter: "blur(16px)",
+  WebkitBackdropFilter: "blur(16px)",
   borderRadius: "18px",
-  border: "1px solid rgba(77, 71, 66, 0.10)",
-  boxShadow: "0 18px 40px rgba(41, 33, 25, 0.10)",
+  border: "1px solid var(--chart-tooltip-border)",
+  boxShadow: "var(--chart-tooltip-shadow)",
   padding: "10px 12px",
   fontSize: "12px",
 }
@@ -106,64 +109,109 @@ export default function HomePage() {
   const [marketReview, setMarketReview] = useState<MarketReviewResponse | null>(null)
   const [priceData, setPriceData] = useState<Record<string, PricePoint[]>>({})
   const [selectedTickers, setSelectedTickers] = useState<string[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loadingAssetPool, setLoadingAssetPool] = useState(true)
+  const [loadingPortfolio, setLoadingPortfolio] = useState(true)
+  const [loadingAccount, setLoadingAccount] = useState(true)
+  const [loadingAutoStatus, setLoadingAutoStatus] = useState(true)
+  const [loadingMarketReview, setLoadingMarketReview] = useState(true)
+  const [accountLoadError, setAccountLoadError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    let retryTimer: number | null = null
-    const maxRetryAttempts = 6
-    const retryDelayMs = 2500
+    const maxRetryAttempts = 2
+    const retryDelayMs = 1200
 
-    const loadWorkspace = async (attempt: number = 0) => {
-      if (attempt === 0) {
-        setLoading(true)
+    const fetchAssetPool = async (attempt = 0) => {
+      try {
+        const val = await apiClient.stz.getAssetPool()
+        if (cancelled) return
+        setAssetPool(val ?? [])
+        setSelectedTickers((val ?? []).slice(0, 6).map((asset) => asset.ticker))
+        setLoadingAssetPool(false)
+      } catch {
+        if (cancelled) return
+        if (attempt < maxRetryAttempts - 1) {
+          setTimeout(() => void fetchAssetPool(attempt + 1), retryDelayMs)
+        } else {
+          setLoadingAssetPool(false)
+        }
       }
-
-      const [assetPoolResult, portfolioResult, accountResult, autoResult, marketReviewResult] = await Promise.allSettled([
-        apiClient.stz.getAssetPool(),
-        apiClient.user.assets.getOverview(false),
-        apiClient.trading.paper.getAccount(),
-        apiClient.trading.auto.getStatus(),
-        apiClient.market.dailyReview("cn"),
-      ])
-
-      if (cancelled) {
-        return
-      }
-
-      const nextAssetPool = assetPoolResult.status === "fulfilled" ? assetPoolResult.value ?? [] : []
-      setAssetPool(nextAssetPool)
-      setSelectedTickers(nextAssetPool.slice(0, 6).map((asset) => asset.ticker))
-
-      setPortfolio(portfolioResult.status === "fulfilled" ? portfolioResult.value : null)
-      setAccount(accountResult.status === "fulfilled" ? accountResult.value?.portfolio ?? null : null)
-      setAutoStatus(autoResult.status === "fulfilled" ? autoResult.value : null)
-      setMarketReview(marketReviewResult.status === "fulfilled" ? marketReviewResult.value : null)
-
-      const hasSuccessfulSource =
-        nextAssetPool.length > 0 ||
-        portfolioResult.status === "fulfilled" ||
-        accountResult.status === "fulfilled" ||
-        autoResult.status === "fulfilled" ||
-        marketReviewResult.status === "fulfilled"
-
-      if (!hasSuccessfulSource && attempt < maxRetryAttempts - 1) {
-        retryTimer = window.setTimeout(() => {
-          void loadWorkspace(attempt + 1)
-        }, retryDelayMs)
-        return
-      }
-
-      setLoading(false)
     }
 
-    void loadWorkspace()
+    const fetchPortfolio = async (attempt = 0) => {
+      try {
+        const val = await apiClient.user.assets.getOverview(false)
+        if (cancelled) return
+        setPortfolio(val)
+        setLoadingPortfolio(false)
+      } catch {
+        if (cancelled) return
+        if (attempt < maxRetryAttempts - 1) {
+          setTimeout(() => void fetchPortfolio(attempt + 1), retryDelayMs)
+        } else {
+          setLoadingPortfolio(false)
+        }
+      }
+    }
+
+    const fetchAccount = async (attempt = 0) => {
+      try {
+        const val = await apiClient.trading.paper.getAccount()
+        if (cancelled) return
+        setAccount(val?.portfolio ?? null)
+        setAccountLoadError(false)
+        setLoadingAccount(false)
+      } catch {
+        if (cancelled) return
+        if (attempt < maxRetryAttempts - 1) {
+          setTimeout(() => void fetchAccount(attempt + 1), retryDelayMs)
+        } else {
+          setAccountLoadError(true)
+          setLoadingAccount(false)
+        }
+      }
+    }
+
+    const fetchAutoStatus = async (attempt = 0) => {
+      try {
+        const val = await apiClient.trading.auto.getStatus()
+        if (cancelled) return
+        setAutoStatus(val)
+        setLoadingAutoStatus(false)
+      } catch {
+        if (cancelled) return
+        if (attempt < maxRetryAttempts - 1) {
+          setTimeout(() => void fetchAutoStatus(attempt + 1), retryDelayMs)
+        } else {
+          setLoadingAutoStatus(false)
+        }
+      }
+    }
+
+    const fetchMarketReview = async (attempt = 0) => {
+      try {
+        const val = await apiClient.market.dailyReview("cn")
+        if (cancelled) return
+        setMarketReview(val)
+        setLoadingMarketReview(false)
+      } catch {
+        if (cancelled) return
+        if (attempt < maxRetryAttempts - 1) {
+          setTimeout(() => void fetchMarketReview(attempt + 1), retryDelayMs)
+        } else {
+          setLoadingMarketReview(false)
+        }
+      }
+    }
+
+    void fetchAssetPool()
+    void fetchPortfolio()
+    void fetchAccount()
+    void fetchAutoStatus()
+    void fetchMarketReview()
 
     return () => {
       cancelled = true
-      if (retryTimer) {
-        window.clearTimeout(retryTimer)
-      }
     }
   }, [])
 
@@ -267,29 +315,33 @@ export default function HomePage() {
   const summaryCards = [
     {
       label: "模拟账户权益",
-      value: account ? formatCurrency(account.total_assets) : "待连接",
-      detail: account ? `现金 ${formatCurrency(account.cash)}` : "连接后显示权益与现金结构",
+      value: account ? formatCurrency(account.total_assets) : accountLoadError ? "加载失败" : "未创建",
+      detail: account ? `现金 ${formatCurrency(account.cash)}` : accountLoadError ? "无法读取模拟账户" : "可在模拟交易页创建账户",
       footer: account ? `持仓市值 ${formatCurrency(account.market_value)}` : null,
+      loading: loadingAccount,
     },
     {
       label: "个人资产市值",
       value: portfolio ? formatCurrency(portfolio.summary.total_market_value) : "待同步",
       detail: portfolio ? `共 ${portfolio.summary.asset_count} 项持仓` : "进入资产页后可继续编辑定投与持仓",
       footer: holdingsUpdatedAt ? `估值 ${formatFreshnessSource(holdingsUpdatedAt)}` : null,
+      loading: loadingPortfolio,
     },
     {
       label: "自动交易",
-      value: autoStatus?.config.enabled ? "已启用" : "手动模式",
+      value: autoStatus?.safety?.auto_trading_allowed === false ? "硬门禁关闭" : autoStatus?.config.enabled ? "已启用" : "手动模式",
       detail: autoStatus
         ? `${autoStatus.config.strategy_ids.length} 个策略 · ${autoStatus.daemon.daemon_running ? "调度器在线" : "调度器离线"}`
         : "可在模拟交易页配置策略与频率",
       footer: `最近执行 ${autoRunSummary} · ${autoUniverseSummary}`,
+      loading: loadingAutoStatus,
     },
     {
       label: "数据新鲜度",
       value: freshnessLabel,
       detail: freshnessDetail,
       footer: "来源：复盘 / 扫描 / 持仓估值",
+      loading: loadingMarketReview || loadingAssetPool || loadingPortfolio,
     },
   ]
 
@@ -340,13 +392,23 @@ export default function HomePage() {
                 className="data-panel-muted flex h-full min-h-[164px] flex-col rounded-[22px] px-4 py-3"
               >
                 <div className="data-metric-label">{summary.label}</div>
-                <div className="mt-2 min-h-[50px] text-[1.28rem] font-semibold tabular-nums tracking-tight text-foreground/92">
-                  {summary.value}
-                </div>
-                <div className="data-metric-secondary min-h-[46px]">{summary.detail}</div>
-                <div className="data-metric-secondary mt-auto pt-3">
-                  {summary.footer ?? "\u00A0"}
-                </div>
+                {summary.loading ? (
+                  <div className="mt-3 space-y-2 flex-1 flex flex-col justify-between">
+                    <Skeleton className="h-7 w-3/4 rounded-md" />
+                    <Skeleton className="h-4 w-5/6 rounded-md" />
+                    <Skeleton className="h-4 w-1/2 rounded-md mt-auto" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="mt-2 min-h-[50px] text-[1.28rem] font-semibold tabular-nums tracking-tight text-foreground/92">
+                      {summary.value}
+                    </div>
+                    <div className="data-metric-secondary min-h-[46px]">{summary.detail}</div>
+                    <div className="data-metric-secondary mt-auto pt-3">
+                      {summary.footer ?? "\u00A0"}
+                    </div>
+                  </>
+                )}
               </div>
             ))}
           </div>
@@ -362,15 +424,19 @@ export default function HomePage() {
               return (
                 <div key={range.label} className="data-panel-muted rounded-[22px] px-4 py-3">
                   <div className="data-metric-label">{range.label}</div>
-                  <div
-                    className={cn(
-                      "mt-2 text-[1.16rem] font-semibold tabular-nums tracking-tight",
-                      positive ? "text-tone-cinnabar" : "text-tone-celadon",
-                    )}
-                  >
-                    {positive ? "+" : ""}
-                    {formatCurrency(range.value)}
-                  </div>
+                  {loadingPortfolio ? (
+                    <Skeleton className="mt-2 h-6 w-2/3 rounded-md" />
+                  ) : (
+                    <div
+                      className={cn(
+                        "mt-2 text-[1.16rem] font-semibold tabular-nums tracking-tight",
+                        positive ? "text-tone-cinnabar" : "text-tone-celadon",
+                      )}
+                    >
+                      {positive ? "+" : ""}
+                      {formatCurrency(range.value)}
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -390,7 +456,7 @@ export default function HomePage() {
           </div>
 
           <div className="mt-6 h-[260px] w-full md:h-[280px]">
-            {loading ? (
+            {loadingAssetPool ? (
               <div className="data-empty flex h-full items-center justify-center">正在整理资产池数据…</div>
             ) : chartRows.length === 0 ? (
               <div className="data-empty flex h-full items-center justify-center">暂未取到可展示的价格序列。</div>
@@ -400,11 +466,15 @@ export default function HomePage() {
                 <AreaChart width={width} height={height} data={chartRows} margin={{ top: 10, right: 6, left: -18, bottom: 0 }}>
                   <defs>
                     <linearGradient id="workspaceChartFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="rgb(var(--rgb-celadon))" stopOpacity={0.22} />
-                      <stop offset="95%" stopColor="rgb(var(--rgb-celadon))" stopOpacity={0.02} />
+                      <stop offset="5%" stopColor="rgb(var(--rgb-celadon))" stopOpacity={0.28} />
+                      <stop offset="95%" stopColor="rgb(var(--rgb-celadon))" stopOpacity={0.01} />
                     </linearGradient>
+                    <filter id="glow-area" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur stdDeviation="3.5" result="blur" />
+                      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
                   </defs>
-                  <CartesianGrid vertical={false} stroke={SONG_COLORS.grid} strokeDasharray="4 6" />
+                  <CartesianGrid vertical={false} stroke={SONG_COLORS.grid} strokeDasharray="4 6" opacity={0.6} />
                   <XAxis
                     dataKey="date"
                     tickFormatter={formatDateLabel}
@@ -432,8 +502,10 @@ export default function HomePage() {
                     type="monotone"
                     dataKey={selectedTickers[0]}
                     stroke="rgb(var(--rgb-celadon))"
-                    strokeWidth={1.8}
+                    strokeWidth={2.2}
+                    filter="url(#glow-area)"
                     fill="url(#workspaceChartFill)"
+                    activeDot={{ r: 5, strokeWidth: 0, fill: "rgb(var(--rgb-celadon))" }}
                   />
                 </AreaChart>
                 )}
@@ -442,7 +514,13 @@ export default function HomePage() {
               <MeasuredChart height={280}>
                 {(width, height) => (
                 <LineChart width={width} height={height} data={chartRows} margin={{ top: 10, right: 6, left: -18, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke={SONG_COLORS.grid} strokeDasharray="4 6" />
+                  <defs>
+                    <filter id="glow-line" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur stdDeviation="3" result="blur" />
+                      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                  </defs>
+                  <CartesianGrid vertical={false} stroke={SONG_COLORS.grid} strokeDasharray="4 6" opacity={0.6} />
                   <XAxis
                     dataKey="date"
                     tickFormatter={formatDateLabel}
@@ -472,8 +550,10 @@ export default function HomePage() {
                       type="monotone"
                       dataKey={ticker}
                       stroke={chartPalette[index % chartPalette.length]}
-                      strokeWidth={1.7}
+                      strokeWidth={2}
+                      filter="url(#glow-line)"
                       dot={false}
+                      activeDot={{ r: 5, strokeWidth: 0 }}
                       connectNulls
                     />
                   ))}
@@ -487,8 +567,14 @@ export default function HomePage() {
         <div className="data-panel rounded-[34px] p-5">
           <div className="section-title">资产池列表</div>
 
-          <div className="mt-5 divide-y divide-black/[0.06]">
-            {watchRows.length === 0 ? (
+          <div className="mt-5 divide-y divide-black/[0.06] space-y-3">
+            {loadingAssetPool ? (
+              <div className="space-y-3 py-2">
+                <Skeleton className="h-[62px] w-full rounded-[20px]" />
+                <Skeleton className="h-[62px] w-full rounded-[20px]" />
+                <Skeleton className="h-[62px] w-full rounded-[20px]" />
+              </div>
+            ) : watchRows.length === 0 ? (
               <div className="py-6 text-sm text-foreground/68">资产池为空时，这里会显示最近关注的标的。</div>
             ) : (
               watchRows.map((asset) => (

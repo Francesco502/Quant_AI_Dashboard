@@ -6,24 +6,24 @@ import { motion } from "framer-motion"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap text-sm font-medium tracking-wide transition-[background-color,border-color,color,box-shadow,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(var(--rgb-ochre),0.22)] disabled:pointer-events-none disabled:opacity-40",
+  "inline-flex items-center justify-center whitespace-nowrap text-sm font-medium tracking-normal transition-[background-color,border-color,color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(var(--rgb-ochre),0.22)] disabled:pointer-events-none disabled:opacity-40",
   {
     variants: {
       variant: {
         default:
-          "rounded-xl bg-[rgb(var(--rgb-celadon))] text-[rgb(var(--rgb-xuan))] shadow-sm hover:bg-[rgba(var(--rgb-celadon),0.9)]",
+          "rounded-lg bg-[rgb(var(--rgb-celadon))] text-[rgb(var(--rgb-xuan))] shadow-sm hover:bg-[rgba(var(--rgb-celadon),0.9)]",
         destructive:
-          "rounded-xl bg-destructive/90 text-destructive-foreground shadow-sm hover:bg-destructive",
+          "rounded-lg bg-destructive/90 text-destructive-foreground shadow-sm hover:bg-destructive",
         outline:
-          "rounded-xl border border-[rgba(var(--rgb-ink),0.1)] dark:border-white/[0.08] bg-[rgba(var(--rgb-xuan),0.84)] dark:bg-white/[0.02] backdrop-blur-md shadow-sm hover:bg-[rgba(var(--rgb-xuan),0.96)] dark:hover:bg-white/[0.05] text-foreground/80 hover:text-foreground",
+          "rounded-lg border border-[rgba(var(--rgb-ink),0.1)] dark:border-white/[0.08] bg-[rgba(var(--rgb-xuan),0.84)] dark:bg-white/[0.02] backdrop-blur-md shadow-sm hover:bg-[rgba(var(--rgb-xuan),0.96)] dark:hover:bg-white/[0.05] text-foreground/80 hover:text-foreground",
         secondary:
-          "rounded-xl bg-[rgba(var(--rgb-ochre),0.1)] dark:bg-white/[0.04] text-foreground/80 hover:bg-[rgba(var(--rgb-ochre),0.16)] dark:hover:bg-white/[0.08] hover:text-foreground",
+          "rounded-lg bg-[rgba(var(--rgb-ochre),0.1)] dark:bg-white/[0.04] text-foreground/80 hover:bg-[rgba(var(--rgb-ochre),0.16)] dark:hover:bg-white/[0.08] hover:text-foreground",
         ghost:
-          "rounded-xl text-foreground/60 hover:bg-[rgba(var(--rgb-ochre),0.08)] hover:text-foreground dark:hover:bg-white/[0.04]",
+          "rounded-lg text-foreground/60 hover:bg-[rgba(var(--rgb-ochre),0.08)] hover:text-foreground dark:hover:bg-white/[0.04]",
         link:
           "text-foreground/60 underline-offset-4 hover:underline hover:text-foreground",
         glass:
-          "glass rounded-xl text-foreground/80 hover:text-foreground hover:shadow-md",
+          "glass rounded-lg text-foreground/80 hover:text-foreground hover:shadow-md",
       },
       size: {
         default: "min-h-11 px-5 py-2 sm:h-9 sm:min-h-0",
@@ -61,8 +61,8 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       <motion.button
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
-        whileTap={{ scale: 0.985 }}
-        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+        whileTap={{ scale: 0.978 }}
+        transition={{ type: "spring", stiffness: 600, damping: 25 }}
         {...(props as unknown as React.ComponentProps<typeof motion.button>)}
       />
     )

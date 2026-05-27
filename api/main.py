@@ -30,7 +30,11 @@ from .websocket_manager import WebSocketManager
 from .auth import (
     AuthenticationMiddleware as AuthMiddleware,
     bootstrap_admin_from_env,
+    decode_access_token,
+    get_user,
     get_user_by_username,
+    require_admin,
+    UserInDB,
     validate_auth_security,
 )
 from .middleware import CorrelationIdMiddleware, PerformanceMiddleware, RateLimitMiddleware
@@ -474,12 +478,13 @@ async def rate_limit_info(request: Request):
 
 
 @app.get("/api/rate-limit/stats")
-async def rate_limit_stats():
+async def rate_limit_stats(current_user: UserInDB = Depends(require_admin)):
     """
     获取限流统计信息（需要管理员权限）
 
     返回全局限流统计
     """
+    del current_user
     try:
         from api.middleware import get_rate_limiter
 
@@ -499,12 +504,13 @@ async def rate_limit_stats():
 
 
 @app.get("/api/audit-stats")
-async def audit_stats():
+async def audit_stats(current_user: UserInDB = Depends(require_admin)):
     """
     获取审计日志统计信息（需要管理员权限）
 
     返回审计日志统计
     """
+    del current_user
     try:
         from core.audit_log import get_audit_logger
 
@@ -523,9 +529,34 @@ async def audit_stats():
         }
 
 
+def _extract_websocket_token(websocket: WebSocket) -> Optional[str]:
+    auth_header = websocket.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        return auth_header.split(" ", 1)[1].strip()
+    subprotocols = websocket.headers.get("sec-websocket-protocol", "")
+    for item in subprotocols.split(","):
+        protocol = item.strip()
+        if protocol.lower().startswith("bearer."):
+            return protocol.split(".", 1)[1].strip()
+    return None
+
+
+async def _authenticate_websocket(websocket: WebSocket) -> Optional[UserInDB]:
+    token = _extract_websocket_token(websocket)
+    token_data = decode_access_token(token) if token else None
+    user = get_user(token_data.username) if token_data else None
+    if user is None or user.disabled:
+        await websocket.close(code=1008)
+        return None
+    return user
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket 连接端点"""
+    current_user = await _authenticate_websocket(websocket)
+    if current_user is None:
+        return
     await ws_manager.connect(websocket)
     try:
         while True:
@@ -540,6 +571,9 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.websocket("/ws/signals")
 async def websocket_signals(websocket: WebSocket):
     """信号实时推送 WebSocket"""
+    current_user = await _authenticate_websocket(websocket)
+    if current_user is None:
+        return
     await ws_manager.connect(websocket)
     try:
         # 定期推送最新信号
@@ -573,7 +607,7 @@ async def websocket_signals(websocket: WebSocket):
 
 
 @app.get("/api/cleanup")
-async def cleanup_memory():
+async def cleanup_memory(current_user: UserInDB = Depends(require_admin)):
     """
     清理内存和缓存（低配服务器专用）
 
@@ -582,6 +616,7 @@ async def cleanup_memory():
     - 清理多级缓存
     - 返回清理统计
     """
+    del current_user
     try:
         monitor = get_memory_monitor()
         stats = monitor.cleanup_caches()

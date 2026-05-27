@@ -85,6 +85,30 @@ from .data_fetchers import (
 DATA_DIR = Path("data")
 USER_STATE_FILE = DATA_DIR / "user_state.json"
 DEFAULT_DATA_SOURCE_ORDER = ["Tushare", "AkShare", "AlphaVantage", "Binance", "yfinance"]
+DEFAULT_REMOTE_CACHE_DAYS = int(os.getenv("DATA_REMOTE_CACHE_DAYS", "365"))
+MAX_REMOTE_CACHE_DAYS = int(os.getenv("DATA_REMOTE_CACHE_DAYS_MAX", "3650"))
+
+
+def _effective_remote_cache_days(days: int, remote_cache_days: int | None = None) -> int:
+    requested_cache_days = int(remote_cache_days) if remote_cache_days is not None else DEFAULT_REMOTE_CACHE_DAYS
+    return min(max(int(days), requested_cache_days), MAX_REMOTE_CACHE_DAYS)
+
+
+def _normalize_data_sources_for_cache(data_sources: List[str] | None) -> Tuple[str, ...]:
+    if not data_sources:
+        return tuple()
+    return tuple(str(source).strip() for source in data_sources if str(source).strip())
+
+
+def _api_key_fingerprint(alpha_vantage_key: str | None, tushare_token: str | None) -> str:
+    raw = json.dumps(
+        {
+            "alpha_vantage": alpha_vantage_key or "",
+            "tushare": tushare_token or "",
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
 # ================================================================
@@ -375,7 +399,19 @@ def load_price_data(
     if not tickers:
         return pd.DataFrame()
 
-    effective_remote_cache_days = max(days, int(remote_cache_days or 3650))
+    effective_remote_cache_days = _effective_remote_cache_days(days, remote_cache_days)
+
+    if alpha_vantage_key is None or tushare_token is None:
+        keys = get_api_keys()
+        if alpha_vantage_key is None:
+            alpha_vantage_key = keys.get("ALPHA_VANTAGE_KEY")
+        if tushare_token is None:
+            tushare_token = keys.get("TUSHARE_TOKEN")
+
+    if data_sources is None:
+        data_sources = get_active_data_sources()
+    normalized_data_sources = _normalize_data_sources_for_cache(data_sources)
+    key_fingerprint = _api_key_fingerprint(alpha_vantage_key, tushare_token)
 
     # API 响应文件缓存（Dexter 借鉴）：命中则直接返回
     try:
@@ -386,6 +422,8 @@ def load_price_data(
                 "days": days,
                 "refresh_stale": refresh_stale,
                 "remote_cache_days": effective_remote_cache_days,
+                "data_sources": normalized_data_sources,
+                "api_key_fingerprint": key_fingerprint,
             }
             cached = get_cached("prices", cache_params)
             if cached is not None:
@@ -399,16 +437,6 @@ def load_price_data(
     except Exception as e:
         import logging
         logging.getLogger(__name__).debug("api_response_cache get_cached skip: %s", e)
-
-    if alpha_vantage_key is None or tushare_token is None:
-        keys = get_api_keys()
-        if alpha_vantage_key is None:
-            alpha_vantage_key = keys.get("ALPHA_VANTAGE_KEY")
-        if tushare_token is None:
-            tushare_token = keys.get("TUSHARE_TOKEN")
-
-    if data_sources is None:
-        data_sources = get_active_data_sources()
 
     local_series_map: Dict[str, pd.Series] = {}
     tickers_to_refresh: List[str] = []
@@ -427,30 +455,34 @@ def load_price_data(
         # 为本地仓库尽量缓存更长的历史，而不仅仅是用户当前选择的 days。
         # 这里与 data_updater 中的 MAX_CACHE_DAYS 保持一致，默认约 10 年（3650 天）。
         REMOTE_CACHE_DAYS = effective_remote_cache_days
-        remote_df = _load_price_data_remote(
-            tickers=tickers_to_refresh,
-            days=REMOTE_CACHE_DAYS,
-            data_sources=data_sources,
-            alpha_vantage_key=alpha_vantage_key,
-            tushare_token=tushare_token,
-        )
-        if remote_df is not None and not remote_df.empty:
-            for t in tickers_to_refresh:
-                if t in remote_df.columns:
-                    remote_series = remote_df[t].dropna()
-                    if remote_series.empty:
-                        continue
-                    local_series = local_series_map.get(t)
-                    if local_series is not None and not local_series.empty:
-                        local_series = _trim_synthetic_tail(local_series, remote_series)
-                        s = pd.concat([local_series, remote_series]).sort_index()
-                        s = s[~s.index.duplicated(keep="last")]
-                    else:
-                        s = remote_series
-                    if not s.empty:
-                        # 旧接口继续保存为单列 close，以保持兼容性
-                        data_store.save_local_price_history(t, s)
-                        local_series_map[t] = s
+        try:
+            remote_df = _load_price_data_remote(
+                tickers=tickers_to_refresh,
+                days=REMOTE_CACHE_DAYS,
+                data_sources=data_sources,
+                alpha_vantage_key=alpha_vantage_key,
+                tushare_token=tushare_token,
+            )
+            if remote_df is not None and not remote_df.empty:
+                for t in tickers_to_refresh:
+                    if t in remote_df.columns:
+                        remote_series = remote_df[t].dropna()
+                        if remote_series.empty:
+                            continue
+                        local_series = local_series_map.get(t)
+                        if local_series is not None and not local_series.empty:
+                            local_series = _trim_synthetic_tail(local_series, remote_series)
+                            s = pd.concat([local_series, remote_series]).sort_index()
+                            s = s[~s.index.duplicated(keep="last")]
+                        else:
+                            s = remote_series
+                        if not s.empty:
+                            # 旧接口继续保存为单列 close，以保持兼容性
+                            data_store.save_local_price_history(t, s)
+                            local_series_map[t] = s
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("从远程加载价格数据失败（将降级使用本地历史数据）: %s", exc)
 
     # 3. 组合所有本地数据，并裁剪到最近 days 天
     if not local_series_map:
@@ -472,9 +504,10 @@ def load_price_data(
     cutoff = all_index.max() - timedelta(days=days - 1)
     trimmed_index = all_index[all_index >= cutoff]
 
-    result = pd.DataFrame(index=trimmed_index)
-    for t, s in local_series_map.items():
-        result[t] = s.reindex(trimmed_index)
+    result = pd.concat(
+        {t: s.reindex(trimmed_index) for t, s in local_series_map.items()},
+        axis=1,
+    ).copy()
 
     result_df = _fill_dataframe_within_valid_range(result)
     
@@ -506,6 +539,8 @@ def load_price_data(
                 "days": days,
                 "refresh_stale": refresh_stale,
                 "remote_cache_days": effective_remote_cache_days,
+                "data_sources": normalized_data_sources,
+                "api_key_fingerprint": key_fingerprint,
             }
             set_cached("prices", cache_params, result_df.to_dict(orient="split"))
     except Exception as e:
@@ -533,7 +568,7 @@ def load_ohlcv_data(
     if not tickers:
         return {}
 
-    effective_remote_cache_days = max(days, int(remote_cache_days or 3650))
+    effective_remote_cache_days = _effective_remote_cache_days(days, remote_cache_days)
 
     if alpha_vantage_key is None or tushare_token is None:
         keys = get_api_keys()

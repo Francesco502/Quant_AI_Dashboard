@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import uuid
 from datetime import datetime
 from typing import Optional, Dict, List
 
@@ -18,6 +20,8 @@ import pandas as pd
 
 
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+_WRITE_LOCKS: Dict[str, threading.Lock] = {}
+_WRITE_LOCKS_GUARD = threading.Lock()
 
 # 统一的 OHLCV 列名约定
 OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
@@ -25,6 +29,36 @@ OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
 
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
+
+
+def _get_write_lock(path: str) -> threading.Lock:
+    normalized = os.path.abspath(path)
+    with _WRITE_LOCKS_GUARD:
+        lock = _WRITE_LOCKS.get(normalized)
+        if lock is None:
+            lock = threading.Lock()
+            _WRITE_LOCKS[normalized] = lock
+        return lock
+
+
+def _atomic_write_parquet(df: pd.DataFrame, path: str) -> None:
+    directory = os.path.dirname(path)
+    _ensure_dir(directory)
+    tmp_path = os.path.join(
+        directory,
+        f".{os.path.basename(path)}.{uuid.uuid4().hex}.tmp",
+    )
+    lock = _get_write_lock(path)
+    with lock:
+        try:
+            df.to_parquet(tmp_path)
+            os.replace(tmp_path, path)
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def classify_market(ticker: str) -> str:
@@ -94,7 +128,7 @@ def save_local_price_history(ticker: str, series: pd.Series) -> None:
     if not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df.index)
     df = df.sort_index()
-    df.to_parquet(path)
+    _atomic_write_parquet(df, path)
 
 
 def load_local_ohlcv_history(ticker: str) -> Optional[pd.DataFrame]:
@@ -157,7 +191,7 @@ def save_local_ohlcv_history(ticker: str, df: pd.DataFrame) -> None:
     if not isinstance(out.index, pd.DatetimeIndex):
         out.index = pd.to_datetime(out.index)
     out = out.sort_index()
-    out.to_parquet(path)
+    _atomic_write_parquet(out, path)
 
 
 def migrate_price_to_ohlcv_if_needed(ticker: str) -> None:
@@ -266,6 +300,5 @@ def get_local_status_for_tickers(tickers: List[str]) -> pd.DataFrame:
             ]
         )
     return pd.DataFrame(records)
-
 
 

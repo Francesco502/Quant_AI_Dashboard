@@ -441,6 +441,32 @@ class TestTradingAPI:
         assert payload["daemon"]["daemon_running"] is True
         assert payload["available_strategies"][0]["id"] == "ema_crossover"
 
+    def test_auto_trading_status_exposes_environment_gate(self, auth_client, monkeypatch):
+        trading_cfg = {
+            "enabled": True,
+            "interval_minutes": 60,
+            "username": "admin",
+            "account_name": "Auto Paper Trading",
+            "initial_capital": 100000.0,
+            "strategy_ids": ["ema_crossover"],
+            "universe_mode": "manual",
+            "universe": ["510300"],
+            "universe_limit": 0,
+        }
+
+        monkeypatch.delenv("ALLOW_AUTO_TRADING", raising=False)
+        monkeypatch.setattr("api.routers.trading.load_daemon_config", lambda: {"trading": trading_cfg})
+        monkeypatch.setattr("api.routers.trading.load_daemon_status", lambda: {"daemon_running": False})
+        monkeypatch.setattr("api.routers.trading.list_backtestable_strategies", lambda: [])
+        monkeypatch.setattr("api.routers.trading._get_user_id_by_username", lambda username: None)
+
+        response = auth_client.get("/api/trading/auto/status")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["safety"]["auto_trading_allowed"] is False
+        assert payload["safety"]["required_env"] == "ALLOW_AUTO_TRADING=true"
+
     def test_update_auto_trading_config(self, auth_client, monkeypatch):
         saved = {}
         trading_cfg = {
@@ -539,6 +565,7 @@ class TestTradingAPI:
         assert response.status_code == 400
 
     def test_run_auto_trading_now(self, auth_client, monkeypatch):
+        monkeypatch.setenv("ALLOW_AUTO_TRADING", "true")
         trading_cfg = {
             "enabled": True,
             "interval_minutes": 60,
@@ -612,6 +639,15 @@ class TestTradingAPI:
         assert status_updates[0]["trading_run_state"] == "running"
         assert status_updates[-1]["last_trading_result"]["orders"][0]["symbol"] == "510300"
 
+    def test_run_auto_trading_now_requires_environment_gate(self, auth_client, monkeypatch):
+        monkeypatch.delenv("ALLOW_AUTO_TRADING", raising=False)
+        monkeypatch.setattr("api.routers.trading.load_daemon_config", lambda: {"trading": {"enabled": True}})
+
+        response = auth_client.post("/api/trading/auto/run-now", json={"reset_account": False})
+
+        assert response.status_code == 403
+        assert "ALLOW_AUTO_TRADING=true" in response.json()["detail"]
+
     def test_set_stop_loss(self, auth_client):
         create_resp = auth_client.post(
             "/api/trading/accounts",
@@ -653,3 +689,41 @@ class TestRiskAPI:
         assert "passed" in data
         assert "message" in data
         assert data["passed"] is True
+
+    def test_risk_events_without_account_id_only_reads_current_user_accounts(
+        self,
+        auth_client,
+        monkeypatch,
+    ):
+        queried: list[tuple[int | None, int]] = []
+
+        class FakeAccount:
+            def __init__(self, account_id: int):
+                self.id = account_id
+
+        class FakeAccountManager:
+            def get_user_accounts(self, user_id: int):
+                return [FakeAccount(101), FakeAccount(102)]
+
+        class FakeRiskMonitor:
+            def get_risk_events(self, account_id=None, limit=50):
+                queried.append((account_id, limit))
+                return [
+                    {
+                        "id": account_id,
+                        "account_id": account_id,
+                        "created_at": f"2026-05-26T12:00:0{account_id % 10}",
+                    }
+                ]
+
+        fake_service = SimpleNamespace(
+            account_mgr=FakeAccountManager(),
+            risk_monitor=FakeRiskMonitor(),
+        )
+        monkeypatch.setattr("api.routers.trading.get_trading_service", lambda: fake_service)
+
+        response = auth_client.get("/api/trading/risk/events?limit=5")
+
+        assert response.status_code == 200
+        assert queried == [(101, 5), (102, 5)]
+        assert {event["account_id"] for event in response.json()["events"]} == {101, 102}

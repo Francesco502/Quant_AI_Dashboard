@@ -23,6 +23,12 @@ pytestmark = pytest.mark.unit
 def asset_metadata_db():
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(os.path.join(tmpdir, "asset_metadata.db"))
+        cursor = db.conn.cursor()
+        cursor.executemany(
+            "INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)",
+            [(1, "asset_user_one", "x"), (2, "asset_user_two", "x")],
+        )
+        db.conn.commit()
         with patch("core.asset_metadata.get_database", return_value=db):
             yield db
             if db.conn:
@@ -54,4 +60,3 @@ def test_user_asset_pool_is_seeded_and_isolated_per_user(asset_metadata_db):
 
     assert get_asset_pool_tickers(user_id=1) == default_tickers
     assert get_asset_hint("600000", user_id=1) == {}
-

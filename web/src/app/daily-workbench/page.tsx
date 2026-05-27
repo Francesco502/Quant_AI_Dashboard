@@ -27,7 +27,7 @@ import {
   type DailyWorkbenchSummary,
   type DataFreshnessItem,
 } from "@/lib/api"
-import { formatCurrency } from "@/lib/utils"
+import { cn, formatCurrency } from "@/lib/utils"
 
 function formatDateTime(value?: string | null) {
   if (!value) return "-"
@@ -61,32 +61,46 @@ function FreshnessBadge({ item }: { item: DataFreshnessItem }) {
 }
 
 function ActionCard({ action }: { action: DailyWorkbenchAction }) {
+  const isHigh = action.priority === "high"
   return (
-    <GlassCard className="group flex h-full flex-col justify-between gap-5 p-5 transition-transform hover:-translate-y-0.5">
+    <GlassCard
+      className={cn(
+        "group flex h-full flex-col justify-between gap-5 p-6 transition-all duration-300 relative overflow-hidden",
+        isHigh && "border-[rgba(var(--rgb-cinnabar),0.18)] dark:border-[rgba(var(--rgb-cinnabar),0.3)] shadow-[0_8px_20px_rgba(182,69,60,0.03)] dark:shadow-[0_8px_24px_rgba(182,69,60,0.08)]"
+      )}
+    >
+      {isHigh && (
+        <div className="absolute top-0 left-0 h-1 w-full bg-[rgb(var(--rgb-cinnabar))]" />
+      )}
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(var(--rgb-indigo),0.1)] text-tone-indigo">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[rgba(var(--rgb-indigo),0.1)] text-tone-indigo transition-transform duration-300 group-hover:scale-105 group-hover:rotate-3">
             {action.kind === "scan" ? (
-              <ScanSearch className="h-5 w-5" />
+              <ScanSearch className="h-5.5 w-5.5" />
             ) : action.kind === "data" ? (
-              <DatabaseZap className="h-5 w-5" />
+              <DatabaseZap className="h-5.5 w-5.5" />
             ) : action.kind === "trade" ? (
-              <WalletCards className="h-5 w-5" />
+              <WalletCards className="h-5.5 w-5.5" />
             ) : (
-              <Sparkles className="h-5 w-5" />
+              <Sparkles className="h-5.5 w-5.5" />
             )}
           </div>
-          <Badge variant={priorityVariant(action.priority)}>{action.priority === "high" ? "优先" : "待处理"}</Badge>
+          <Badge
+            variant={priorityVariant(action.priority)}
+            className={cn(isHigh && "animate-pulse")}
+          >
+            {action.priority === "high" ? "优先任务" : "日常任务"}
+          </Badge>
         </div>
-        <div>
-          <CardTitle className="text-lg">{action.title}</CardTitle>
-          <CardDescription className="mt-2">{action.description}</CardDescription>
+        <div className="space-y-1.5">
+          <CardTitle className="text-lg tracking-wide font-semibold text-foreground/92">{action.title}</CardTitle>
+          <CardDescription className="leading-relaxed text-[13px]">{action.description}</CardDescription>
         </div>
       </div>
-      <Button asChild variant="outline" className="w-full justify-between">
+      <Button asChild variant={isHigh ? "default" : "outline"} className="w-full justify-between group/btn">
         <Link href={action.href ?? ""}>
           进入处理
-          <ArrowRight className="h-4 w-4" />
+          <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover/btn:translate-x-1" />
         </Link>
       </Button>
     </GlassCard>
@@ -102,31 +116,34 @@ function WorkbenchLoadingSkeleton() {
   ]
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4 p-4 md:p-10">
+    <div className="mx-auto max-w-7xl space-y-6 p-6 md:p-10">
       <div className="space-y-2">
-        <h1 className="page-title">日常决策工作台</h1>
-        <p className="page-subtitle">正在汇总今日决策上下文。</p>
+        <h1 className="page-title font-serif">日常决策工作台</h1>
+        <p className="page-subtitle">正在汇总今日决策上下文...</p>
       </div>
-      <GlassCard className="space-y-5 p-6 md:p-8">
-        <div className="flex items-center gap-3">
-          <RefreshCw className="h-5 w-5 animate-spin text-tone-ochre" />
+      <GlassCard className="space-y-6 p-6 md:p-8 shadow-neon-ochre">
+        <div className="flex items-center gap-4">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(var(--rgb-ochre),0.10)]">
+            <RefreshCw className="h-5 w-5 animate-spin text-tone-ochre" />
+          </div>
           <div>
-            <div className="text-base font-semibold text-foreground">正在汇总今日决策上下文</div>
-            <div className="mt-1 text-sm text-muted-foreground">先恢复可交互框架，再逐项加载资产、数据、账户和日志。</div>
+            <div className="text-base font-semibold text-foreground tracking-wide">正在汇总今日决策上下文</div>
+            <div className="mt-1 text-sm text-muted-foreground">正在并行加载多源资产、AkShare 实时数据、纸面交易账户及系统审计日志。</div>
           </div>
         </div>
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {steps.map((step, index) => (
-            <div key={step} className="rounded-[24px] border border-border/60 bg-background/55 p-4">
+            <div
+              key={step}
+              className="rounded-[24px] border border-border/50 bg-background/40 p-5 shadow-[0_4px_16px_rgba(0,0,0,0.02)] dark:shadow-[0_4px_16px_rgba(0,0,0,0.15)] relative overflow-hidden"
+            >
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium text-foreground/80">{step}</span>
-                <span className="rounded-full bg-[rgba(var(--rgb-ochre),0.10)] px-2 py-0.5 text-xs text-tone-ochre">
-                  {index === 0 ? "读取中" : "排队"}
-                </span>
+                <span className="text-sm font-semibold text-foreground/80">{step}</span>
+                <Badge variant={index === 0 ? "warning" : "secondary"} className="text-[10px]">
+                  {index === 0 ? "读取中" : "等待中"}
+                </Badge>
               </div>
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-foreground/8">
-                <div className="h-full w-2/3 animate-pulse rounded-full bg-[rgba(var(--rgb-ochre),0.38)]" />
-              </div>
+              <div className="mt-5 h-2.5 overflow-hidden rounded-full bg-foreground/5 skeleton" />
             </div>
           ))}
         </div>

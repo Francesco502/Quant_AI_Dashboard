@@ -2,10 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { AlertTriangle, TrendingUp } from "lucide-react"
+import { Cell, Legend, Pie, PieChart, Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts"
+
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { GlassCard } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { MeasuredChart } from "@/components/charts/measured-chart"
+import { SONG_COLORS } from "@/lib/chart-theme"
 
 function formatPct(value: number) {
   return `${(value * 100).toFixed(2)}%`
@@ -97,18 +101,56 @@ export function PortfolioRiskPanel() {
 
   if (!result) return null
 
-  const summary = result.summary ?? {}
-  const annReturn = n(summary.annual_return)
-  const annVol = n(summary.annual_volatility)
-  const sharpe = n(summary.sharpe_ratio)
-  const sortino = n(summary.sortino_ratio)
-  const maxDD = n(summary.max_drawdown)
+  const summary = result.summary || {}
+  function getSummaryField(key: string): number {
+    return n((summary as Record<string, unknown>)[key])
+  }
+  const annReturn = getSummaryField("annual_return")
+  const annVol = getSummaryField("annual_volatility")
+  const sharpe = getSummaryField("sharpe_ratio")
+  const sortino = getSummaryField("sortino_ratio")
+  const maxDD = getSummaryField("max_drawdown")
   const var95 = n(summary.var_95 ?? result.risk_metrics?.var_95)
   const cvar95 = n(summary.cvar_95 ?? result.risk_metrics?.cvar_95)
-  const totalRet = n(summary.total_return)
+  const totalRet = getSummaryField("total_return")
   const assetMetrics = (result.asset_metrics ?? []) as Array<Record<string, unknown>>
   const riskContrib = (result.risk_contributions ?? []) as Array<Record<string, unknown>>
   const recommendations = (result.recommendations ?? []) as Array<Record<string, unknown>>
+
+  // Premium charts color palette
+  const CHART_PALETTE = [
+    SONG_COLORS.indigo,
+    SONG_COLORS.ochre,
+    SONG_COLORS.celadon,
+    SONG_COLORS.plum,
+    SONG_COLORS.moss,
+    SONG_COLORS.ink,
+  ]
+
+  // Map asset tickers to stable colors
+  const tickerColors = {
+    ...Object.fromEntries(
+      assetMetrics.map((m, index) => [
+        String(m.ticker),
+        CHART_PALETTE[index % CHART_PALETTE.length],
+      ])
+    )
+  }
+
+  // format weights data for Pie Chart
+  const pieData = assetMetrics.map((m) => ({
+    name: String(m.ticker),
+    value: n(m.weight) * 100,
+    displayName: m.asset_name ? `${m.asset_name} (${m.ticker})` : String(m.ticker),
+  }))
+
+  // format risk contribution data for Bar Chart (sorted by contribution descending)
+  const barData = riskContrib
+    .map((rc) => ({
+      name: String(rc.ticker),
+      contribution: n(rc.risk_contribution) * 100,
+    }))
+    .sort((a, b) => b.contribution - a.contribution)
 
   return (
     <div className="space-y-6">
@@ -142,6 +184,89 @@ export function PortfolioRiskPanel() {
           </ul>
         </GlassCard>
       ) : null}
+
+      {/* Visualizations Grid */}
+      {(assetMetrics.length > 0 || riskContrib.length > 0) && (
+        <div className="grid gap-6 xl:grid-cols-2">
+          {assetMetrics.length > 0 && (
+            <GlassCard className="p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-foreground/90">资产权重配置</h3>
+              <div className="h-[260px] flex items-center justify-center min-w-0">
+                <MeasuredChart height={260}>
+                  {(width, height) => (
+                    <PieChart width={width} height={height}>
+                      <Pie
+                        data={pieData}
+                        cx="45%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={80}
+                        paddingAngle={3}
+                        dataKey="value"
+                      >
+                        {pieData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={tickerColors[entry.name] || SONG_COLORS.ochre} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value) => [`${Number(value).toFixed(2)}%`, "权重"]}
+                        contentStyle={{
+                          borderRadius: 18,
+                          border: "1px solid var(--chart-tooltip-border)",
+                          backgroundColor: "var(--chart-tooltip-bg)",
+                        }}
+                      />
+                      <Legend
+                        layout="vertical"
+                        align="right"
+                        verticalAlign="middle"
+                        iconType="circle"
+                        formatter={(value) => <span className="text-xs text-foreground/80">{value}</span>}
+                      />
+                    </PieChart>
+                  )}
+                </MeasuredChart>
+              </div>
+            </GlassCard>
+          )}
+
+          {riskContrib.length > 0 && (
+            <GlassCard className="p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-foreground/90">风险贡献占比</h3>
+              <div className="h-[260px] min-w-0">
+                <MeasuredChart height={260}>
+                  {(width, height) => (
+                    <BarChart
+                      width={width}
+                      height={height}
+                      data={barData}
+                      layout="vertical"
+                      margin={{ top: 10, right: 30, left: 10, bottom: 5 }}
+                    >
+                      <CartesianGrid stroke={SONG_COLORS.grid} horizontal={false} strokeDasharray="3 3" />
+                      <XAxis type="number" stroke={SONG_COLORS.axis} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
+                      <YAxis dataKey="name" type="category" stroke={SONG_COLORS.axis} tickLine={false} axisLine={false} width={80} />
+                      <Tooltip
+                        formatter={(value) => [`${Number(value).toFixed(2)}%`, "风险贡献"]}
+                        contentStyle={{
+                          borderRadius: 18,
+                          border: "1px solid var(--chart-tooltip-border)",
+                          backgroundColor: "var(--chart-tooltip-bg)",
+                        }}
+                      />
+                      <Bar dataKey="contribution" fill={SONG_COLORS.ochre} radius={[0, 8, 8, 0]} barSize={14}>
+                        {barData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={tickerColors[entry.name] || SONG_COLORS.ochre} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  )}
+                </MeasuredChart>
+              </div>
+            </GlassCard>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-2">
         {assetMetrics.length > 0 ? (
@@ -196,7 +321,7 @@ export function PortfolioRiskPanel() {
                     <tr key={String(rc.ticker)} className="border-b border-border/40">
                       <td className="px-3 py-2.5 font-medium">{String(rc.ticker)}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums">{n(rc.marginal_risk).toFixed(4)}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums">{formatPct(n(rc.risk_pct))}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">{formatPct(n(rc.risk_contribution))}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -6,7 +6,8 @@ import pandas as pd
 from core.agent.tools import TradingContextTool
 from core.daily_analysis.builder import build_analysis_input
 from core.data_service import load_price_data, load_price_data_tushare
-from core.market_review import _cn_indices, _cn_northbound
+from core.api_response_cache import set_cached
+from core.market_review import _cn_indices, _cn_northbound, daily_review
 from core.trading_calendar import Market, TradingCalendar
 
 
@@ -226,6 +227,30 @@ def test_load_price_data_reads_uppercase_tushare_key(monkeypatch):
     load_price_data(["600519.SH"], days=1)
 
     assert captured["tushare_token"] == "token-123"
+
+
+def test_daily_review_uses_stale_cache_when_live_payload_is_incomplete(monkeypatch, tmp_path):
+    monkeypatch.setenv("API_RESPONSE_CACHE_ENABLED", "true")
+    monkeypatch.setenv("API_CACHE_DIR", str(tmp_path))
+    monkeypatch.setenv("API_CACHE_TTL_MARKET_REVIEW", "-1")
+
+    cached = {
+        "date": "2026-03-18",
+        "market": "cn",
+        "indices": [{"name": "上证指数", "value": 3200.0, "pct_change": 0.5}],
+        "overview": {"up": 2400, "down": 2100},
+        "sectors": [{"name": "黄金", "pct_change": 1.2}],
+        "northbound": {"net_inflow": 12.3},
+    }
+    set_cached("market_review", {"market": "cn"}, cached)
+
+    monkeypatch.setattr("core.market_review._cn_indices", lambda: [])
+    monkeypatch.setattr("core.market_review._cn_overview_and_sectors", lambda: {"overview": {}, "sectors": []})
+    monkeypatch.setattr("core.market_review._cn_northbound", lambda: {})
+
+    result = daily_review("cn")
+
+    assert result == cached
 
 
 def test_load_price_data_tushare_supports_digit_only_ticker(monkeypatch):

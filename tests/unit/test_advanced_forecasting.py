@@ -222,6 +222,5 @@ class TestQuickPredict:
         assert result is not None
         assert result["ticker"] == "AAPL"
         assert not result["prediction"].empty
-        assert mock_load_price_data.call_args.args[0] == ["AAPL"]
-        assert mock_load_price_data.call_args.kwargs["refresh_stale"] is True
+        mock_load_price_data.assert_any_call(["AAPL"], days=730, refresh_stale=True)
         manager.train_model.assert_not_called()

@@ -131,6 +131,7 @@ def test_load_price_history_batched_merges_batches(monkeypatch):
 
 
 def test_run_auto_trading_cycle_returns_rebalance_result(monkeypatch):
+    monkeypatch.setenv("ALLOW_AUTO_TRADING", "true")
     index = pd.date_range("2026-01-01", periods=220, freq="B")
     price_frame = pd.DataFrame(
         {
@@ -215,3 +216,26 @@ def test_run_auto_trading_cycle_returns_rebalance_result(monkeypatch):
     assert result["selected_tickers"] == ["000001", "000002"]
     assert len(submitted_orders) == 2
     assert all(order["side"].value == "BUY" for order in submitted_orders)
+
+
+def test_run_auto_trading_cycle_requires_explicit_env_gate(monkeypatch):
+    monkeypatch.delenv("ALLOW_AUTO_TRADING", raising=False)
+
+    fake_service = SimpleNamespace(db=object())
+
+    try:
+        run_auto_trading_cycle(
+            {
+                "trading": {
+                    "username": "admin",
+                    "strategy_ids": ["ema_crossover"],
+                    "universe_mode": UNIVERSE_MODE_MANUAL,
+                    "universe": ["510300"],
+                }
+            },
+            fake_service,
+        )
+    except PermissionError as exc:
+        assert "ALLOW_AUTO_TRADING=true" in str(exc)
+    else:
+        raise AssertionError("run_auto_trading_cycle should require ALLOW_AUTO_TRADING=true")

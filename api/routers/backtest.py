@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Body, Query
-from pydantic import BaseModel, Field, field_validator, ValidationInfo
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationInfo
+from starlette.concurrency import run_in_threadpool
 from typing import Dict, List, Any, Optional
 import pandas as pd
 import numpy as np
@@ -17,16 +18,42 @@ from core.analysis.performance_extended import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+MAX_BACKTEST_TICKERS = 50
+MAX_BACKTEST_STRATEGIES = 10
+MAX_BACKTEST_DAYS = 3650
+MAX_OPTIMIZATION_COMBINATIONS = 100
 
 # --- API Models ---
 
+
+def _parse_request_date(value: Optional[str]) -> Optional[datetime]:
+    if value is None:
+        return None
+    return datetime.strptime(value, "%Y-%m-%d")
+
+
+def _validate_date_span(start_date: str, end_date: Optional[str]) -> None:
+    start_dt = _parse_request_date(start_date)
+    end_dt = _parse_request_date(end_date) if end_date else datetime.now()
+    if start_dt and end_dt < start_dt:
+        raise ValueError("end_date must be on or after start_date")
+    if start_dt and (end_dt - start_dt).days > MAX_BACKTEST_DAYS:
+        raise ValueError(f"date range cannot exceed {MAX_BACKTEST_DAYS} days")
+
+
+def _count_param_combinations(param_grid: Dict[str, List[Any]]) -> int:
+    total = 1
+    for values in param_grid.values():
+        total *= max(1, len(values))
+    return total
+
 class BacktestRequest(BaseModel):
     strategy_id: str
-    tickers: List[str]
+    tickers: List[str] = Field(..., min_length=1, max_length=MAX_BACKTEST_TICKERS)
     start_date: str
     end_date: Optional[str] = None
-    initial_capital: float = 100000.0
-    params: Dict[str, Any] = {}
+    initial_capital: float = Field(100000.0, gt=0)
+    params: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator('start_date', 'end_date')
     @classmethod
@@ -39,6 +66,11 @@ class BacktestRequest(BaseModel):
         except ValueError:
             raise ValueError(f'Date {v} does not match format YYYY-MM-DD')
 
+    @model_validator(mode="after")
+    def validate_bounds(self):
+        _validate_date_span(self.start_date, self.end_date)
+        return self
+
 
 class BacktestResponse(BaseModel):
     metrics: Dict[str, Any]
@@ -47,21 +79,43 @@ class BacktestResponse(BaseModel):
 
 
 class MultiStrategyBacktestRequest(BaseModel):
-    strategies: Dict[str, Dict[str, Any]]  # {strategy_id: {weight, params}}
-    tickers: List[str]
+    strategies: Dict[str, Dict[str, Any]] = Field(..., min_length=1, max_length=MAX_BACKTEST_STRATEGIES)
+    tickers: List[str] = Field(..., min_length=1, max_length=MAX_BACKTEST_TICKERS)
     start_date: str
     end_date: Optional[str] = None
-    initial_capital: float = 100000.0
+    initial_capital: float = Field(100000.0, gt=0)
+
+    @model_validator(mode="after")
+    def validate_bounds(self):
+        _validate_date_span(self.start_date, self.end_date)
+        return self
 
 
 class OptimizeRequest(BaseModel):
     strategy_id: str
-    tickers: List[str]
-    param_grid: Dict[str, List[Any]]
+    tickers: List[str] = Field(..., min_length=1, max_length=MAX_BACKTEST_TICKERS)
+    param_grid: Dict[str, List[Any]] = Field(..., min_length=1)
     start_date: str
     end_date: Optional[str] = None
-    initial_capital: float = 100000.0
+    initial_capital: float = Field(100000.0, gt=0)
     objective: str = "trading_objective"
+
+    @field_validator("param_grid")
+    @classmethod
+    def validate_param_grid(cls, v: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
+        if any(not values for values in v.values()):
+            raise ValueError("param_grid values cannot be empty")
+        combinations = _count_param_combinations(v)
+        if combinations > MAX_OPTIMIZATION_COMBINATIONS:
+            raise ValueError(
+                f"parameter grid cannot exceed {MAX_OPTIMIZATION_COMBINATIONS} combinations"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def validate_bounds(self):
+        _validate_date_span(self.start_date, self.end_date)
+        return self
 
 
 class ExportBacktestRequest(BaseModel):
@@ -239,12 +293,14 @@ class MultiStrategyRequest(BaseModel):
     """多策略组合回测请求"""
     strategies: Dict[str, Dict[str, Any]] = Field(
         ...,
+        min_length=1,
+        max_length=MAX_BACKTEST_STRATEGIES,
         description="策略字典 {id: {weights: float, params: dict}}"
     )
-    tickers: List[str] = Field(..., description="标的列表")
+    tickers: List[str] = Field(..., min_length=1, max_length=MAX_BACKTEST_TICKERS, description="标的列表")
     start_date: str = Field(..., description="开始日期 YYYY-MM-DD")
     end_date: Optional[str] = Field(None, description="结束日期 YYYY-MM-DD")
-    initial_capital: float = Field(100000.0, description="初始资本")
+    initial_capital: float = Field(100000.0, gt=0, description="初始资本")
     benchmark_ticker: Optional[str] = Field("000300.SH", description="基准指数代码")
 
     @field_validator('start_date', 'end_date')
@@ -258,20 +314,26 @@ class MultiStrategyRequest(BaseModel):
         except ValueError:
             raise ValueError(f'Date {v} does not match format YYYY-MM-DD')
 
+    @model_validator(mode="after")
+    def validate_bounds(self):
+        _validate_date_span(self.start_date, self.end_date)
+        return self
+
 
 class ParameterOptimizationRequest(BaseModel):
     """参数优化请求"""
     strategy_id: str = Field(..., description="策略ID")
-    tickers: List[str] = Field(..., description="标的列表")
+    tickers: List[str] = Field(..., min_length=1, max_length=MAX_BACKTEST_TICKERS, description="标的列表")
     param_grid: Dict[str, List[Any]] = Field(
         ...,
+        min_length=1,
         description="参数网格 {param_name: [values]}"
     )
     start_date: str = Field(..., description="开始日期 YYYY-MM-DD")
     end_date: Optional[str] = Field(None, description="结束日期")
-    initial_capital: float = Field(100000.0, description="初始资本")
+    initial_capital: float = Field(100000.0, gt=0, description="初始资本")
     objective: str = Field("trading_objective", description="优化目标")
-    cv_days: int = Field(60, description="交叉验证天数")
+    cv_days: int = Field(60, ge=5, le=365, description="交叉验证天数")
 
     @field_validator('start_date', 'end_date')
     @classmethod
@@ -283,6 +345,23 @@ class ParameterOptimizationRequest(BaseModel):
             return v
         except ValueError:
             raise ValueError(f'Date {v} does not match format YYYY-MM-DD')
+
+    @field_validator("param_grid")
+    @classmethod
+    def validate_param_grid(cls, v: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
+        if any(not values for values in v.values()):
+            raise ValueError("param_grid values cannot be empty")
+        combinations = _count_param_combinations(v)
+        if combinations > MAX_OPTIMIZATION_COMBINATIONS:
+            raise ValueError(
+                f"parameter grid cannot exceed {MAX_OPTIMIZATION_COMBINATIONS} combinations"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def validate_bounds(self):
+        _validate_date_span(self.start_date, self.end_date)
+        return self
 
 
 class ExportBacktestRequest(BaseModel):
@@ -319,7 +398,7 @@ async def run_backtest(request: BacktestRequest):
         end_dt = datetime.strptime(request.end_date, "%Y-%m-%d") if request.end_date else datetime.now()
         days = (end_dt - start_dt).days + 100
 
-        price_data = load_price_data(request.tickers, days=days)
+        price_data = await run_in_threadpool(load_price_data, request.tickers, days=days)
         price_data = price_data[price_data.index >= request.start_date]
         if request.end_date:
             price_data = price_data[price_data.index <= request.end_date]
@@ -328,7 +407,7 @@ async def run_backtest(request: BacktestRequest):
             raise HTTPException(status_code=400, detail="指定日期范围内无数据")
 
         engine = BacktestEngine(initial_capital=request.initial_capital)
-        results = engine.run(price_data, strategy_func, request.params)
+        results = await run_in_threadpool(engine.run, price_data, strategy_func, request.params)
 
         equity_curve_list = []
         if "equity_curve" in results and not results["equity_curve"].empty:
@@ -390,7 +469,7 @@ async def run_multi_strategy_backtest(request: MultiStrategyRequest):
         end_dt = datetime.strptime(request.end_date, "%Y-%m-%d") if request.end_date else datetime.now()
         days = (end_dt - start_dt).days + 100
 
-        price_data = load_price_data(request.tickers, days=days)
+        price_data = await run_in_threadpool(load_price_data, request.tickers, days=days)
         price_data = price_data[price_data.index >= request.start_date]
         if request.end_date:
             price_data = price_data[price_data.index <= request.end_date]
@@ -403,7 +482,11 @@ async def run_multi_strategy_backtest(request: MultiStrategyRequest):
         if request.benchmark_ticker and request.benchmark_ticker not in request.tickers:
             try:
                 bench_days = days + 30  # 额外数据用于对齐
-                benchmark_data = load_price_data([request.benchmark_ticker], days=bench_days)
+                benchmark_data = await run_in_threadpool(
+                    load_price_data,
+                    [request.benchmark_ticker],
+                    days=bench_days,
+                )
                 benchmark_data = benchmark_data[benchmark_data.index >= request.start_date]
                 if request.end_date:
                     benchmark_data = benchmark_data[benchmark_data.index <= request.end_date]
@@ -412,7 +495,8 @@ async def run_multi_strategy_backtest(request: MultiStrategyRequest):
 
         # 运行多策略回测
         engine = BacktestEngine(initial_capital=request.initial_capital)
-        results = engine.run_multi_strategy(
+        results = await run_in_threadpool(
+            engine.run_multi_strategy,
             price_data,
             strategies,
             weights,
@@ -492,7 +576,7 @@ async def optimize_parameters(request: ParameterOptimizationRequest):
         end_dt = datetime.strptime(request.end_date, "%Y-%m-%d") if request.end_date else datetime.now()
         days = (end_dt - start_dt).days + 100
 
-        price_data = load_price_data(request.tickers, days=days)
+        price_data = await run_in_threadpool(load_price_data, request.tickers, days=days)
         price_data = price_data[price_data.index >= request.start_date]
         if request.end_date:
             price_data = price_data[price_data.index <= request.end_date]
@@ -502,7 +586,8 @@ async def optimize_parameters(request: ParameterOptimizationRequest):
 
         # 运行参数优化
         engine = BacktestEngine(initial_capital=request.initial_capital)
-        results = engine.optimize_parameters(
+        results = await run_in_threadpool(
+            engine.optimize_parameters,
             price_data,
             strategy_func,
             request.param_grid,
@@ -525,7 +610,7 @@ async def optimize_parameters(request: ParameterOptimizationRequest):
         best_params = results.get("best_params", {})
         if best_params:
             best_engine = BacktestEngine(initial_capital=request.initial_capital)
-            best_result = best_engine.run(price_data, strategy_func, best_params)
+            best_result = await run_in_threadpool(best_engine.run, price_data, strategy_func, best_params)
 
             best_curve = []
             if "equity_curve" in best_result and not best_result["equity_curve"].empty:
@@ -612,11 +697,15 @@ async def extended_analysis(request: ExtendedAnalysisRequest):
         benchmark_series = None
         if request.benchmark_ticker:
             try:
-                benchmark_series = _load_benchmark_returns(request.benchmark_ticker, normalized_equity_curve)
+                benchmark_series = await run_in_threadpool(
+                    _load_benchmark_returns,
+                    request.benchmark_ticker,
+                    normalized_equity_curve,
+                )
             except Exception as e:
                 logger.warning(f"加载基准数据失败: {e}")
 
-        metrics = analyzer.calculate_extended_metrics(benchmark_series)
+        metrics = await run_in_threadpool(analyzer.calculate_extended_metrics, benchmark_series)
 
         # 构建响应
         drawdown_details = [

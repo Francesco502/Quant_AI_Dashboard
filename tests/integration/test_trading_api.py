@@ -13,6 +13,23 @@ from api.main import app
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture(autouse=True)
+def isolate_trading_service(monkeypatch):
+    import api.routers.trading as trading_router
+    from core.trading_service import TradingService
+
+    monkeypatch.setattr(TradingService, "_start_stop_loss_monitor", lambda self: None)
+    monkeypatch.setattr(TradingService, "_setup_stop_loss_take_profit", lambda self, order: None)
+
+    if hasattr(trading_router.get_trading_service, "_instance"):
+        delattr(trading_router.get_trading_service, "_instance")
+
+    yield
+
+    if hasattr(trading_router.get_trading_service, "_instance"):
+        delattr(trading_router.get_trading_service, "_instance")
+
+
 def _auth_client_for_username(username: str) -> TestClient:
     if not get_user_by_username(username):
         create_user(username=username, password="admin123", role="admin")
@@ -265,7 +282,16 @@ class TestTradingAPI:
             assert trading_primary_payload["account_name"] == "primary-account"
             assert trading_list_payload["count"] == 2
 
-    def test_submit_market_order(self, auth_client):
+    def test_submit_market_order(self, auth_client, monkeypatch):
+        from core.brokers.paper_broker import PaperBrokerAdapter
+        from core.trading_service import TradingService
+
+        def fixed_current_price(self, symbol):
+            return 10.0
+
+        monkeypatch.setattr(TradingService, "_get_current_price", fixed_current_price)
+        monkeypatch.setattr(PaperBrokerAdapter, "_get_current_price", fixed_current_price)
+
         create_resp = auth_client.post(
             "/api/trading/accounts",
             json={"name": "test-account", "initial_balance": 100000.0},

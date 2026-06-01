@@ -582,6 +582,7 @@ class UserAssetService:
         self,
         user_id: int,
         payload: Dict[str, Any],
+        refresh_market: bool = True,
     ) -> Dict[str, Any]:
         self._ensure_tables()
 
@@ -629,7 +630,12 @@ class UserAssetService:
             self.db.conn.commit()
 
         self._invalidate_user_cache(user_id)
-        return self.get_overview(user_id, sync_dca=False, force_refresh=True, refresh_market=True)
+        return self.get_overview(
+            user_id,
+            sync_dca=False,
+            force_refresh=True,
+            refresh_market=refresh_market,
+        )
 
     def update_asset(
         self,
@@ -1802,7 +1808,12 @@ class UserAssetService:
         self._store_cached_overview(user_id, payload)
         return payload
 
-    def seed_assets_if_empty(self, user_id: int, assets: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def seed_assets_if_empty(
+        self,
+        user_id: int,
+        assets: List[Dict[str, Any]],
+        refresh_market: bool = False,
+    ) -> Dict[str, Any]:
         self._ensure_tables()
 
         with self._db_lock:
@@ -1818,7 +1829,7 @@ class UserAssetService:
             return {"seeded": False, "count": existing_total}
 
         for item in assets:
-            self.upsert_asset(user_id, dict(item))
+            self.upsert_asset(user_id, dict(item), refresh_market=refresh_market)
 
         return {"seeded": True, "count": len(assets)}
 

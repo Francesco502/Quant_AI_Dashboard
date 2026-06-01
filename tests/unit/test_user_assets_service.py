@@ -26,6 +26,27 @@ def asset_service():
                 service.db.conn.close()
 
 
+def test_seed_assets_if_empty_does_not_refresh_market_by_default(asset_service, monkeypatch):
+    overview_calls = []
+
+    def fake_get_overview(user_id, **kwargs):
+        overview_calls.append(kwargs)
+        return {"summary": {}, "assets": []}
+
+    monkeypatch.setattr(asset_service, "get_overview", fake_get_overview)
+
+    result = asset_service.seed_assets_if_empty(
+        1,
+        [
+            {"ticker": "510300", "asset_name": "沪深300ETF", "units": 10, "avg_cost": 4.0},
+            {"ticker": "159915", "asset_name": "创业板ETF", "units": 5, "avg_cost": 2.0},
+        ],
+    )
+
+    assert result == {"seeded": True, "count": 2}
+    assert [call["refresh_market"] for call in overview_calls] == [False, False]
+
+
 @patch("core.user_assets.load_cn_realtime_quotes_sina", return_value={})
 @patch("core.user_assets.load_price_data_akshare")
 @patch("core.user_assets.load_price_data")

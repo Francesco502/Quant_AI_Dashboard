@@ -16,8 +16,14 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(autouse=True)
 def isolate_trading_service(monkeypatch):
     import api.routers.trading as trading_router
+    from core.brokers.paper_broker import PaperBrokerAdapter
     from core.trading_service import TradingService
 
+    def fixed_current_price(self, symbol):
+        return 10.0
+
+    monkeypatch.setattr(TradingService, "_get_current_price", fixed_current_price)
+    monkeypatch.setattr(PaperBrokerAdapter, "_get_current_price", fixed_current_price)
     monkeypatch.setattr(TradingService, "_start_stop_loss_monitor", lambda self: None)
     monkeypatch.setattr(TradingService, "_setup_stop_loss_take_profit", lambda self, order: None)
 
@@ -283,15 +289,6 @@ class TestTradingAPI:
             assert trading_list_payload["count"] == 2
 
     def test_submit_market_order(self, auth_client, monkeypatch):
-        from core.brokers.paper_broker import PaperBrokerAdapter
-        from core.trading_service import TradingService
-
-        def fixed_current_price(self, symbol):
-            return 10.0
-
-        monkeypatch.setattr(TradingService, "_get_current_price", fixed_current_price)
-        monkeypatch.setattr(PaperBrokerAdapter, "_get_current_price", fixed_current_price)
-
         create_resp = auth_client.post(
             "/api/trading/accounts",
             json={"name": "test-account", "initial_balance": 100000.0},

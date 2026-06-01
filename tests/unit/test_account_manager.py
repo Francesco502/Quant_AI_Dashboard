@@ -8,13 +8,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.account_manager import AccountManager, Account, Position, InsufficientFundsError, InsufficientSharesError
-from core.database import get_database
+from core.database import Database
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def db():
     """获取测试数据库"""
-    return get_database(":memory:")
+    database = Database(":memory:")
+    database.conn.execute(
+        "INSERT INTO users (id, username, password_hash) VALUES (1, 'test-user', 'hash')"
+    )
+    database.conn.commit()
+    try:
+        yield database
+    finally:
+        database.close()
 
 
 @pytest.fixture

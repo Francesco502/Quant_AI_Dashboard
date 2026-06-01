@@ -157,10 +157,9 @@ class TestDataService:
         assert _estimate_quality_min_points(30) == 16
         assert _estimate_quality_min_points(70) == 30
 
-    def test_env_enabled_sources_prioritize_tushare_when_token_exists(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("core.data_service.USER_STATE_FILE", tmp_path / "missing_user_state.json")
+    def test_env_enabled_sources_prioritize_tushare_when_token_exists(self, monkeypatch):
         monkeypatch.setattr(
-            "core.data_service.get_api_keys",
+            "core.data_utils.get_api_keys",
             lambda: {"TUSHARE_TOKEN": "token-123", "ALPHA_VANTAGE_KEY": ""},
         )
 

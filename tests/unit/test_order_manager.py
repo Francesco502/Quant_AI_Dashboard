@@ -10,13 +10,28 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.order_types import Order, OrderSide, OrderType, OrderStatus, TimeInForce, Fill
 from core.order_manager import OrderManager
-from core.database import get_database
+from core.database import Database
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def db():
     """获取测试数据库"""
-    return get_database(":memory:")
+    database = Database(":memory:")
+    database.conn.execute(
+        "INSERT INTO users (id, username, password_hash) VALUES (1, 'test-user', 'hash')"
+    )
+    database.conn.execute(
+        """
+        INSERT INTO accounts
+        (id, user_id, account_name, balance, frozen, initial_capital, currency, status)
+        VALUES (1, 1, '测试账户', 100000.0, 0.0, 100000.0, 'CNY', 'active')
+        """
+    )
+    database.conn.commit()
+    try:
+        yield database
+    finally:
+        database.close()
 
 
 @pytest.fixture

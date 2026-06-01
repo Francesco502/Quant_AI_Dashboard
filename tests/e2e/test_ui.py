@@ -28,7 +28,10 @@ def _login(page: Page) -> None:
     page.locator("#username").fill(ADMIN_USERNAME)
     page.locator("#password").fill(ADMIN_PASSWORD)
     page.locator('button[type="submit"]').click()
-    page.wait_for_function("() => !!localStorage.getItem('token')", timeout=15000)
+    page.wait_for_function(
+        "() => !!(sessionStorage.getItem('token') || localStorage.getItem('token'))",
+        timeout=15000,
+    )
     page.wait_for_function("() => window.location.pathname === '/'", timeout=30000)
 
 

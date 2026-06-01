@@ -32,7 +32,10 @@ def _login(page: Page, username: str, password: str) -> None:
     page.locator("#username").fill(username)
     page.locator("#password").fill(password)
     page.locator('button[type="submit"]').click()
-    page.wait_for_function("() => !!localStorage.getItem('token')", timeout=15000)
+    page.wait_for_function(
+        "() => !!(sessionStorage.getItem('token') || localStorage.getItem('token'))",
+        timeout=15000,
+    )
     page.wait_for_function("() => window.location.pathname === '/'", timeout=30000)
 
 
@@ -57,7 +60,8 @@ def _seed_auth_session(page: Page, username: str, password: str) -> None:
     page.goto(f"{BASE_URL}/login")
     page.evaluate(
         """([nextToken, nextUsername, nextRole]) => {
-            localStorage.setItem("token", nextToken);
+            sessionStorage.setItem("token", nextToken);
+            localStorage.removeItem("token");
             localStorage.setItem("user", nextUsername);
             localStorage.setItem("userRole", nextRole || "viewer");
         }""",

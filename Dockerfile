@@ -1,5 +1,5 @@
 # ============================================================
-# Quant-AI Dashboard v2.3.0 — 后端 Dockerfile (FastAPI + Daemon)
+# Quant-AI Dashboard v2.4.0 — 后端 Dockerfile (FastAPI + Daemon)
 # ============================================================
 FROM python:3.11-slim AS base
 

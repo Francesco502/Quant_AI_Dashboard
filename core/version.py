@@ -9,7 +9,7 @@ VERSION_INFO = {
     "minor": 4,
     "patch": 0,
     "prerelease": None,
-    "build_date": "2026-05-26",
+    "build_date": "2026-06-01",
 }
 
 

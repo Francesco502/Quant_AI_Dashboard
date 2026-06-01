@@ -1,6 +1,6 @@
 # Release Notes v2.4.0
 
-Release date: 2026-05-26
+Release date: 2026-06-01
 
 ## Safety And Access Control
 

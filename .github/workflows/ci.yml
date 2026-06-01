@@ -9,10 +9,10 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -37,10 +37,10 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -70,7 +70,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: github.event_name != 'pull_request'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: ./coverage.xml
           flags: unittests
@@ -79,7 +79,7 @@ jobs:
 
       - name: Upload coverage report as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: htmlcov/
@@ -90,7 +90,7 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build optimized release image
         run: docker build -f Dockerfile.optimized -t quant-ai-dashboard:ci .
@@ -112,15 +112,15 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -176,7 +176,7 @@ jobs:
 
       - name: Upload release validation logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-validation-logs
           path: |
@@ -196,10 +196,10 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -214,7 +214,8 @@ jobs:
           python -m pytest tests/performance/ -v
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        if: ${{ always() && hashFiles('benchmarks/**') != '' }}
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
           path: ./benchmarks/

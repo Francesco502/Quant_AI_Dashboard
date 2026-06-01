@@ -98,6 +98,13 @@ jobs:
   release-validation:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      SECRET_KEY: "ci-release-validation-secret-key"
+      APP_LOGIN_PASSWORD: "admin123"
+      TEST_ADMIN_USERNAME: "admin"
+      TEST_ADMIN_PASSWORD: "admin123"
+      NEXT_PUBLIC_API_URL: "http://127.0.0.1:8685/api"
+      CORS_ORIGINS: "http://127.0.0.1:8686,http://localhost:8686"
     needs:
       - frontend-quality
       - test

@@ -177,7 +177,14 @@ class TestBacktestAPI:
         assert "comparison_table" in data
         assert "summary" in data
 
-    def test_run_single_strategy(self, auth_client):
+    @patch("api.routers.backtest.load_price_data")
+    def test_run_single_strategy(self, mock_load_price, auth_client):
+        dates = pd.date_range(start="2025-01-01", periods=260, freq="B")
+        mock_load_price.return_value = pd.DataFrame(
+            {"600519": np.linspace(100, 150, len(dates))},
+            index=dates,
+        )
+
         payload = {
             "strategy_id": "sma_crossover",
             "tickers": ["600519"],
@@ -188,7 +195,7 @@ class TestBacktestAPI:
         }
 
         response = auth_client.post("/api/backtest/run", json=payload)
-        assert response.status_code in [200, 500]
+        assert response.status_code == 200
 
     def test_list_strategies(self, auth_client):
         response = auth_client.get("/api/backtest/strategies")

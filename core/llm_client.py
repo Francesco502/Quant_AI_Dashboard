@@ -12,8 +12,9 @@ logger = logging.getLogger(__name__)
 
 Message = Dict[str, str]
 
-DEFAULT_OPENAI_COMPAT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
-DEFAULT_OPENAI_MODEL = "doubao-seed-1-6-thinking"
+DEFAULT_OPENAI_COMPAT_BASE_URL = "https://api.deepseek.com"
+DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+DEFAULT_OPENAI_MODEL = "deepseek-v4-flash"
 DEFAULT_OPENAI_API_KEY = ""
 DEFAULT_ANTHROPIC_MODEL = "claude-3-5-sonnet-20241022"
 DEFAULT_GEMINI_MODEL = "gemini-1.5-pro"
@@ -230,7 +231,13 @@ def _resolve_openai_compat_api_key(base_url: Optional[str]) -> str:
     hostname = _base_url_hostname(base_url)
     preferred_keys: List[str]
 
-    if "dashscope.aliyuncs.com" in hostname:
+    if "deepseek.com" in hostname:
+        preferred_keys = [
+            "DEEPSEEK_API_KEY",
+            "DS_API_KEY",
+            "OPENAI_API_KEY",
+        ]
+    elif "dashscope.aliyuncs.com" in hostname:
         preferred_keys = [
             "DASHSCOPE_API_KEY",
             "CODING_PLAN_API_KEY",
@@ -250,6 +257,8 @@ def _resolve_openai_compat_api_key(base_url: Optional[str]) -> str:
             "ARK_API_KEY",
             "VOLCENGINE_API_KEY",
             "VOLCENGINE_ARK_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "DS_API_KEY",
             "CODING_PLAN_API_KEY",
         ]
 
@@ -311,6 +320,7 @@ def _build_ollama_config() -> LLMConfig:
 def _build_openai_compat_config(api_key: str) -> LLMConfig:
     base_url = (
         os.getenv("OPENAI_BASE_URL")
+        or os.getenv("DEEPSEEK_BASE_URL")
         or os.getenv("DASHSCOPE_BASE_URL")
         or os.getenv("ARK_BASE_URL")
         or os.getenv("VOLCENGINE_BASE_URL")
@@ -320,12 +330,13 @@ def _build_openai_compat_config(api_key: str) -> LLMConfig:
         or os.getenv("VOLCENGINE_API_KEY")
         or os.getenv("VOLCENGINE_ARK_API_KEY")
     ):
-        base_url = DEFAULT_OPENAI_COMPAT_BASE_URL
+        base_url = DEFAULT_ARK_BASE_URL
     if not base_url:
         base_url = DEFAULT_OPENAI_COMPAT_BASE_URL
 
     model = (
         os.getenv("OPENAI_MODEL")
+        or os.getenv("DEEPSEEK_MODEL")
         or os.getenv("DASHSCOPE_MODEL")
         or os.getenv("ARK_MODEL")
         or os.getenv("VOLCENGINE_MODEL")
@@ -340,10 +351,10 @@ def _build_explicit_provider_config(provider: str) -> LLMConfig:
     if normalized_provider == "openai_compat":
         base_url = (
             os.getenv("OPENAI_BASE_URL")
+            or os.getenv("DEEPSEEK_BASE_URL")
             or os.getenv("DASHSCOPE_BASE_URL")
             or os.getenv("ARK_BASE_URL")
             or os.getenv("VOLCENGINE_BASE_URL")
-            or DEFAULT_OPENAI_COMPAT_BASE_URL
         )
         return _build_openai_compat_config(_resolve_openai_compat_api_key(base_url))
 
@@ -370,7 +381,7 @@ def get_selection_mode() -> str:
 def _build_config_from_env() -> LLMConfig:
     """Build config from environment.
 
-    Default: OpenAI-compatible Volcengine Ark (doubao-seed-1-6-thinking).
+    Default: OpenAI-compatible DeepSeek (deepseek-v4-flash).
     Override provider with LLM_PROVIDER when needed.
     """
     explicit = (os.getenv("LLM_PROVIDER") or "").strip()
@@ -379,6 +390,7 @@ def _build_config_from_env() -> LLMConfig:
 
     api_key = _resolve_openai_compat_api_key(
         os.getenv("OPENAI_BASE_URL")
+        or os.getenv("DEEPSEEK_BASE_URL")
         or os.getenv("DASHSCOPE_BASE_URL")
         or os.getenv("ARK_BASE_URL")
         or os.getenv("VOLCENGINE_BASE_URL")

@@ -6,16 +6,24 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+try:
+    from playwright.sync_api import sync_playwright
+except Exception:  # pragma: no cover - optional release-check dependency
+    sync_playwright = None  # type: ignore[assignment]
+
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 REPORT_PATH = ROOT / "output" / "reports" / "release_check_report.txt"
 DEFAULT_API_URL = "http://127.0.0.1:8685/api"
-DEFAULT_FRONTEND_URL = "http://127.0.0.1:8686"
+DEFAULT_FRONTEND_URL = "http://localhost:8686"
 TEST_FILES = [
     "tests/e2e/test_release_validation.py",
     "tests/e2e/test_ui.py",
@@ -28,14 +36,22 @@ def _build_env() -> dict[str, str]:
 
     api_url = env.get("API_URL", DEFAULT_API_URL)
     frontend_url = env.get("FRONTEND_URL", DEFAULT_FRONTEND_URL)
-    admin_username = env.get("TEST_ADMIN_USERNAME", "admin")
-    admin_password = env.get("TEST_ADMIN_PASSWORD", "admin123")
+    generated_user = False
+    admin_username = env.get("TEST_ADMIN_USERNAME", "").strip()
+    admin_password = env.get("TEST_ADMIN_PASSWORD", "").strip()
+    if not admin_username or not admin_password:
+        generated_user = True
+        admin_username = f"release_e2e_{uuid.uuid4().hex[:8]}"
+        admin_password = f"ReleaseValidation-{uuid.uuid4().hex[:12]}!"
 
     env["RUN_EXTERNAL_E2E"] = "1"
     env["API_URL"] = api_url
     env["FRONTEND_URL"] = frontend_url
+    env.setdefault("EXPECT_LLM_READY", "1")
     env.setdefault("TEST_ADMIN_USERNAME", admin_username)
     env.setdefault("TEST_ADMIN_PASSWORD", admin_password)
+    if generated_user:
+        env["RELEASE_CHECK_GENERATED_USER"] = "1"
 
     if not env.get("TEST_LOGIN_USERNAME") and env.get("TEST_ADMIN_USERNAME"):
         env["TEST_LOGIN_USERNAME"] = env["TEST_ADMIN_USERNAME"]
@@ -57,6 +73,37 @@ def _build_env() -> dict[str, str]:
             env.pop(proxy_key, None)
 
     return env
+
+
+def _ensure_generated_test_user(env: dict[str, str]) -> None:
+    if env.get("RELEASE_CHECK_GENERATED_USER") != "1":
+        return
+    try:
+        from api.auth import create_user, get_user_by_username
+
+        username = env["TEST_ADMIN_USERNAME"]
+        password = env["TEST_ADMIN_PASSWORD"]
+        if not get_user_by_username(username):
+            create_user(username=username, password=password, role="admin")
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Failed to create generated release-check user: {exc}") from exc
+
+
+def _playwright_preflight() -> list[str]:
+    if sync_playwright is None:
+        return ["Playwright is not installed; run: python -m pip install playwright && playwright install chromium"]
+
+    try:
+        with sync_playwright() as playwright:
+            executable_path = Path(playwright.chromium.executable_path)
+            if not executable_path.exists():
+                return [
+                    "Playwright Chromium executable is missing; run: playwright install chromium "
+                    "or pin Playwright to the browser revision used by CI."
+                ]
+    except Exception as exc:  # noqa: BLE001
+        return [f"Playwright preflight failed: {exc}; run: playwright install chromium"]
+    return []
 
 
 def _build_command() -> list[str]:
@@ -136,7 +183,16 @@ def main() -> int:
     print(f"FRONTEND_URL={frontend_url}")
     print(f"Report -> {REPORT_PATH}")
 
+    try:
+        _ensure_generated_test_user(env)
+    except Exception as exc:  # noqa: BLE001
+        result = subprocess.CompletedProcess(command, 1, "", str(exc))
+        _write_report(command, result, api_url, frontend_url)
+        _safe_print(str(exc) + "\n", stderr=True)
+        return 1
+
     preflight_failures = _preflight(api_url, frontend_url)
+    preflight_failures.extend(_playwright_preflight())
     if preflight_failures:
         stderr = "Preflight failed before pytest execution.\n" + "\n".join(preflight_failures)
         result = subprocess.CompletedProcess(command, 1, "", stderr)

@@ -17,6 +17,7 @@ from .routers import (
     backup,
     data,
     daily_workbench,
+    dashboard,
     data_freshness,
     external,
     forecasting,
@@ -40,6 +41,7 @@ def register_api_routes(app: FastAPI, *, include_legacy_accounts: bool = False) 
     if include_legacy_accounts:
         app.include_router(accounts.router, prefix="/api/legacy/accounts", tags=["旧账户接口"])
     app.include_router(daily_workbench.router, prefix="/api", tags=["日常决策工作台"])
+    app.include_router(dashboard.router, prefix="/api/dashboard", tags=["仪表盘汇总"])
     app.include_router(data_freshness.router, prefix="/api", tags=["数据新鲜度"])
     app.include_router(audit.router, prefix="/api", tags=["复盘审计"])
     app.include_router(backup.router, prefix="/api", tags=["备份恢复"])

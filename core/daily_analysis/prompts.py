@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from core.llm_client import Message
+from core.llm_prompt_templates import build_daily_analysis_system_prefix
 
 from .config import get_bias_threshold
 
@@ -51,6 +52,8 @@ def build_messages(ctx: Dict) -> List[Message]:
     structured_context = json.dumps(ctx.get("analysis_brief") or {}, ensure_ascii=False, indent=2)
 
     system_prompt = (
+        build_daily_analysis_system_prefix()
+        + "\n\n"
         "你是一名专业的 A 股/基金交易分析助手。你的职责是基于给定数据，"
         "给出简洁、可追溯、可执行的交易结论，而不是泛泛而谈。\n\n"
         "【工作方式】\n"

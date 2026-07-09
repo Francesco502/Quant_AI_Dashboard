@@ -2,7 +2,7 @@
 
 Personal quantitative analysis, paper trading, strategy research, and decision-support workspace.
 
-Current release line: **v2.3.0**
+Current release line: **v3.0.0**
 
 ## Repository Layout
 
@@ -21,6 +21,7 @@ Current release line: **v2.3.0**
 - Release guide: [`docs/current/release.md`](./docs/current/release.md)
 - Development guide: [`docs/current/development.md`](./docs/current/development.md)
 - Documentation index: [`docs/README.md`](./docs/README.md)
+- Latest release notes: [`docs/releases/RELEASE_NOTES_v3.0.0.md`](./docs/releases/RELEASE_NOTES_v3.0.0.md)
 
 ## Local Development
 
@@ -59,6 +60,7 @@ python -m compileall -q api core tests
 python -m pytest tests/unit -q
 python -m pytest tests/integration -q
 python -m pytest tests/test_v3_smoke.py -q
+python scripts/deployment_readiness_check.py --strict
 ```
 
 Frontend checks:
@@ -83,6 +85,7 @@ Canonical production deployment is Docker Compose:
 
 ```powershell
 docker compose up -d --build
+docker compose -f docker-compose.worker.yml --profile scan --profile backtest up -d --build
 ```
 
 See [`docs/current/deployment.md`](./docs/current/deployment.md) for runtime environment, volumes, published ports, and post-deploy checks.
@@ -92,3 +95,5 @@ See [`docs/current/deployment.md`](./docs/current/deployment.md) for runtime env
 - Runtime state under `data/` is not source material.
 - Generated output such as `output/`, coverage reports, Playwright traces, and temporary scratch files should stay out of source control.
 - Automatic trading remains disabled by default and must be explicitly enabled through runtime configuration.
+- v3.0.0 defaults LLM integration to DeepSeek-compatible `deepseek-v4-flash`; configure `DEEPSEEK_API_KEY` or `DS_API_KEY` before release validation.
+- Rust native kernels are optional and only built when `INSTALL_NATIVE_KERNEL=true`; Python fallback remains supported.

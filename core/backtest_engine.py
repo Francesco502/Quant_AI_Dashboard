@@ -3,6 +3,7 @@ import numpy as np
 from typing import Dict, Any, Callable, List, Optional, Tuple
 from datetime import datetime
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.brokers.backtest_broker import BacktestBroker
@@ -85,6 +86,18 @@ class BacktestEngine:
 
         if strategy_params is None:
             strategy_params = {}
+        collect_profile = bool(legacy_kwargs.pop("collect_profile", False))
+        profile = {
+            "iterations": 0,
+            "breakdown": {
+                "price_lookup": {"seconds": 0.0, "percent": 0.0},
+                "strategy": {"seconds": 0.0, "percent": 0.0},
+                "broker_match": {"seconds": 0.0, "percent": 0.0},
+                "account_history": {"seconds": 0.0, "percent": 0.0},
+            },
+            "total_seconds": 0.0,
+        }
+        total_started = time.perf_counter()
 
         self.equity_curve = []
         self.positions_history = []
@@ -110,6 +123,7 @@ class BacktestEngine:
 
             # 2. Get Current Prices
             # Assuming price_data contains Close prices
+            section_started = time.perf_counter()
             current_prices = {
                 ticker: float(price_data.loc[date, ticker])
                 for ticker in tickers
@@ -122,12 +136,15 @@ class BacktestEngine:
                 if volume_col in price_data.columns and not pd.isna(price_data.loc[date, volume_col]):
                     quote["volume"] = float(price_data.loc[date, volume_col])
                 market_snapshot[ticker] = quote
+            profile["breakdown"]["price_lookup"]["seconds"] += time.perf_counter() - section_started
 
             # 3. Run Strategy
             # Pass data up to current date
+            section_started = time.perf_counter()
             current_history = price_data.loc[:date]
             target_positions = self._call_strategy(strategy_func, current_history, strategy_params)
             target_positions = self._normalize_targets(target_positions, current_prices, account_info=self.broker.get_account_info())
+            profile["breakdown"]["strategy"]["seconds"] += time.perf_counter() - section_started
 
             # 4. Execute Rebalance via TradingEngine
             # This generates orders and places them in the broker (status=SUBMITTED)
@@ -135,9 +152,12 @@ class BacktestEngine:
 
             # 5. Match Orders (Simulate Execution)
             # Match immediately against current close prices
+            section_started = time.perf_counter()
             self.broker.match_orders(market_snapshot)
+            profile["breakdown"]["broker_match"]["seconds"] += time.perf_counter() - section_started
 
             # 6. Record Performance
+            section_started = time.perf_counter()
             account_info = self.broker.get_account_info()
             self.equity_curve.append({
                 "date": date,
@@ -153,8 +173,17 @@ class BacktestEngine:
                 "positions": positions,
                 "total_equity": total_equity
             })
+            profile["breakdown"]["account_history"]["seconds"] += time.perf_counter() - section_started
+            profile["iterations"] += 1
 
-        return self._calculate_metrics()
+        result = self._calculate_metrics()
+        if collect_profile:
+            total_seconds = max(time.perf_counter() - total_started, 0.0)
+            profile["total_seconds"] = total_seconds
+            for item in profile["breakdown"].values():
+                item["percent"] = (item["seconds"] / total_seconds * 100.0) if total_seconds > 0 else 0.0
+            result["profile"] = profile
+        return result
 
     @staticmethod
     def _call_strategy(strategy_func: Callable, current_history: pd.DataFrame, strategy_params: Dict) -> Dict[str, Any]:
@@ -182,6 +211,74 @@ class BacktestEngine:
             else:
                 normalized[ticker] = max(int(value), 0)
         return normalized
+
+    def run_prepared(
+        self,
+        prepared: Any,
+        strategy_func: Callable[[pd.DataFrame, Dict], Dict[str, int]],
+        strategy_params: Dict | None = None,
+    ) -> Dict:
+        return self.run(prepared.price_data, strategy_func, strategy_params or {})
+
+    def run_precomputed_signals(
+        self,
+        price_data: pd.DataFrame,
+        signal_matrix: pd.DataFrame,
+        *,
+        target_type: str = "shares",
+    ) -> Dict:
+        """Run an array-friendly backtest path with precomputed target positions."""
+        self.equity_curve = []
+        self.positions_history = []
+        self.broker = BacktestBroker(
+            initial_capital=self.initial_capital,
+            commission_rate=float(self.fees.get("commission", 0.0003)),
+            stamp_duty_rate=float(self.fees.get("stamp_duty", 0.001)),
+            base_slippage_bps=float(self.fees.get("slippage", 0.0005)) * 10000.0,
+        )
+        self.trading_engine = TradingEngine(self.broker)
+
+        if price_data is None or price_data.empty:
+            result = self._calculate_metrics()
+            result["fast_path"] = True
+            return result
+
+        prices = price_data.copy()
+        prices.index = pd.to_datetime(prices.index)
+        prices = prices.sort_index()
+        signals = signal_matrix.copy()
+        signals.index = pd.to_datetime(signals.index)
+        signals = signals.reindex(index=prices.index, columns=prices.columns).ffill().fillna(0)
+
+        for date in prices.index:
+            self.broker.set_time(date)
+            row = prices.loc[date]
+            current_prices = {
+                ticker: float(row[ticker])
+                for ticker in prices.columns
+                if not pd.isna(row[ticker])
+            }
+            market_snapshot = {ticker: {"price": price} for ticker, price in current_prices.items()}
+            raw_targets = {
+                ticker: signals.loc[date, ticker]
+                for ticker in prices.columns
+                if ticker in current_prices and not pd.isna(signals.loc[date, ticker])
+            }
+            if target_type == "weights":
+                target_positions = self._normalize_targets(raw_targets, current_prices, account_info=self.broker.get_account_info())
+            else:
+                target_positions = {ticker: max(int(float(value)), 0) for ticker, value in raw_targets.items()}
+            self.trading_engine.execute_rebalance(target_positions, current_prices)
+            self.broker.match_orders(market_snapshot)
+            account_info = self.broker.get_account_info()
+            self.equity_curve.append({"date": date, "equity": account_info["equity"], "cash": account_info["cash"]})
+            positions = {p.ticker: p.shares for p in self.broker.get_positions()}
+            self.positions_history.append({"date": date, "positions": positions, "total_equity": account_info["equity"]})
+
+        result = self._calculate_metrics()
+        result["fast_path"] = True
+        result["execution_mode"] = "precomputed_signal_fast_path"
+        return result
 
     def _calculate_metrics(self) -> Dict:
         if not self.equity_curve:

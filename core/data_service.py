@@ -568,6 +568,28 @@ def load_ohlcv_data(
     if not tickers:
         return {}
 
+    normalized_tickers = [str(t).strip().upper() for t in tickers if str(t).strip()]
+    local_ohlcv_map: Dict[str, pd.DataFrame] = {}
+
+    try:
+        from core import data_access
+
+        response = data_access.load_ohlcv_batch(
+            data_access.BatchOHLCVRequest(normalized_tickers, days=days, refresh_stale=refresh_stale)
+        )
+        local_ohlcv_map.update(response.ticker_frames)
+        missing_from_batch = set(response.missing_tickers)
+        if local_ohlcv_map and not missing_from_batch:
+            return {ticker: frame.sort_index().tail(days) for ticker, frame in local_ohlcv_map.items()}
+        tickers = [ticker for ticker in normalized_tickers if ticker in missing_from_batch]
+        if not tickers:
+            tickers = normalized_tickers
+    except Exception as exc:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).debug("v3 batch OHLCV facade unavailable, using legacy path: %s", exc)
+        tickers = normalized_tickers
+
     effective_remote_cache_days = _effective_remote_cache_days(days, remote_cache_days)
 
     if alpha_vantage_key is None or tushare_token is None:
@@ -580,7 +602,6 @@ def load_ohlcv_data(
     if data_sources is None:
         data_sources = get_active_data_sources()
 
-    local_ohlcv_map: Dict[str, pd.DataFrame] = {}
     tickers_to_refresh: List[str] = []
 
     # 1. 先尝试从本地 OHLCV 仓库读取

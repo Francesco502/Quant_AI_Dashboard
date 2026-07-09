@@ -6,6 +6,7 @@ from typing import Dict, List
 import json
 
 from core.agent.tools import BaseTool, ToolResult
+from core.llm_prompt_templates import build_agent_system_prefix
 from core.skills import build_skills_prompt_section
 from core.daily_analysis.prompts import load_soul_content
 
@@ -13,6 +14,8 @@ from core.daily_analysis.prompts import load_soul_content
 def build_system_prompt(tools: Dict[str, BaseTool]) -> str:
     """构建 Agent 的 system prompt，包含工具列表、Skills 与 SOUL。"""
     lines: List[str] = []
+    lines.append(build_agent_system_prefix())
+    lines.append("")
     lines.append("你是一名面向股票与宏观市场的深度研究型 AI 助手。")
     lines.append("你可以通过一组“工具”来获取价格历史、大盘复盘、新闻舆情以及现有的技术+舆情决策结果。")
     lines.append("")
@@ -98,4 +101,3 @@ def build_final_answer_prompt(query: str, tool_results: List[ToolResult]) -> str
         "3. 指出主要不确定性与潜在风险；\n"
         "4. 如果数据明显不足以支持强结论，请在回答中明确说明这一点。\n"
     )
-

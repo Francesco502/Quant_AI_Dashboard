@@ -1,0 +1,11 @@
+[package]
+name = "quant_kernel"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "quant_kernel"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py311"] }

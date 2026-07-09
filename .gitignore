@@ -59,6 +59,10 @@ release_check_report.txt
 web/.next/
 web/out/
 
+# Rust build outputs
+target/
+quant_kernel/target/
+
 # Model artifacts
 models/*.pkl
 models/*.h5

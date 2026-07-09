@@ -1,0 +1,98 @@
+services:
+  ai-worker:
+    image: francescoli/quant_app-worker:v3.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized
+      args:
+        INSTALL_NATIVE_KERNEL: "${INSTALL_NATIVE_KERNEL:-false}"
+    profiles: ["ai"]
+    command: ["python", "run_prediction_worker.py"]
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./strategies:/app/strategies
+      - ./models:/app/models
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DISABLE_HEAVY_MODELS: "${DISABLE_HEAVY_MODELS:-true}"
+      PREDICTION_TASK_EXECUTION_MODE: "external_worker"
+      PREDICTION_TASK_DB_PATH: "/app/data/prediction_tasks.db"
+      PREDICTION_WORKER_POLL_SECONDS: "${PREDICTION_WORKER_POLL_SECONDS:-5}"
+      WORKER_HEARTBEAT_DIR: "/app/data/worker_heartbeats"
+      QUANT_NATIVE_KERNEL: "${QUANT_NATIVE_KERNEL:-auto}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DS_API_KEY: "${DS_API_KEY:-}"
+    mem_limit: 768m
+    restart: unless-stopped
+
+  market-refresh-worker:
+    image: francescoli/quant_app-worker:v3.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized
+      args:
+        INSTALL_NATIVE_KERNEL: "${INSTALL_NATIVE_KERNEL:-false}"
+    profiles: ["market-refresh"]
+    command: ["python", "run_market_refresh_worker.py"]
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      PYTHONUNBUFFERED: "1"
+      MARKET_REFRESH_TASK_EXECUTION_MODE: "external_worker"
+      MARKET_REFRESH_TASK_DB_PATH: "/app/data/market_refresh_tasks.db"
+      MARKET_REFRESH_WORKER_POLL_SECONDS: "${MARKET_REFRESH_WORKER_POLL_SECONDS:-10}"
+      WORKER_HEARTBEAT_DIR: "/app/data/worker_heartbeats"
+      QUANT_NATIVE_KERNEL: "${QUANT_NATIVE_KERNEL:-auto}"
+      ALPHA_VANTAGE_KEY: "${ALPHA_VANTAGE_KEY:-}"
+      TUSHARE_TOKEN: "${TUSHARE_TOKEN:-}"
+    mem_limit: 512m
+    restart: unless-stopped
+
+  scan-worker:
+    image: francescoli/quant_app-worker:v3.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized
+      args:
+        INSTALL_NATIVE_KERNEL: "${INSTALL_NATIVE_KERNEL:-false}"
+    profiles: ["scan"]
+    command: ["python", "run_scan_worker.py"]
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      PYTHONUNBUFFERED: "1"
+      SCAN_TASK_EXECUTION_MODE: "external_worker"
+      SCAN_TASK_DB_PATH: "/app/data/scan_tasks.db"
+      SCAN_WORKER_POLL_SECONDS: "${SCAN_WORKER_POLL_SECONDS:-2}"
+      FEATURE_SNAPSHOT_DIR: "/app/data/feature_snapshots"
+      FEATURE_VERSION: "${FEATURE_VERSION:-v300}"
+      WORKER_HEARTBEAT_DIR: "/app/data/worker_heartbeats"
+      QUANT_NATIVE_KERNEL: "${QUANT_NATIVE_KERNEL:-auto}"
+    mem_limit: 512m
+    restart: unless-stopped
+
+  backtest-worker:
+    image: francescoli/quant_app-worker:v3.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized
+      args:
+        INSTALL_NATIVE_KERNEL: "${INSTALL_NATIVE_KERNEL:-false}"
+    profiles: ["backtest"]
+    command: ["python", "run_backtest_worker.py"]
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./strategies:/app/strategies
+    environment:
+      PYTHONUNBUFFERED: "1"
+      BACKTEST_TASK_EXECUTION_MODE: "external_worker"
+      BACKTEST_TASK_DB_PATH: "/app/data/backtest_tasks.db"
+      BACKTEST_WORKER_POLL_SECONDS: "${BACKTEST_WORKER_POLL_SECONDS:-2}"
+      WORKER_HEARTBEAT_DIR: "/app/data/worker_heartbeats"
+      QUANT_NATIVE_KERNEL: "${QUANT_NATIVE_KERNEL:-auto}"
+    mem_limit: 768m
+    restart: unless-stopped

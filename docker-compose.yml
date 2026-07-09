@@ -1,9 +1,11 @@
 services:
   quant-app:
-    image: francescoli/quant_app:v2.4.0
+    image: francescoli/quant_app:v3.0.0
     build:
       context: .
       dockerfile: Dockerfile.optimized
+      args:
+        INSTALL_NATIVE_KERNEL: "${INSTALL_NATIVE_KERNEL:-false}"
     container_name: quant-app
     ports:
       - "8686:80"
@@ -26,10 +28,21 @@ services:
       ALPHA_VANTAGE_KEY: "${ALPHA_VANTAGE_KEY:-}"
       TUSHARE_TOKEN: "${TUSHARE_TOKEN:-}"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:8686}"
-      LLM_PROVIDER: "${LLM_PROVIDER:-}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-openai_compat}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DS_API_KEY: "${DS_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_MODEL: "${DEEPSEEK_MODEL:-deepseek-v4-flash}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"
-      OPENAI_MODEL: "${OPENAI_MODEL:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.deepseek.com}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-deepseek-v4-flash}"
+      SCAN_TASK_EXECUTION_MODE: "${SCAN_TASK_EXECUTION_MODE:-external_worker}"
+      BACKTEST_TASK_EXECUTION_MODE: "${BACKTEST_TASK_EXECUTION_MODE:-external_worker}"
+      PREDICTION_TASK_EXECUTION_MODE: "${PREDICTION_TASK_EXECUTION_MODE:-inline}"
+      MARKET_REFRESH_TASK_EXECUTION_MODE: "${MARKET_REFRESH_TASK_EXECUTION_MODE:-inline}"
+      WORKER_HEARTBEAT_DIR: "${WORKER_HEARTBEAT_DIR:-/app/data/worker_heartbeats}"
+      FEATURE_SNAPSHOT_DIR: "${FEATURE_SNAPSHOT_DIR:-/app/data/feature_snapshots}"
+      QUANT_NATIVE_KERNEL: "${QUANT_NATIVE_KERNEL:-auto}"
       ARK_API_KEY: "${ARK_API_KEY:-}"
       ARK_BASE_URL: "${ARK_BASE_URL:-}"
       ARK_MODEL: "${ARK_MODEL:-}"

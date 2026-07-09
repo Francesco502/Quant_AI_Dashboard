@@ -5,9 +5,10 @@ from typing import Dict, List, Any, Optional
 import pandas as pd
 import numpy as np
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from core.backtest_engine import BacktestEngine
+from core.backtest_tasks import BacktestTaskRequest, get_backtest_task_store
 from core.data_service import load_price_data
 from core.strategy_catalog import get_strategy_definition, list_backtestable_strategies
 from core.analysis.performance_extended import (
@@ -136,6 +137,35 @@ class ExtendedAnalysisRequest(BaseModel):
     trades: List[Dict[str, Any]]
     initial_capital: float = 100000.0
     benchmark_ticker: Optional[str] = None
+
+
+class BacktestTaskCreateRequest(BaseModel):
+    strategy_id: str = Field("", description="策略ID；precomputed_signals fast path 可为空")
+    tickers: List[str] = Field(..., min_length=1, max_length=MAX_BACKTEST_TICKERS)
+    start_date: str
+    end_date: Optional[str] = None
+    initial_capital: float = Field(100000.0, gt=0)
+    params: Dict[str, Any] = Field(default_factory=dict)
+    param_grid: Dict[str, List[Any]] = Field(default_factory=dict)
+    objective: str = "trading_objective"
+    precomputed_signals: Optional[Dict[str, Any]] = None
+    target_type: str = "shares"
+    force_refresh: bool = False
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_date_format(cls, v: str, info: ValidationInfo) -> str:
+        if v is None:
+            return v
+        datetime.strptime(v, "%Y-%m-%d")
+        return v
+
+    @model_validator(mode="after")
+    def validate_bounds(self):
+        _validate_date_span(self.start_date, self.end_date)
+        if self.param_grid:
+            OptimizeRequest.validate_param_grid(self.param_grid)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +413,26 @@ async def list_strategies():
     统一策略列表端点 —— 返回所有可用策略（经典 + Z哥战法）。
     """
     return _build_unified_strategy_list()
+
+
+@router.post("/tasks", response_model=Dict[str, Any])
+async def create_backtest_task(request: BacktestTaskCreateRequest):
+    """Create or reuse a persisted v3 backtest task for worker execution."""
+    payload = request.model_dump(exclude={"force_refresh"})
+    lookup = get_backtest_task_store().get_or_create_task(
+        BacktestTaskRequest(payload=payload),
+        request_date=date.today(),
+        force_refresh=request.force_refresh,
+    )
+    return lookup.task.to_api(cache_hit=lookup.cache_hit)
+
+
+@router.get("/tasks/{task_id}", response_model=Dict[str, Any])
+async def get_backtest_task(task_id: str):
+    task = get_backtest_task_store().get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Backtest task not found")
+    return task.to_api(cache_hit=task.status == "succeeded")
 
 
 @router.post("/run", response_model=Dict[str, Any])

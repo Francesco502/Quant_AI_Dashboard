@@ -11,7 +11,7 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 log_info "========================================"
-log_info "Quant-AI Dashboard v2.4.0 single-image startup"
+log_info "Quant-AI Dashboard v3.0.0 single-image startup"
 log_info "========================================"
 
 export ENABLE_DAEMON="${ENABLE_DAEMON:-true}"
@@ -31,6 +31,7 @@ if [ -f "/usr/share/zoneinfo/${TZ}" ]; then
 fi
 
 mkdir -p /app/data/prices /app/data/models /app/data/accounts /app/data/signals
+mkdir -p /app/data/feature_snapshots /app/data/worker_heartbeats /app/data/ohlcv_lake
 mkdir -p /app/logs /app/strategies /app/models
 mkdir -p /var/log/supervisor /var/log/nginx
 

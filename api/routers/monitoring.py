@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import logging
+import os
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +28,18 @@ from core.monitoring import (
     get_monitoring_config,
     get_system_monitor,
     restart_system_monitor,
+)
+from core import performance_targets
+from core.backtest_tasks import get_backtest_task_store
+from core.prediction_tasks import get_prediction_task_store
+from core.market_refresh_tasks import get_market_refresh_task_store
+from core.scan_tasks import get_scan_task_store
+from core.worker_status import (
+    BACKTEST_WORKER,
+    MARKET_REFRESH_WORKER,
+    PREDICTION_WORKER,
+    SCAN_WORKER,
+    read_worker_heartbeat,
 )
 
 
@@ -117,6 +130,73 @@ def _get_alert_manager() -> AlertManager:
 
     _alert_manager = manager
     return manager
+
+
+def _task_queue_summary(store_getter: Any) -> Dict[str, Any]:
+    try:
+        return store_getter().get_status_summary()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "counts": {}}
+
+
+def _worker_summary(worker_name: str, store_getter: Any, *, execution_mode: str) -> Dict[str, Any]:
+    heartbeat = read_worker_heartbeat(worker_name)
+    return {
+        "worker": worker_name,
+        "execution_mode": execution_mode,
+        "worker_required": execution_mode == "external_worker",
+        "heartbeat": heartbeat,
+        "online": heartbeat.get("online", False),
+        "state": heartbeat.get("state", "offline"),
+        "queue": _task_queue_summary(store_getter),
+    }
+
+
+@router.get("/performance-gates")
+async def get_performance_gates() -> Dict[str, Any]:
+    return {
+        "status": "success",
+        "data": {
+            "version": "3.0.0",
+            "targets": performance_targets.as_dict(),
+        },
+    }
+
+
+@router.get("/workers")
+async def get_workers_status() -> Dict[str, Any]:
+    scan_mode = "external_worker" if os.getenv("SCAN_TASK_EXECUTION_MODE", "external_worker") == "external_worker" else "inline"
+    backtest_mode = (
+        "external_worker" if os.getenv("BACKTEST_TASK_EXECUTION_MODE", "external_worker") == "external_worker" else "inline"
+    )
+    prediction_mode = (
+        "external_worker"
+        if os.getenv("PREDICTION_TASK_EXECUTION_MODE", "inline") == "external_worker"
+        else "inline"
+    )
+    market_refresh_mode = (
+        "external_worker"
+        if os.getenv("MARKET_REFRESH_TASK_EXECUTION_MODE", "inline") == "external_worker"
+        else "inline"
+    )
+    return {
+        "status": "success",
+        "data": {
+            "version": "3.0.0",
+            SCAN_WORKER: _worker_summary(SCAN_WORKER, get_scan_task_store, execution_mode=scan_mode),
+            BACKTEST_WORKER: _worker_summary(BACKTEST_WORKER, get_backtest_task_store, execution_mode=backtest_mode),
+            PREDICTION_WORKER: _worker_summary(
+                PREDICTION_WORKER,
+                get_prediction_task_store,
+                execution_mode=prediction_mode,
+            ),
+            MARKET_REFRESH_WORKER: _worker_summary(
+                MARKET_REFRESH_WORKER,
+                get_market_refresh_task_store,
+                execution_mode=market_refresh_mode,
+            ),
+        },
+    }
 
 
 @router.get("/health")

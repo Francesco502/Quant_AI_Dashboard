@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from core import llm_client, market_review
+from core import llm_prompt_templates
 from core.daily_analysis import run_daily_analysis, run_daily_analysis_from_env
 from core.daily_analysis.backtest import backtest_ticker
 from core.data_service import load_price_data
@@ -27,8 +28,9 @@ def _llm_not_configured_message() -> str:
         )
 
     return (
-        "LLM is not configured. Prefer setting LLM_PROVIDER=openai_compat and one of "
-        "OPENAI_API_KEY, ARK_API_KEY, or VOLCENGINE_API_KEY. "
+        "LLM is not configured. Prefer setting LLM_PROVIDER=openai_compat, "
+        "OPENAI_BASE_URL=https://api.deepseek.com, OPENAI_MODEL=deepseek-v4-flash, "
+        "and one of DEEPSEEK_API_KEY, DS_API_KEY, or OPENAI_API_KEY. "
         "Gemini, Anthropic, OpenRouter, and Ollama remain available as explicit alternatives."
     )
 
@@ -45,6 +47,10 @@ def _build_request_config(
     )
 
 
+def _query_value(value: Any) -> Optional[str]:
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def _request_not_configured_message(config_override: Optional[llm_client.LLMConfig]) -> str:
     if config_override is None:
         return _llm_not_configured_message()
@@ -59,7 +65,7 @@ def _request_not_configured_message(config_override: Optional[llm_client.LLMConf
         return "Selected Anthropic-compatible interface is missing ANTHROPIC_API_KEY."
     return (
         "Selected OpenAI-compatible interface is missing a usable API key. "
-        "Set OPENAI_API_KEY, ARK_API_KEY, or VOLCENGINE_API_KEY."
+        "Set DEEPSEEK_API_KEY, DS_API_KEY, OPENAI_API_KEY, ARK_API_KEY, or VOLCENGINE_API_KEY."
     )
 
 
@@ -96,13 +102,13 @@ async def llm_health_check(
     base_url: Optional[str] = Query(None, description="Optional runtime base URL override."),
 ) -> Dict[str, Any]:
     """Run a lightweight provider health check without market-data dependencies."""
+    model = _query_value(model)
+    provider_type = _query_value(provider_type)
+    base_url = _query_value(base_url)
     config_override = _build_request_config(provider_type=provider_type, base_url=base_url, model=model)
     _ensure_llm_configured(config_override)
     response = llm_client.chat_completion(
-        [
-            {"role": "system", "content": "Reply with a short plain-text health acknowledgment."},
-            {"role": "user", "content": "ping"},
-        ],
+        llm_prompt_templates.build_health_check_messages(),
         model=model,
         provider_type=provider_type,
         base_url=base_url,

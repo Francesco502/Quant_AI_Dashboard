@@ -1,5 +1,5 @@
 # ============================================================
-# Quant-AI Dashboard v2.4.0 - Optimized single-container image
+# Quant-AI Dashboard v3.0.0 - Optimized single-container image
 # Target: 2-core / 2GB runtime environment
 #
 # Process model:
@@ -12,18 +12,30 @@
 # -------------------- Stage 1: Python dependencies --------------------
 FROM python:3.11-slim-bookworm AS python-deps
 
+ARG INSTALL_NATIVE_KERNEL=false
+
 # Debian mirror fetches can intermittently fail during CI/buildx publishes.
 # Use a pinned base and retry-friendly apt settings to keep image publishes stable.
 RUN apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update \
     && apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
-    gcc g++ \
+    gcc g++ cargo \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.runtime.txt ./
+COPY requirements.native.txt ./
+COPY quant_kernel ./quant_kernel/
+# requirements.native.txt installs maturin for optional Rust native builds.
 RUN pip install --user --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple \
     --trusted-host pypi.tuna.tsinghua.edu.cn \
     -r requirements.runtime.txt
+RUN if [ "$INSTALL_NATIVE_KERNEL" = "true" ]; then \
+        pip install --user --no-cache-dir \
+            -i https://pypi.tuna.tsinghua.edu.cn/simple \
+            --trusted-host pypi.tuna.tsinghua.edu.cn \
+            -r requirements.native.txt \
+        && pip install --user --no-cache-dir ./quant_kernel; \
+    fi
 
 # -------------------- Stage 2: Frontend static build --------------------
 FROM node:20-alpine AS frontend-build
@@ -64,6 +76,7 @@ ENV PATH=/root/.local/bin:$PATH
 COPY api/ ./api/
 COPY core/ ./core/
 COPY run_daemon.py set_password.py ./
+COPY run_prediction_worker.py run_market_refresh_worker.py run_scan_worker.py run_backtest_worker.py ./
 COPY risk_config.json env.example ./
 COPY models/registry.json ./defaults/models/registry.json
 COPY strategies/config.json ./defaults/strategies/config.json
@@ -84,6 +97,7 @@ RUN mkdir -p /app/data /app/logs /app/models /app/strategies /app/defaults \
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DISABLE_HEAVY_MODELS=true \
+    QUANT_NATIVE_KERNEL=auto \
     TZ=Asia/Shanghai \
     APP_TIMEZONE=Asia/Shanghai
 

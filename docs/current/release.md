@@ -2,7 +2,7 @@
 
 ## Goal
 
-Use this guide to turn the current worktree into a releasable `v2.3.0` candidate with a reproducible validation record.
+Use this guide to turn the current worktree into a releasable `v3.0.0` candidate with a reproducible validation record.
 
 ## 1. Freeze Scope
 
@@ -31,6 +31,7 @@ python -m pytest tests/unit -q
 python -m pytest tests/integration -q
 python -m pytest tests/test_v3_smoke.py -q
 python -m pytest tests/e2e -m "e2e_inprocess" -q
+python scripts/deployment_readiness_check.py --strict
 
 cd web
 npm audit --audit-level=low
@@ -41,6 +42,7 @@ cd ..
 
 python -m playwright install chromium
 python scripts/release_check.py
+RUN_EXTERNAL_IO_SMOKE=1 python scripts/external_io_smoke.py
 ```
 
 The release report is written to:
@@ -52,13 +54,15 @@ output/reports/release_check_report.txt
 ## 3. Validate The Release Image
 
 ```powershell
-docker build -f Dockerfile.optimized -t quant-ai-dashboard:2.3.0 .
+docker build -f Dockerfile.optimized -t quant-ai-dashboard:3.0.0 .
+docker build -f Dockerfile.optimized --build-arg INSTALL_NATIVE_KERNEL=true -t quant-ai-dashboard:3.0.0-native .
 ```
 
 For compose-based verification:
 
 ```powershell
 docker compose up -d --build
+docker compose -f docker-compose.worker.yml --profile scan --profile backtest up -d --build
 docker compose logs -f
 ```
 
@@ -83,5 +87,7 @@ Release is ready only when all of the following are true:
 - worktree scope is intentional
 - compile, unit, integration, smoke, in-process E2E, frontend build, static-export build, and external release validation all pass
 - Docker optimized image builds successfully
+- worker compose profiles validate and required worker heartbeats are online when scan/backtest task flow is enabled
+- LLM health check is online against the release provider; v3.0.0 defaults to DeepSeek-compatible `deepseek-v4-flash`
 - login, dashboard, portfolio, trading, backtest, and research pages render against the target backend
 - rollback instructions and deployment environment are known

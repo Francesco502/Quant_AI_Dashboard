@@ -28,6 +28,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8686")
 TEST_LOGIN_USERNAME = os.getenv("TEST_LOGIN_USERNAME", "")
 TEST_LOGIN_PASSWORD = os.getenv("TEST_LOGIN_PASSWORD", "")
 EXPECT_RELEASE_READY = os.getenv("EXPECT_RELEASE_READY", "").strip().lower() in {"1", "true", "yes", "on"}
+EXPECT_LLM_READY = os.getenv("EXPECT_LLM_READY", "").strip().lower() in {"1", "true", "yes", "on"}
 FRONTEND_STATIC_EXPORT = os.getenv("FRONTEND_STATIC_EXPORT", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -143,7 +144,12 @@ def test_llm_runtime_validation_matches_config() -> None:
         timeout=60,
     )
 
-    if provider_ready:
+    if EXPECT_LLM_READY:
+        assert provider_ready is True
+        assert health_response.status_code == 200
+        assert health_response.json().get("status") == "ok"
+        assert agent_response.status_code == 200
+    elif provider_ready:
         assert health_response.status_code == 200
         assert health_response.json().get("status") == "ok"
         assert agent_response.status_code == 200

@@ -1,5 +1,5 @@
 # ============================================================
-# Quant-AI Dashboard v2.4.0 — 后端 Dockerfile (FastAPI + Daemon)
+# Quant-AI Dashboard v3.0.0 — 后端 Dockerfile (FastAPI + Daemon)
 # ============================================================
 FROM python:3.11-slim AS base
 
@@ -36,6 +36,10 @@ COPY models/ /app/models/
 COPY strategies/ /app/strategies/
 COPY run_daemon.py /app/run_daemon.py
 COPY set_password.py /app/set_password.py
+COPY run_prediction_worker.py /app/run_prediction_worker.py
+COPY run_market_refresh_worker.py /app/run_market_refresh_worker.py
+COPY run_scan_worker.py /app/run_scan_worker.py
+COPY run_backtest_worker.py /app/run_backtest_worker.py
 
 # 创建必要的目录
 RUN mkdir -p /app/data /app/logs /app/models

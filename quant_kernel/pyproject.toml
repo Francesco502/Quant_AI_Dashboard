@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "quant-kernel"
+version = "0.1.0"
+description = "Optional native kernels for Quant-AI Dashboard v3.0.0"
+requires-python = ">=3.11"
+
+[tool.maturin]
+module-name = "quant_kernel"
+features = ["pyo3/extension-module"]

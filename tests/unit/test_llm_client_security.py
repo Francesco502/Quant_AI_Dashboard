@@ -13,15 +13,19 @@ def test_build_config_without_api_key_returns_unconfigured_dummy_config(monkeypa
         for key in [
             "LLM_PROVIDER",
             "OPENAI_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "DS_API_KEY",
             "DASHSCOPE_API_KEY",
             "ARK_API_KEY",
             "VOLCENGINE_API_KEY",
             "VOLCENGINE_ARK_API_KEY",
             "OPENAI_BASE_URL",
+            "DEEPSEEK_BASE_URL",
             "DASHSCOPE_BASE_URL",
             "ARK_BASE_URL",
             "VOLCENGINE_BASE_URL",
             "OPENAI_MODEL",
+            "DEEPSEEK_MODEL",
             "DASHSCOPE_MODEL",
             "ARK_MODEL",
             "VOLCENGINE_MODEL",
@@ -170,7 +174,10 @@ def test_ark_key_uses_general_volcengine_openai_compatible_endpoint(monkeypatch)
     try:
         monkeypatch.setenv("LLM_PROVIDER", "openai_compat")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.delenv("DS_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
         monkeypatch.delenv("ARK_BASE_URL", raising=False)
         monkeypatch.delenv("VOLCENGINE_BASE_URL", raising=False)
         monkeypatch.setenv("ARK_API_KEY", "ark-key")

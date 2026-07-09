@@ -9,7 +9,7 @@ from pydantic import BaseModel
 import pandas as pd
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import date, datetime
 from time import time
 import logging
 import threading
@@ -40,6 +40,7 @@ from core.data_service import (
     load_price_data,
 )
 from core.market_scanner import MarketScanner
+from core.scan_tasks import ScanTaskRequest, get_scan_task_store
 from api.auth import UserInDB, get_current_active_user, require_admin
 
 router = APIRouter()
@@ -92,6 +93,10 @@ class RunStrategyRequest(BaseModel):
     market_limit: Optional[int] = None
     min_score: float = 60.0
     top_n: int = 20
+
+
+class ScanTaskCreateRequest(RunStrategyRequest):
+    force_refresh: bool = False
 
 try:
     import akshare as ak
@@ -516,6 +521,38 @@ async def run_strategy_async(
     )
     worker.start()
     return _serialize_scan_task(task)
+
+
+@router.post("/scan-tasks")
+async def create_scan_task(
+    request: ScanTaskCreateRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
+    """Create or reuse a persisted v3 market-scan task for worker execution."""
+    user_id = _require_user_id(current_user)
+    payload = request.model_dump(exclude={"force_refresh"})
+    payload["user_id"] = user_id
+    lookup = get_scan_task_store().get_or_create_task(
+        ScanTaskRequest(payload=payload),
+        request_date=date.today(),
+        force_refresh=request.force_refresh,
+    )
+    return lookup.task.to_api(cache_hit=lookup.cache_hit)
+
+
+@router.get("/scan-tasks/{task_id}")
+async def get_scan_task(
+    task_id: str,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
+    task = get_scan_task_store().get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Scan task not found")
+    user_id = _require_user_id(current_user)
+    task_user_id = int((task.request or {}).get("user_id") or 0)
+    if task_user_id and task_user_id != user_id:
+        raise HTTPException(status_code=403, detail="无权访问该扫描任务")
+    return task.to_api(cache_hit=task.status == "succeeded")
 
 
 @router.get("/run-status/{task_id}", deprecated=True)
